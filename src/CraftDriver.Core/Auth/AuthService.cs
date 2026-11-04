@@ -48,45 +48,84 @@ public sealed class AuthService
             .WithClientName("craftdriver")
             .Build();
         var svc = new AuthService(Build(LoopbackRedirect), Build(cfg.RedirectUri));
-        await svc.RegisterCacheAsync();
+        await svc.RegisterCacheAsync(cfg.Accounts.Count > 0).ConfigureAwait(false);
         return svc;
     }
 
-    async Task RegisterCacheAsync()
+    /// <summary>true quando os tokens deveriam estar no chaveiro, mas ele não respondeu na inicialização.</summary>
+    public bool KeyringUnavailable { get; private set; }
+
+    /// <summary>Mensagens de diagnóstico da inicialização do cache de tokens.</summary>
+    public List<string> StartupNotes { get; } = [];
+
+    /// <summary>Marca onde os tokens foram guardados da última vez ("keyring" ou "file").</summary>
+    static string StorageMarker => Path.Combine(AppPaths.ConfigDir, "token-storage");
+
+    async Task RegisterCacheAsync(bool hasAccounts)
     {
         Directory.CreateDirectory(AppPaths.ConfigDir);
         const string fileName = "msal_token_cache.bin";
-        try
+        var filePath = Path.Combine(AppPaths.ConfigDir, fileName);
+        var marker = File.Exists(StorageMarker) ? File.ReadAllText(StorageMarker).Trim() : null;
+        // Já houve login usando o chaveiro (ou há contas e o arquivo está vazio): não vale cair
+        // para o arquivo na primeira falha, pois o chaveiro pode estar só demorando a subir
+        // (início da sessão) — cair no arquivo vazio faria todas as contas pedirem login de novo.
+        var expectKeyring = marker == "keyring"
+            || (marker == null && hasAccounts && (!File.Exists(filePath) || new FileInfo(filePath).Length == 0));
+        var deadline = DateTime.UtcNow + (expectKeyring ? TimeSpan.FromSeconds(60) : TimeSpan.FromSeconds(10));
+        Exception? lastError = null;
+        do
         {
-            var props = new StorageCreationPropertiesBuilder(fileName, AppPaths.ConfigDir)
-                // esquema/atributos mantidos do nome antigo ("onedrive-linux") para não invalidar os
-                // tokens já salvos no chaveiro; só o rótulo visível mudou
-                .WithLinuxKeyring("onedrive-linux.tokencache", MsalCacheHelper.LinuxKeyRingDefaultCollection,
-                    "craftDriver - tokens", new KeyValuePair<string, string>("Version", "1"),
-                    new KeyValuePair<string, string>("Product", "onedrive-linux"))
-                .Build();
-            var helper = await MsalCacheHelper.CreateAsync(props);
-            helper.VerifyPersistence();
-            helper.RegisterCache(_app.UserTokenCache);
-            helper.RegisterCache(_pasteApp.UserTokenCache);
-            CacheStorage = "chaveiro do sistema";
-            return;
-        }
-        catch (Exception ex) when (ex is MsalCachePersistenceException or DllNotFoundException or InvalidOperationException)
+            if (!await SecretServiceLauncher.EnsureRunningAsync(TimeSpan.FromSeconds(10), StartupNotes.Add).ConfigureAwait(false) && !expectKeyring)
+                break; // sem provedor de chaveiro na máquina e nada a perder: usa o arquivo
+            try
+            {
+                await RegisterKeyringAsync(fileName).ConfigureAwait(false);
+                CacheStorage = "chaveiro do sistema";
+                if (marker != "keyring") File.WriteAllText(StorageMarker, "keyring");
+                return;
+            }
+            catch (Exception ex) when (ex is MsalCachePersistenceException or DllNotFoundException or InvalidOperationException)
+            {
+                lastError = ex;
+                if (!expectKeyring) break;
+                await Task.Delay(2000).ConfigureAwait(false);
+            }
+        } while (DateTime.UtcNow < deadline);
+
+        if (expectKeyring)
         {
-            // Sem Secret Service disponível: arquivo protegido por permissão.
+            KeyringUnavailable = true;
+            StartupNotes.Add("Chaveiro do sistema indisponível: os tokens salvos nele não puderam ser lidos"
+                + (lastError != null ? $" ({lastError.GetBaseException().Message})" : ""));
         }
 
         var fileProps = new StorageCreationPropertiesBuilder(fileName, AppPaths.ConfigDir)
             .WithLinuxUnprotectedFile()
             .Build();
-        var fileHelper = await MsalCacheHelper.CreateAsync(fileProps);
+        var fileHelper = await MsalCacheHelper.CreateAsync(fileProps).ConfigureAwait(false);
         fileHelper.RegisterCache(_app.UserTokenCache);
         fileHelper.RegisterCache(_pasteApp.UserTokenCache);
-        var path = Path.Combine(AppPaths.ConfigDir, fileName);
-        if (!File.Exists(path)) File.WriteAllBytes(path, []);
-        File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite);
-        CacheStorage = "arquivo (" + path + ")";
+        if (!File.Exists(filePath)) File.WriteAllBytes(filePath, []);
+        File.SetUnixFileMode(filePath, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+        CacheStorage = "arquivo (" + filePath + ")" + (KeyringUnavailable ? " — chaveiro indisponível" : "");
+        // só passa a "file" quando não há tokens no chaveiro a preservar
+        if (!expectKeyring && marker != "file") File.WriteAllText(StorageMarker, "file");
+    }
+
+    async Task RegisterKeyringAsync(string fileName)
+    {
+        var props = new StorageCreationPropertiesBuilder(fileName, AppPaths.ConfigDir)
+            // esquema/atributos mantidos do nome antigo ("onedrive-linux") para não invalidar os
+            // tokens já salvos no chaveiro; só o rótulo visível mudou
+            .WithLinuxKeyring("onedrive-linux.tokencache", MsalCacheHelper.LinuxKeyRingDefaultCollection,
+                "craftDriver - tokens", new KeyValuePair<string, string>("Version", "1"),
+                new KeyValuePair<string, string>("Product", "onedrive-linux"))
+            .Build();
+        var helper = await MsalCacheHelper.CreateAsync(props).ConfigureAwait(false);
+        helper.VerifyPersistence();
+        helper.RegisterCache(_app.UserTokenCache);
+        helper.RegisterCache(_pasteApp.UserTokenCache);
     }
 
     /// <summary>
@@ -184,7 +223,9 @@ public sealed class AuthService
     public async Task<string> GetTokenAsync(string accountId, bool forceRefresh, CancellationToken ct)
     {
         var acc = await _app.GetAccountAsync(accountId)
-                  ?? throw new AuthRequiredException(accountId, "Conta não encontrada no cache de tokens. Entre novamente.");
+                  ?? throw new AuthRequiredException(accountId, KeyringUnavailable
+                      ? "O chaveiro do sistema (KWallet/GNOME Keyring) não respondeu, então os tokens salvos não puderam ser lidos. Abra o chaveiro e reinicie o craftDriver."
+                      : "Conta não encontrada no cache de tokens. Entre novamente.");
         try
         {
             var builder = _app.AcquireTokenSilent(ScopesFor(IsPersonalTenant(acc.HomeAccountId.TenantId)), acc).WithForceRefresh(forceRefresh);

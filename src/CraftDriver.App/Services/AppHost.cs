@@ -56,6 +56,8 @@ public sealed class AppHost
 
     public void Start()
     {
+        foreach (var note in Auth.StartupNotes)
+            Activity.Add(Auth.KeyringUnavailable ? ActivityKind.Error : ActivityKind.Info, note);
         Activity.Add(ActivityKind.Info, $"Iniciado. Tokens em: {Auth.CacheStorage}");
         Engine.Start();
         Mount();

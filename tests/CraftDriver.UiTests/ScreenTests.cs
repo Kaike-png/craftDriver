@@ -34,7 +34,8 @@ public class ScreenTests
         Directory.CreateDirectory(Path.Combine(home, "config"));
         File.WriteAllText(Path.Combine(home, "config", "config.json"),
             $$"""{ "MountPoint": "{{home}}/OneDrive", "CacheDir": "{{home}}/cache" }""");
-        var host = AppHost.CreateAsync().GetAwaiter().GetResult();
+        // fora do contexto da UI, como em Program.Main (antes de o Avalonia iniciar)
+        var host = Task.Run(() => AppHost.CreateAsync()).GetAwaiter().GetResult();
         CraftDriver.App.App.Host = host;
         return host;
     }

@@ -42,6 +42,8 @@ Todos trazem o .NET embutido; atalho no menu, ícone e menu de contexto do Dolph
 
 Depois abra **craftDriver** no menu de aplicativos e entre com a conta Microsoft. Para iniciar com a sessão,
 marque **Configurações ▸ Iniciar ao entrar na sessão** (no Hyprland, adicione `exec-once = craftdriver --minimized`).
+No Hyprland/Sway com KWallet, inicie também `/usr/lib/pam_kwallet_init` antes dele, para a carteira abrir com a senha do login
+(o Plasma faz isso sozinho; sem isso o KWallet pede a senha ao iniciar).
 
 Os pacotes são gerados e testados (Ubuntu 24.04, Debian 12, Fedora e Arch, em contêineres limpos) por
 `packaging/build.sh` e `packaging/test/run.sh`; o GitHub Actions faz isso e anexa à release a cada tag `v*`.
