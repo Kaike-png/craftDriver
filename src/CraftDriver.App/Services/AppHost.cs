@@ -245,7 +245,10 @@ public sealed class AppHost
             case "ping":
                 return new(true, "pong");
             case "show":
-                ShowRequested?.Invoke();
+                // instância --headless não tem janela (nenhum assinante no evento)
+                if (ShowRequested == null)
+                    return new(false, "O craftDriver já está rodando sem interface (--headless). Encerre-o com \"craftdriver quit\" e abra de novo.");
+                ShowRequested.Invoke();
                 return new(true, "ok");
             case "quit":
                 QuitRequested?.Invoke();

@@ -37,8 +37,17 @@ sealed class Program
         var running = IpcClient.SendAsync(AppPaths.SocketPath, "ping", [], TimeSpan.FromSeconds(2)).GetAwaiter().GetResult();
         if (running is { Ok: true })
         {
-            if (!args.Contains("--headless"))
-                IpcClient.SendAsync(AppPaths.SocketPath, "show", []).GetAwaiter().GetResult();
+            if (!args.Contains("--headless") && !args.Contains("--minimized"))
+            {
+                var shown = IpcClient.SendAsync(AppPaths.SocketPath, "show", []).GetAwaiter().GetResult();
+                if (shown is { Ok: false })
+                {
+                    // aberto pelo menu: sem terminal para ver a mensagem, então notifica também
+                    Console.Error.WriteLine(shown.Text);
+                    DesktopIntegration.Notify("craftDriver", shown.Text);
+                    return 1;
+                }
+            }
             Console.WriteLine("O craftDriver já está em execução.");
             return 0;
         }

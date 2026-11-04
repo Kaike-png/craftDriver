@@ -222,8 +222,17 @@ public sealed class AuthService
 
     public async Task<string> GetTokenAsync(string accountId, bool forceRefresh, CancellationToken ct)
     {
-        var acc = await _app.GetAccountAsync(accountId)
-                  ?? throw new AuthRequiredException(accountId, KeyringUnavailable
+        var acc = await _app.GetAccountAsync(accountId);
+        // Logo após o login na sessão, a carteira (KWallet) pode estar terminando de abrir e a primeira
+        // leitura do cache volta vazia; o helper do MSAL relê o chaveiro a cada acesso, então
+        // tentamos de novo por alguns segundos antes de declarar que a conta precisa de login.
+        for (var i = 0; acc == null && i < 5; i++)
+        {
+            await Task.Delay(1000, ct);
+            acc = await _app.GetAccountAsync(accountId);
+        }
+        if (acc == null)
+            throw new AuthRequiredException(accountId, KeyringUnavailable
                       ? "O chaveiro do sistema (KWallet/GNOME Keyring) não respondeu, então os tokens salvos não puderam ser lidos. Abra o chaveiro e reinicie o craftDriver."
                       : "Conta não encontrada no cache de tokens. Entre novamente.");
         try
