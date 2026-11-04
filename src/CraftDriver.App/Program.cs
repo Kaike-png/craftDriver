@@ -18,6 +18,13 @@ sealed class Program
 
         if (args.Length > 0 && CliCommands.Contains(args[0]))
             return RunCli(args).GetAwaiter().GetResult();
+        if (args.Contains("--version") || args.Contains("-V"))
+        {
+            Console.WriteLine("craftdriver " + (typeof(Program).Assembly
+                .GetCustomAttributes(typeof(System.Reflection.AssemblyInformationalVersionAttribute), false)
+                .OfType<System.Reflection.AssemblyInformationalVersionAttribute>().FirstOrDefault()?.InformationalVersion.Split('+')[0] ?? "?"));
+            return 0;
+        }
         if (args.Contains("--help") || args.Contains("-h"))
         {
             PrintHelp();
@@ -61,6 +68,7 @@ sealed class Program
               craftdriver                 abre a interface (fica na bandeja)
               craftdriver --minimized     inicia direto na bandeja
               craftdriver --headless      roda sem interface (servidor)
+              craftdriver --version       mostra a versão
               craftdriver login [--personal|--work]   adiciona conta pelo terminal
 
             Com o app em execução:

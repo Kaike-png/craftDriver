@@ -28,9 +28,27 @@ arquivos **sob demanda** (aparecem na pasta sem ocupar espaço e são baixados a
 | Status por arquivo | `getfattr -n user.onedrive.status arquivo` (OnlineOnly, Available, AlwaysAvailable, Syncing, LocalOnly). `du` mostra 0 para itens só na nuvem |
 | Bandeja | Ícone por estado (atualizado, sincronizando, pausado, offline, erro); fechar a janela mantém o app rodando |
 
+## Instalação
+
+Baixe o pacote da sua distro na [última release](https://github.com/Kaike-png/craftDriver/releases/latest).
+Todos trazem o .NET embutido; atalho no menu, ícone e menu de contexto do Dolphin já vêm instalados.
+
+| Distro | Como instalar |
+|---|---|
+| Arch, Garuda, Manjaro, EndeavourOS | `yay -S craftdriver-bin` (AUR) ou `sudo pacman -U craftdriver-bin-*.pkg.tar.zst` |
+| Debian, Ubuntu, Mint, Pop!_OS | `sudo apt install ./craftdriver_*_amd64.deb` |
+| Fedora, openSUSE | `sudo dnf install ./craftdriver-*.x86_64.rpm` |
+| Qualquer outra | `.tar.gz`: extraia e rode `./craftdriver` |
+
+Depois abra **craftDriver** no menu de aplicativos e entre com a conta Microsoft. Para iniciar com a sessão,
+marque **Configurações ▸ Iniciar ao entrar na sessão** (no Hyprland, adicione `exec-once = craftdriver --minimized`).
+
+Os pacotes são gerados e testados (Ubuntu 24.04, Debian 12, Fedora e Arch, em contêineres limpos) por
+`packaging/build.sh` e `packaging/test/run.sh`; o GitHub Actions faz isso e anexa à release a cada tag `v*`.
+
 ## Requisitos
 
-- Linux x86_64 ou aarch64, `fuse3` (`fusermount3`), `libsecret` (opcional, para o chaveiro)
+- Linux x86_64 (aarch64 compila, mas ainda não é testado), `fuse3` (`fusermount3`), `libsecret` (opcional, para o chaveiro)
 - .NET SDK 10 para compilar (`~/.dotnet/dotnet` serve)
 - Para o ícone na bandeja: um host StatusNotifierItem (KDE, GNOME com extensão AppIndicator, waybar/quickshell no Hyprland)
 

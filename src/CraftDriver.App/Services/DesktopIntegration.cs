@@ -62,10 +62,39 @@ public static class DesktopIntegration
         src.CopyTo(dst);
     }
 
-    /// <summary>Instala atalho no menu de aplicativos e itens de menu de contexto.</summary>
+    /// <summary>Instalado por pacote (.deb/.rpm/AUR): atalho, ícone e menu do Dolphin já estão em /usr/share.</summary>
+    public static bool InstalledBySystemPackage => File.Exists("/usr/share/applications/craftdriver.desktop");
+
     public static List<string> InstallAll()
     {
         var done = new List<string>();
+        if (InstalledBySystemPackage)
+        {
+            // remove cópias do usuário para não duplicar o atalho e o submenu do Dolphin
+            foreach (var f in new[] { LauncherFile, DolphinMenuFile, IconFile })
+                if (File.Exists(f)) File.Delete(f);
+            done.Add("Atalho, ícone e menu do Dolphin já instalados pelo pacote do sistema");
+        }
+        else InstallUserLauncherAndMenus(done);
+
+        // Nautilus e Nemo: scripts (o pacote não instala, pois ficam na pasta do usuário)
+        foreach (var (dir, label) in new[]
+                 {
+                     (Path.Combine(DataHome, "nautilus", "scripts"), "Nautilus"),
+                     (Path.Combine(DataHome, "nemo", "scripts"), "Nemo"),
+                 })
+        {
+            if (!Directory.Exists(Path.GetDirectoryName(dir)!)) continue;
+            Directory.CreateDirectory(dir);
+            WriteScript(Path.Combine(dir, "craftDriver - Sempre manter neste dispositivo"), "pin");
+            WriteScript(Path.Combine(dir, "craftDriver - Liberar espaço"), "unpin");
+            done.Add($"Scripts do {label}");
+        }
+        return done;
+    }
+
+    static void InstallUserLauncherAndMenus(List<string> done)
+    {
         InstallIcon();
 
         Directory.CreateDirectory(Path.GetDirectoryName(LauncherFile)!);
@@ -101,23 +130,8 @@ public static class DesktopIntegration
         File.SetUnixFileMode(DolphinMenuFile, (UnixFileMode)0b111_101_101);
         done.Add("Menu de contexto do Dolphin (craftDriver ▸ …)");
 
-        // Nautilus e Nemo: scripts
-        foreach (var (dir, label) in new[]
-                 {
-                     (Path.Combine(DataHome, "nautilus", "scripts"), "Nautilus"),
-                     (Path.Combine(DataHome, "nemo", "scripts"), "Nemo"),
-                 })
-        {
-            if (!Directory.Exists(Path.GetDirectoryName(dir)!)) continue;
-            Directory.CreateDirectory(dir);
-            WriteScript(Path.Combine(dir, "craftDriver - Sempre manter neste dispositivo"), "pin");
-            WriteScript(Path.Combine(dir, "craftDriver - Liberar espaço"), "unpin");
-            done.Add($"Scripts do {label}");
-        }
-
         try { Process.Start(new ProcessStartInfo("update-desktop-database", Path.GetDirectoryName(LauncherFile)!) { UseShellExecute = false })?.WaitForExit(5000); }
         catch { }
-        return done;
     }
 
     static void WriteScript(string path, string cmd)

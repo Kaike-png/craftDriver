@@ -1,0 +1,22 @@
+[Desktop Entry]
+Type=Service
+MimeType=all/all;
+X-KDE-ServiceTypes=KonqPopupMenu/Plugin
+X-KDE-Submenu=craftDriver
+X-KDE-Priority=TopLevel
+Actions=pin;free;status;
+
+[Desktop Action pin]
+Name=Sempre manter neste dispositivo
+Icon=emblem-downloads
+Exec=craftdriver pin --notify %F
+
+[Desktop Action free]
+Name=Liberar espaço
+Icon=edit-clear
+Exec=craftdriver unpin --notify %F
+
+[Desktop Action status]
+Name=Status no craftDriver
+Icon=help-about
+Exec=craftdriver status --notify %F

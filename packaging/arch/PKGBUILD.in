@@ -1,0 +1,31 @@
+# Maintainer: Kaike de Paula <kaikedepaula8@gmail.com>
+# Gerado por packaging/build.sh a partir de packaging/arch/PKGBUILD.in
+pkgname=craftdriver-bin
+pkgver=@VERSION@
+pkgrel=1
+pkgdesc="Cliente para OneDrive e SharePoint com arquivos sob demanda (FUSE). Não afiliado à Microsoft."
+arch=('x86_64')
+url="https://github.com/Kaike-png/craftDriver"
+license=('MIT')
+depends=('glibc' 'libgcc' 'libstdc++' 'fuse3' 'icu' 'fontconfig' 'libx11' 'libice' 'libsm' 'hicolor-icon-theme')
+optdepends=('libsecret: guardar os tokens no chaveiro do sistema (KWallet/GNOME Keyring)'
+            'dolphin: menu de contexto craftDriver no gerenciador de arquivos'
+            'noto-fonts-emoji: ícones de status na janela')
+provides=('craftdriver')
+conflicts=('craftdriver')
+# o binário single-file do .NET não pode ser "stripado"
+options=('!strip' '!debug')
+source=("${url}/releases/download/v${pkgver}/craftdriver-${pkgver}-linux-x64.tar.gz")
+sha256sums=('@SHA256@')
+
+package() {
+  cd "craftdriver-${pkgver}-linux-x64"
+  install -Dm755 craftdriver "${pkgdir}/usr/lib/craftdriver/craftdriver"
+  install -dm755 "${pkgdir}/usr/bin"
+  ln -s /usr/lib/craftdriver/craftdriver "${pkgdir}/usr/bin/craftdriver"
+  install -Dm644 share/applications/craftdriver.desktop "${pkgdir}/usr/share/applications/craftdriver.desktop"
+  install -Dm755 share/kio/servicemenus/craftdriver.desktop "${pkgdir}/usr/share/kio/servicemenus/craftdriver.desktop"
+  install -Dm644 share/icons/hicolor/256x256/apps/craftdriver.png "${pkgdir}/usr/share/icons/hicolor/256x256/apps/craftdriver.png"
+  install -Dm644 LICENSE "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
+  install -Dm644 README.md "${pkgdir}/usr/share/doc/${pkgname}/README.md"
+}
