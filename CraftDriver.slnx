@@ -1,0 +1,11 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/CraftDriver.App/CraftDriver.App.csproj" />
+    <Project Path="src/CraftDriver.Core/CraftDriver.Core.csproj" />
+    <Project Path="src/CraftDriver.Fuse/CraftDriver.Fuse.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/CraftDriver.Tests/CraftDriver.Tests.csproj" />
+    <Project Path="tests/CraftDriver.UiTests/CraftDriver.UiTests.csproj" />
+  </Folder>
+</Solution>

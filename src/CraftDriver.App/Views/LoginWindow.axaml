@@ -1,0 +1,65 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="CraftDriver.App.Views.LoginWindow"
+        Title="Entrar com a conta Microsoft" Width="580" SizeToContent="Height"
+        WindowStartupLocation="CenterOwner" CanResize="False">
+    <StackPanel Margin="24" Spacing="14">
+        <TextBlock Classes="h1" Text="Entrar no craftDriver" />
+
+        <StackPanel x:Name="ChoosePanel" Spacing="10">
+            <TextBlock TextWrapping="Wrap" Text="Qual tipo de conta você quer conectar?" />
+            <Button x:Name="PersonalButton" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" Padding="14,10">
+                <StackPanel>
+                    <TextBlock Text="Conta pessoal" FontWeight="SemiBold" />
+                    <TextBlock Classes="muted" Text="Outlook.com, Hotmail, Live, Xbox — OneDrive pessoal" TextWrapping="Wrap" />
+                </StackPanel>
+            </Button>
+            <Button x:Name="WorkButton" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" Padding="14,10">
+                <StackPanel>
+                    <TextBlock Text="Conta de trabalho ou escola" FontWeight="SemiBold" />
+                    <TextBlock Classes="muted" Text="Microsoft 365 — OneDrive for Business e SharePoint" TextWrapping="Wrap" />
+                </StackPanel>
+            </Button>
+        </StackPanel>
+
+        <!-- método automático: navegador do sistema + retorno em http://localhost (padrão para contas pessoais) -->
+        <Border Classes="card" x:Name="AutoPanel" IsVisible="False">
+            <StackPanel Spacing="10">
+                <TextBlock TextWrapping="Wrap" Text="Entre com sua conta Microsoft na página que abriu no navegador e aceite o pedido de acesso do app. Ao terminar, o navegador mostra &quot;Pronto! Login recebido.&quot; e o app conclui sozinho — não precisa copiar nada." />
+                <Button x:Name="ReopenAuto" HorizontalAlignment="Center" Content="Abrir a página de login de novo" />
+                <Button x:Name="SwitchToManual" HorizontalAlignment="Center" Content="Não funcionou? Usar o método manual (colar endereço)" />
+            </StackPanel>
+        </Border>
+
+        <!-- método manual: navegador + colar o endereço final -->
+        <Border Classes="card" x:Name="BrowserPanel" IsVisible="False">
+            <StackPanel Spacing="10">
+                <TextBlock TextWrapping="Wrap" Text="1. Entre com sua conta Microsoft na página que abriu no navegador e aceite o pedido de acesso do app." />
+                <Button x:Name="OpenLoginPage" HorizontalAlignment="Center" Content="Abrir a página de login de novo" />
+                <TextBlock TextWrapping="Wrap" Text="2. No final o navegador mostra uma página em branco. Copie o endereço inteiro da barra de endereços (começa com https://login.microsoftonline.com/common/oauth2/nativeclient?code=…) e cole aqui:" />
+                <TextBox x:Name="PasteBox" PlaceholderText="https://login.microsoftonline.com/common/oauth2/nativeclient?code=…" TextWrapping="Wrap" />
+                <Button x:Name="FinishBrowser" Classes="accent" HorizontalAlignment="Right" Content="Concluir login" />
+                <TextBlock x:Name="PasteError" Foreground="IndianRed" TextWrapping="Wrap" IsVisible="False" />
+            </StackPanel>
+        </Border>
+
+        <!-- método 2: código de dispositivo (padrão para trabalho/escola) -->
+        <Border Classes="card" x:Name="CodePanel" IsVisible="False">
+            <StackPanel Spacing="8">
+                <TextBlock x:Name="UrlText" TextWrapping="Wrap" />
+                <SelectableTextBlock x:Name="CodeText" FontSize="34" FontFamily="monospace" FontWeight="Bold"
+                                     HorizontalAlignment="Center" LetterSpacing="4" />
+                <Button x:Name="OpenBrowser" Classes="accent" HorizontalAlignment="Center"
+                        Content="Copiar código e abrir o navegador" />
+                <Button x:Name="SwitchToBrowser" HorizontalAlignment="Center"
+                        Content="Não funcionou? Entrar pelo navegador colando o endereço" />
+            </StackPanel>
+        </Border>
+
+        <StackPanel x:Name="ProgressPanel" Spacing="6" IsVisible="False">
+            <TextBlock x:Name="StatusText" TextWrapping="Wrap" Text="Preparando o login…" />
+            <ProgressBar x:Name="Busy" IsIndeterminate="True" />
+        </StackPanel>
+        <Button x:Name="CloseButton" HorizontalAlignment="Right" Content="Cancelar" />
+    </StackPanel>
+</Window>

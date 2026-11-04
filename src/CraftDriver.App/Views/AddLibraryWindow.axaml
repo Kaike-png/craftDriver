@@ -1,0 +1,44 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="CraftDriver.App.Views.AddLibraryWindow"
+        Title="Adicionar biblioteca do SharePoint" Width="760" Height="600"
+        WindowStartupLocation="CenterOwner">
+    <DockPanel Margin="20">
+        <StackPanel DockPanel.Dock="Top" Spacing="8">
+            <TextBlock Classes="h1" Text="Sincronizar biblioteca do SharePoint" />
+            <TextBlock Classes="muted" TextWrapping="Wrap"
+                       Text="Escolha um site (seguidos aparecem primeiro), pesquise pelo nome ou cole a URL do site. Depois selecione a biblioteca de documentos." />
+            <Grid ColumnDefinitions="Auto,*" RowDefinitions="Auto,Auto" Margin="0,4,0,0">
+                <TextBlock Text="Conta:" VerticalAlignment="Center" Margin="0,0,8,0" />
+                <ComboBox x:Name="AccountBox" Grid.Column="1" HorizontalAlignment="Stretch" />
+            </Grid>
+            <Grid ColumnDefinitions="*,Auto">
+                <TextBox x:Name="SearchBox" PlaceholderText="Nome do site ou https://empresa.sharepoint.com/sites/Equipe" />
+                <Button x:Name="SearchButton" Grid.Column="1" Margin="8,0,0,0" Content="Buscar" IsDefault="True" />
+            </Grid>
+        </StackPanel>
+
+        <StackPanel DockPanel.Dock="Bottom" Spacing="8" Margin="0,10,0,0">
+            <Grid ColumnDefinitions="Auto,*">
+                <TextBlock Text="Nome da pasta:" VerticalAlignment="Center" Margin="0,0,8,0" />
+                <TextBox x:Name="NameBox" Grid.Column="1" />
+            </Grid>
+            <Grid ColumnDefinitions="*,Auto,Auto">
+                <TextBlock x:Name="StatusText" TextWrapping="Wrap" VerticalAlignment="Center" />
+                <Button x:Name="CancelButton" Grid.Column="1" Content="Fechar" Margin="8,0" />
+                <Button x:Name="AddButton" Grid.Column="2" Classes="accent" Content="Sincronizar" IsEnabled="False" />
+            </Grid>
+        </StackPanel>
+
+        <Grid ColumnDefinitions="*,12,*" Margin="0,10,0,0">
+            <DockPanel>
+                <TextBlock DockPanel.Dock="Top" Classes="h2" Text="Sites" />
+                <ListBox x:Name="SitesList" />
+            </DockPanel>
+            <DockPanel Grid.Column="2">
+                <TextBlock DockPanel.Dock="Top" Classes="h2" Text="Bibliotecas" />
+                <ListBox x:Name="LibsList" />
+            </DockPanel>
+        </Grid>
+    </DockPanel>
+</Window>
