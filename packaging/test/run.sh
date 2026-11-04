@@ -22,5 +22,5 @@ for d in $want; do case $d in
   # Arch: compila o PKGBUILD do AUR com makepkg (tarball local no lugar do download) e instala com pacman
   arch) run arch archlinux:latest "pacman -Syu --noconfirm -q base-devel xorg-server-xvfb xorg-xwininfo imagemagick ttf-dejavu noto-fonts-emoji >/dev/null \
           && useradd -m builder && mkdir /b && cp /dist/aur/PKGBUILD /dist/craftdriver-*-linux-x64.tar.gz /b/ && chown -R builder /b \
-          && su builder -c 'cd /b && makepkg --nodeps --noconfirm >/dev/null' && pacman -U --noconfirm /b/craftdriver-bin-*.pkg.tar.zst >/dev/null" ;;
+          && su builder -c 'cd /b && makepkg --nodeps --noconfirm >/dev/null' && pacman -U --noconfirm /b/craftdriver-bin-*.pkg.tar.zst >/dev/null && cp /b/craftdriver-bin-*.pkg.tar.zst /out/" ;;
 esac; done

@@ -74,6 +74,7 @@ jobs:
         run: |
           cd art
           cp aur/PKGBUILD PKGBUILD
+          cp test/*.pkg.tar.zst .
           sha256sum *.tar.gz *.deb *.rpm *.pkg.tar.zst > SHA256SUMS
           files=(*.tar.gz *.sha256 *.deb *.rpm *.pkg.tar.zst PKGBUILD SHA256SUMS)
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
