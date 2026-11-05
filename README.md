@@ -22,6 +22,9 @@ arquivos **sob demanda** (aparecem na pasta sem ocupar espaço e são baixados a
 | Conflitos | Edição dos dois lados → a sua versão vira `nome (conflito - host data).ext` (If-Match/eTag). Criação com mesmo nome idem |
 | Salvamento atômico | `sed -i`, gedit, kate, LibreOffice (temp + rename) viram **nova versão do mesmo item** (preserva histórico de versões) |
 | Sempre disponível / Liberar espaço | Pela interface, pela CLI ou pelo menu de contexto do Dolphin/Nautilus/Nemo |
+| Link de compartilhamento | Menu de contexto "Copiar link de compartilhamento" ou `craftdriver share [--edit] arquivo`: cria o link (`createLink`), copia (wl-copy no Wayland; xclip/xsel no X11) e notifica com "Abrir no navegador". Tenta "qualquer pessoa com o link"; se a organização proíbe, cai para "pessoas da organização" e avisa |
+| Versões anteriores | Menu "Versões anteriores…" ou `craftdriver versions arquivo`: janela com as versões da nuvem (data, tamanho, autor), **Restaurar** (vira a versão atual; nenhuma é apagada) e **Baixar cópia** (`nome (versão AAAA-MM-DD HHMM).ext` ao lado). Recusa restaurar se o arquivo tem alterações locais ainda não enviadas |
+| Lixeira | `craftdriver trash` / bandeja "Lixeira…": lista o que o craftDriver viu ser excluído; no OneDrive pessoal restaura pela API, nas contas corporativas/SharePoint abre a Lixeira no navegador (a API de lá ainda é beta) |
 | Limite de cache | LRU para arquivos não fixados (padrão 10 GB) |
 | Indexadores bloqueados | Baloo, Tracker, thumbnailers etc. **não** disparam downloads de itens somente online |
 | Arquivos só locais | `.~lock.*#`, `~$*`, `*.swp`, `.goutputstream-*`… e nomes inválidos no OneDrive nunca sobem |
@@ -38,7 +41,10 @@ Todos trazem o .NET embutido; atalho no menu, ícone e menu de contexto do Dolph
 | Arch, Garuda, Manjaro, EndeavourOS | `yay -S craftdriver-bin` (AUR) ou `sudo pacman -U craftdriver-bin-*.pkg.tar.zst` |
 | Debian, Ubuntu, Mint, Pop!_OS | `sudo apt install ./craftdriver_*_amd64.deb` |
 | Fedora, openSUSE | `sudo dnf install ./craftdriver-*.x86_64.rpm` |
-| Qualquer outra | `.tar.gz`: extraia e rode `./craftdriver` |
+| Qualquer outra | `.tar.gz`: extraia e rode `./craftdriver` (o app fica em `lib/`) |
+
+Instalado, ocupa ~52 MB em `/usr/lib/craftdriver` (o .NET vai junto, já reduzido). O que mudou em cada versão
+está no [CHANGELOG](CHANGELOG.md).
 
 Depois abra **craftDriver** no menu de aplicativos e entre com a conta Microsoft. Para iniciar com a sessão,
 marque **Configurações ▸ Iniciar ao entrar na sessão** (no Hyprland, adicione `exec-once = craftdriver --minimized`).
@@ -47,10 +53,33 @@ No Hyprland/Sway com KWallet, inicie também `/usr/lib/pam_kwallet_init` antes d
 
 Os pacotes são gerados e testados (Ubuntu 24.04, Debian 12, Fedora e Arch, em contêineres limpos) por
 `packaging/build.sh` e `packaging/test/run.sh`; o GitHub Actions faz isso e anexa à release a cada tag `v*`.
+`ARCHES="x64 arm64" packaging/build.sh` gera também os pacotes ARM; detalhes e medições em
+[`docs/empacotamento.md`](docs/empacotamento.md).
+
+## Extensões de gerenciador de arquivos
+
+Ficam em [`extensions/`](extensions). Todas leem o atributo `user.onedrive.status` que o FUSE expõe, então
+funcionam com qualquer ponto de montagem, e chamam `craftdriver pin|unpin|status|share --notify` e `craftdriver versions`.
+
+| Gerenciador | Emblemas | Menu só dentro do craftDriver | Como instalar |
+|---|---|---|---|
+| Dolphin (plugin KF6) | sim | sim | AUR `craftdriver-dolphin`, ou compile: `cmake -S extensions/dolphin -B build -DCMAKE_INSTALL_PREFIX=/usr && cmake --build build && sudo cmake --install build` (precisa de `extra-cmake-modules` e dos headers do KIO 6) |
+| Dolphin (servicemenu, já vem nos pacotes) | não | não: aparece em qualquer arquivo | instalado pelo pacote/app; o plugin acima o esconde (`/etc/xdg/kservicemenurc`) |
+| Nautilus 43+ | sim | sim | pacotes instalam em `/usr/share/nautilus-python/extensions/`; manual: copie `extensions/nautilus/craftdriver.py` para `~/.local/share/nautilus-python/extensions/`. Precisa de `python-nautilus` (Debian/Ubuntu: `python3-nautilus`; Fedora: `nautilus-python`). Depois `nautilus -q` |
+| PCManFM / PCManFM-Qt | não | sim (`ShowIfTrue` + `getfattr`, pacote `attr`) | pacotes instalam em `/usr/share/file-manager/actions/`; manual: copie `extensions/pcmanfm/*.desktop` para `~/.local/share/file-manager/actions/` |
+| Thunar | não | não: o Thunar só filtra por nome/tipo | `python3 /usr/share/craftdriver/thunar/install-uca.py` (ou `extensions/thunar/install-uca.py`); `--remove` desfaz |
+
+Emblemas no Dolphin (tema Breeze): nuvem = somente online, ✓ = disponível, ✓ verde = sempre disponível,
+seta laranja = sincronizando, ✗ cinza = somente local. O Dolphin precisa ser reaberto depois de instalar o plugin.
+Só o plugin do Dolphin foi testado num Dolphin real; Nautilus, Thunar e PCManFM têm só testes sem o
+gerenciador (`python3 -m unittest discover -s extensions/<nome>/tests`).
 
 ## Requisitos
 
-- Linux x86_64 (aarch64 compila, mas ainda não é testado), `fuse3` (`fusermount3`), `libsecret` (opcional, para o chaveiro)
+- Linux x86_64. aarch64: os pacotes são gerados por compilação cruzada e os testes rodam no CI num executor ARM,
+  mas o app nunca foi usado num ARM de verdade
+- `fuse3` (`fusermount3`), `xdg-utils`, `dbus-send`; opcionais: `libsecret` (chaveiro), `notify-send`,
+  `wl-copy`/`xclip`/`xsel` (copiar link)
 - .NET SDK 10 para compilar (`~/.dotnet/dotnet` serve)
 - Para o ícone na bandeja: um host StatusNotifierItem (KDE, GNOME com extensão AppIndicator, waybar/quickshell no Hyprland)
 
@@ -74,6 +103,9 @@ craftdriver status [arquivos]  # status geral ou de itens
 craftdriver pin   <arquivos>   # sempre manter neste dispositivo
 craftdriver unpin <arquivos>   # liberar espaço (somente online)
 craftdriver deletes [confirm|restore]   # exclusão em massa aguardando confirmação
+craftdriver share [--edit] <arquivos>   # link de compartilhamento (copiado para a área de transferência)
+craftdriver versions <arquivo> [--list | --restore=ID | --copy=ID]   # versões anteriores
+craftdriver trash [restore N | open]    # excluídos recentes / restaurar da Lixeira
 craftdriver sync | pause | resume | quit
 ```
 
@@ -137,7 +169,7 @@ e mantém os tokens salvos no chaveiro (não é preciso entrar de novo).
 
 ## Limitações conhecidas
 
-- Sem ícones de sobreposição (nuvem/check) no Dolphin/Nautilus — use `getfattr` ou "Status do OneDrive" no menu de contexto
+- Emblemas de status só no Dolphin (com o plugin `craftdriver-dolphin`) e no Nautilus (com `python-nautilus`); nos outros, use `getfattr` ou "Status no craftDriver" no menu de contexto
 - Abrir um arquivo somente online baixa o arquivo inteiro antes de liberar a leitura (sem streaming por faixas)
 - Mover entre drives diferentes vira copiar+apagar (`EXDEV`), como entre discos
 - Atalhos "Adicionar a Meus arquivos" e pastas compartilhadas comigo ainda não aparecem
