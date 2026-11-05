@@ -84,9 +84,12 @@ public class UnmountChild
             c.StreamingThresholdMB = 1;
             c.StreamingBlockKB = 256;
         });
-        var big = new byte[(rounds * 2 + 2) * 256 * KB];
+        // um arquivo grande por read: com libfuse < 3.17.3 (cache de página, sem direct_io) o readahead do primeiro
+        // read cobre o bloco vizinho e o segundo leitor espera a página travada no kernel, sem chegar ao FUSE
+        var big = new byte[(rounds + 2) * 256 * KB];
         new Random(5).NextBytes(big);
-        h.Remote.RemoteCreateBytes("/", "grande.bin", big);
+        h.Remote.RemoteCreateBytes("/", "grande1.bin", big);
+        h.Remote.RemoteCreateBytes("/", "grande2.bin", big);
         h.Settle();
         var mnt = Path.Combine(h.Dir, "mnt");
         var results = new Dictionary<string, int>();
@@ -110,7 +113,7 @@ public class UnmountChild
             (string file, long off)[] work =
             [
                 ($"a{r}.txt", 0), ($"b{r}.txt", 0), // open de só-na-nuvem: espera o download em SlowOps
-                ("grande.bin", (2 * r + 1) * block), ("grande.bin", (2 * r + 2) * block), // read de bloco em SlowOps
+                ("grande1.bin", (r + 1) * block), ("grande2.bin", (r + 1) * block), // read de bloco em SlowOps
             ];
             var children = work.Select(w => Proc.Start(Proc.Python, ["-c", Script, Path.Combine(root, w.file), w.off.ToString()], h.Dir)).ToList();
             Thread? hammer = null;
@@ -157,7 +160,7 @@ public class UnmountChild
                 {
                     Assert.True(c.WaitForExit(15_000), "filho preso depois de desmontar");
                     var line = c.StandardOutput.ReadLine() ?? "(nada)";
-                    var key = $"modo{r % 3}/{(w.file == "grande.bin" ? "bloco" : "open")}/{(line.StartsWith("ok", StringComparison.Ordinal) ? "ok" : line)}";
+                    var key = $"modo{r % 3}/{(w.file.StartsWith("grande", StringComparison.Ordinal) ? "bloco" : "open")}/{(line.StartsWith("ok", StringComparison.Ordinal) ? "ok" : line)}";
                     results[key] = results.GetValueOrDefault(key) + 1;
                 }
             }
