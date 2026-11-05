@@ -6,6 +6,8 @@ acrescentada automaticamente.
 
 ## [Não lançado]
 
+## [0.2.0] - 2026-11-05
+
 ### Novidades
 - **Arquivos grandes abrem na hora**: só a parte lida é baixada (leitura por faixas); o resto vem em segundo plano
   e o arquivo só entra no cache depois de conferido.
@@ -110,7 +112,8 @@ Configuração e contas são mantidas.
 - Primeira versão: contas pessoais, corporativas e bibliotecas do SharePoint montadas em `~/OneDrive` via FUSE, com
   arquivos sob demanda, fixação ("Sempre manter neste dispositivo"), bandeja e menu do Dolphin.
 
-[Não lançado]: https://github.com/Kaike-png/craftDriver/compare/v0.1.4...HEAD
+[Não lançado]: https://github.com/Kaike-png/craftDriver/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/Kaike-png/craftDriver/compare/v0.1.4...v0.2.0
 [0.1.4]: https://github.com/Kaike-png/craftDriver/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/Kaike-png/craftDriver/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/Kaike-png/craftDriver/compare/v0.1.1...v0.1.2
