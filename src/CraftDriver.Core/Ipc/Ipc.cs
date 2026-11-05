@@ -7,6 +7,25 @@ namespace CraftDriver.Core.Ipc;
 public sealed record IpcRequest(string Cmd, string[] Args);
 public sealed record IpcResponse(bool Ok, string Text);
 
+/// <summary>
+/// Conta recém-autenticada pelo <c>craftdriver login</c>, entregue à instância em execução
+/// (comando "add-account", JSON no primeiro argumento). Os tokens já estão no cache compartilhado;
+/// só a configuração precisa ser gravada pela instância, que é dona do config.json enquanto roda.
+/// </summary>
+public sealed record AddAccountRequest(CraftDriver.Core.Config.AccountConfig Account, string DriveId, string? DriveWebUrl);
+
+/// <summary>JSON das mensagens do IPC (uma linha por mensagem).</summary>
+public static class IpcJson
+{
+    static readonly Config.IpcJsonContext Ctx = Config.IpcJsonContext.Default;
+    public static string Serialize(IpcRequest r) => JsonSerializer.Serialize(r, Ctx.IpcRequest);
+    public static string Serialize(IpcResponse r) => JsonSerializer.Serialize(r, Ctx.IpcResponse);
+    public static string Serialize(AddAccountRequest r) => JsonSerializer.Serialize(r, Ctx.AddAccountRequest);
+    public static IpcRequest? DeserializeRequest(string s) => JsonSerializer.Deserialize(s, Ctx.IpcRequest);
+    public static IpcResponse? DeserializeResponse(string s) => JsonSerializer.Deserialize(s, Ctx.IpcResponse);
+    public static AddAccountRequest? DeserializeAddAccount(string s) => JsonSerializer.Deserialize(s, Ctx.AddAccountRequest);
+}
+
 /// <summary>Servidor de comandos via socket Unix (uma linha JSON por requisição).</summary>
 public sealed class IpcServer : IDisposable
 {
@@ -45,11 +64,19 @@ public sealed class IpcServer : IDisposable
                 {
                     var line = await reader.ReadLineAsync();
                     if (line == null) return;
-                    var req = JsonSerializer.Deserialize<IpcRequest>(line) ?? new IpcRequest("", []);
                     IpcResponse resp;
-                    try { resp = await _handler(req); }
-                    catch (Exception ex) { resp = new IpcResponse(false, ex.Message); }
-                    await writer.WriteLineAsync(JsonSerializer.Serialize(resp));
+                    IpcRequest? req = null;
+                    try { req = IpcJson.DeserializeRequest(line); }
+                    catch (JsonException) { /* abaixo */ }
+                    // responder sempre: sem resposta o cliente conclui que o app "não está em execução"
+                    if (req is not { Cmd: not null, Args: not null })
+                        resp = new IpcResponse(false, "Pedido inválido para o craftDriver (esperado JSON {\"Cmd\":…,\"Args\":[…]}).");
+                    else
+                    {
+                        try { resp = await _handler(req); }
+                        catch (Exception ex) { resp = new IpcResponse(false, ex.Message); }
+                    }
+                    await writer.WriteLineAsync(IpcJson.Serialize(resp));
                 }
                 catch { /* cliente desconectou */ }
             });
@@ -77,9 +104,9 @@ public static class IpcClient
             await using var stream = new NetworkStream(sock, true);
             await using var writer = new StreamWriter(stream, new UTF8Encoding(false)) { AutoFlush = true };
             using var reader = new StreamReader(stream, Encoding.UTF8);
-            await writer.WriteLineAsync(JsonSerializer.Serialize(new IpcRequest(cmd, args)));
+            await writer.WriteLineAsync(IpcJson.Serialize(new IpcRequest(cmd, args)));
             var line = await reader.ReadLineAsync(cts.Token);
-            return line == null ? null : JsonSerializer.Deserialize<IpcResponse>(line);
+            return line == null ? null : IpcJson.DeserializeResponse(line);
         }
         catch (Exception ex) when (ex is SocketException or OperationCanceledException or IOException)
         {

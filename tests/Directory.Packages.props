@@ -1,0 +1,26 @@
+<Project>
+  <!--
+    Versões dos pacotes de teste num lugar só (Central Package Management só para tests/: o arquivo é
+    achado subindo a partir do .csproj, e src/ não está abaixo daqui). Conferidas em api.nuget.org.
+
+    xunit.v3 fica no 3.2.2 (não no 4.0.2, a mais nova): o Avalonia.Headless.XUnit 12.1.5 (último) é compilado
+    contra xunit.v3.extensibility.core 3.2.2 e com o 4.x a descoberta dos [AvaloniaFact] quebra
+    (MissingMethodException em AvaloniaFactDiscoverer.CreateTestCase). Subir junto quando o Avalonia subir.
+
+    xunit.v3.mtp-off: o mesmo xunit.v3, sem o Microsoft.Testing.Platform. Os testes rodam pelo VSTest
+    (xunit.runner.visualstudio), então as opções filter, logger trx e collect
+    "XPlat Code Coverage" (coverlet.collector) do `dotnet test` continuam iguais. Com o MTP v2 (padrão do xunit.v3 4.x) o SDK 10
+    recusa o modo VSTest ("Testing with VSTest target is no longer supported...").
+  -->
+  <PropertyGroup>
+    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageVersion Include="xunit.v3.mtp-off" Version="3.2.2" />
+    <PackageVersion Include="xunit.runner.visualstudio" Version="4.0.1" />
+    <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="18.11.0" />
+    <PackageVersion Include="coverlet.collector" Version="10.1.0" />
+    <PackageVersion Include="Avalonia.Headless.XUnit" Version="12.1.5" />
+    <PackageVersion Include="Avalonia.Skia" Version="12.1.5" />
+  </ItemGroup>
+</Project>

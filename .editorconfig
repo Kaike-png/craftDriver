@@ -1,0 +1,24 @@
+# Formatação que o código já segue (conferida com `dotnet format whitespace --verify-no-changes`, que o CI roda).
+# Só espaços/quebras de linha; regras de estilo e analisadores continuam com o padrão do SDK.
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 4
+
+[*.{csproj,props,targets,axaml,xml,slnx,yml,yaml,json}]
+indent_size = 2
+
+[*.md]
+trim_trailing_whitespace = false
+
+[*.cs]
+# membros de inicializadores na mesma linha: new X { A = 1, B = 2, ... }
+csharp_new_line_before_members_in_object_initializers = false
+csharp_new_line_before_members_in_anonymous_types = false
+# case X: seguido de { ... } alinhado com o case
+csharp_indent_case_contents_when_block = false

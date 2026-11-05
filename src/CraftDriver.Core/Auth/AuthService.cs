@@ -40,15 +40,40 @@ public sealed class AuthService
         _pasteApp = pasteApp;
     }
 
-    public static async Task<AuthService> CreateAsync(AppConfig cfg)
+    public static Task<AuthService> CreateAsync(AppConfig cfg) => CreateAsync(cfg, null, CancellationToken.None);
+
+    /// <summary>
+    /// HTTP do MSAL para os serviços criados daqui em diante. Null = rede real (produção). Os testes de
+    /// interface põem uma Microsoft falsa em memória, para o login não depender de login.microsoftonline.com.
+    /// </summary>
+    public static IMsalHttpClientFactory? HttpClientFactory { get; set; }
+
+    /// <summary>Mensagem mostrada enquanto o cache de tokens espera o chaveiro.</summary>
+    public const string OpeningKeyringStatus = "Abrindo o chaveiro do sistema…";
+
+    /// <param name="status">Progresso para a janela de espera (chamado em qualquer thread).</param>
+    /// <param name="skipKeyring">
+    /// Cancelado = desistir de esperar o chaveiro agora: segue como no fim do prazo de 60 s (tokens em arquivo
+    /// nesta execução, <see cref="KeyringUnavailable"/> quando havia tokens no chaveiro).
+    /// </param>
+    /// <param name="keyring">Acesso ao chaveiro (testes trocam por um lento/que falha). Null = o real.</param>
+    public static async Task<AuthService> CreateAsync(AppConfig cfg, Action<string>? status, CancellationToken skipKeyring, KeyringAccess? keyring = null)
     {
-        IPublicClientApplication Build(string redirect) => PublicClientApplicationBuilder.Create(cfg.ClientId)
-            .WithAuthority(cfg.Authority)
-            .WithRedirectUri(redirect)
-            .WithClientName("craftdriver")
-            .Build();
+        IPublicClientApplication Build(string redirect)
+        {
+            var b = PublicClientApplicationBuilder.Create(cfg.ClientId)
+                .WithAuthority(cfg.Authority)
+                .WithRedirectUri(redirect)
+                .WithClientName("craftdriver");
+            // diagnóstico: CRAFTDRIVER_MSAL_LOG=1 manda o log do MSAL (sem dados pessoais) para o stderr
+            if (Environment.GetEnvironmentVariable("CRAFTDRIVER_MSAL_LOG") == "1")
+                b = b.WithLogging((level, message, _) => Console.Error.WriteLine($"[MSAL {level}] {message}"), LogLevel.Verbose,
+                    enablePiiLogging: false, enableDefaultPlatformLogging: false);
+            if (HttpClientFactory is { } http) b = b.WithHttpClientFactory(http);
+            return b.Build();
+        }
         var svc = new AuthService(Build(LoopbackRedirect), Build(cfg.RedirectUri));
-        await svc.RegisterCacheAsync(cfg.Accounts.Count > 0).ConfigureAwait(false);
+        await svc.RegisterCacheAsync(cfg.Accounts.Count > 0, keyring ?? KeyringAccess.System, status, skipKeyring).ConfigureAwait(false);
         return svc;
     }
 
@@ -61,7 +86,7 @@ public sealed class AuthService
     /// <summary>Marca onde os tokens foram guardados da última vez ("keyring" ou "file").</summary>
     static string StorageMarker => Path.Combine(AppPaths.ConfigDir, "token-storage");
 
-    async Task RegisterCacheAsync(bool hasAccounts)
+    async Task RegisterCacheAsync(bool hasAccounts, KeyringAccess keyring, Action<string>? status, CancellationToken skip)
     {
         Directory.CreateDirectory(AppPaths.ConfigDir);
         const string fileName = "msal_token_cache.bin";
@@ -74,25 +99,36 @@ public sealed class AuthService
             || (marker == null && hasAccounts && (!File.Exists(filePath) || new FileInfo(filePath).Length == 0));
         var deadline = DateTime.UtcNow + (expectKeyring ? TimeSpan.FromSeconds(60) : TimeSpan.FromSeconds(10));
         Exception? lastError = null;
+        status?.Invoke(OpeningKeyringStatus);
         do
         {
-            if (!await SecretServiceLauncher.EnsureRunningAsync(TimeSpan.FromSeconds(10), StartupNotes.Add).ConfigureAwait(false) && !expectKeyring)
-                break; // sem provedor de chaveiro na máquina e nada a perder: usa o arquivo
+            if (skip.IsCancellationRequested) break;
             try
             {
-                await RegisterKeyringAsync(fileName).ConfigureAwait(false);
+                if (!await keyring.EnsureRunning(TimeSpan.FromSeconds(10), StartupNotes.Add).WaitAsync(skip).ConfigureAwait(false) && !expectKeyring)
+                    break; // sem provedor de chaveiro na máquina e nada a perder: usa o arquivo
+                // WaitAsync: um chaveiro travado (ex.: pedindo a senha) não segura a inicialização quando o
+                // usuário escolhe continuar. O registro no cache só acontece aqui, depois do await — um
+                // helper que termine de abrir mais tarde é descartado e não disputa o cache com o arquivo.
+                var helper = await keyring.Open(fileName).WaitAsync(skip).ConfigureAwait(false);
+                helper.RegisterCache(_app.UserTokenCache);
+                helper.RegisterCache(_pasteApp.UserTokenCache);
                 CacheStorage = "chaveiro do sistema";
                 if (marker != "keyring") File.WriteAllText(StorageMarker, "keyring");
                 return;
             }
+            catch (OperationCanceledException) when (skip.IsCancellationRequested) { break; }
             catch (Exception ex) when (ex is MsalCachePersistenceException or DllNotFoundException or InvalidOperationException)
             {
                 lastError = ex;
                 if (!expectKeyring) break;
-                await Task.Delay(2000).ConfigureAwait(false);
+                try { await Task.Delay(2000, skip).ConfigureAwait(false); }
+                catch (OperationCanceledException) { break; }
             }
         } while (DateTime.UtcNow < deadline);
 
+        var skipped = skip.IsCancellationRequested;
+        if (skipped) StartupNotes.Add("Início sem esperar o chaveiro do sistema (escolhido na janela de espera).");
         if (expectKeyring)
         {
             KeyringUnavailable = true;
@@ -109,23 +145,54 @@ public sealed class AuthService
         if (!File.Exists(filePath)) File.WriteAllBytes(filePath, []);
         File.SetUnixFileMode(filePath, UnixFileMode.UserRead | UnixFileMode.UserWrite);
         CacheStorage = "arquivo (" + filePath + ")" + (KeyringUnavailable ? " — chaveiro indisponível" : "");
-        // só passa a "file" quando não há tokens no chaveiro a preservar
-        if (!expectKeyring && marker != "file") File.WriteAllText(StorageMarker, "file");
+        // só passa a "file" quando não há tokens no chaveiro a preservar; pular a espera não decide nada
+        // (no próximo início o chaveiro é tentado de novo)
+        if (!expectKeyring && !skipped && marker != "file") File.WriteAllText(StorageMarker, "file");
     }
 
-    async Task RegisterKeyringAsync(string fileName)
+    /// <summary>
+    /// Identidade do item no chaveiro. O chaveiro é um só por sessão do usuário, não por HOME: sem isto, uma
+    /// instância com CRAFTDRIVER_HOME (testes, desenvolvimento) lia e sobrescrevia os tokens da instalação normal.
+    /// Sem CRAFTDRIVER_HOME os atributos são os de sempre (esquema/atributos do nome antigo "onedrive-linux"), para
+    /// não invalidar os tokens já salvos.
+    /// </summary>
+    public static (string Product, string Label) KeyringIdentity(string? homeOverride)
     {
+        if (homeOverride == null) return ("onedrive-linux", "craftDriver - tokens");
+        var full = Path.TrimEndingDirectorySeparator(Path.GetFullPath(homeOverride));
+        var id = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(full)))[..16].ToLowerInvariant();
+        return ("onedrive-linux@" + id, $"craftDriver - tokens ({full})");
+    }
+
+    static async Task<MsalCacheHelper> OpenKeyringAsync(string fileName)
+    {
+        var (product, label) = KeyringIdentity(AppPaths.HomeOverride);
         var props = new StorageCreationPropertiesBuilder(fileName, AppPaths.ConfigDir)
-            // esquema/atributos mantidos do nome antigo ("onedrive-linux") para não invalidar os
-            // tokens já salvos no chaveiro; só o rótulo visível mudou
             .WithLinuxKeyring("onedrive-linux.tokencache", MsalCacheHelper.LinuxKeyRingDefaultCollection,
-                "craftDriver - tokens", new KeyValuePair<string, string>("Version", "1"),
-                new KeyValuePair<string, string>("Product", "onedrive-linux"))
+                label, new KeyValuePair<string, string>("Version", "1"),
+                new KeyValuePair<string, string>("Product", product))
             .Build();
         var helper = await MsalCacheHelper.CreateAsync(props).ConfigureAwait(false);
         helper.VerifyPersistence();
-        helper.RegisterCache(_app.UserTokenCache);
-        helper.RegisterCache(_pasteApp.UserTokenCache);
+        return helper;
+    }
+
+    /// <summary>
+    /// Como chegar ao chaveiro. <see cref="System"/> é o real (Secret Service via libsecret); os testes
+    /// injetam um lento, travado ou que falha, sem tocar no chaveiro do usuário.
+    /// </summary>
+    public sealed class KeyringAccess
+    {
+        /// <summary>Garante um provedor do Secret Service no barramento (prazo, log). true = disponível.</summary>
+        public required Func<TimeSpan, Action<string>, Task<bool>> EnsureRunning { get; init; }
+        /// <summary>Abre o cache no chaveiro (nome do arquivo de cache) já verificado, ainda sem registrar.</summary>
+        public required Func<string, Task<MsalCacheHelper>> Open { get; init; }
+
+        public static KeyringAccess System { get; } = new()
+        {
+            EnsureRunning = (t, log) => SecretServiceLauncher.EnsureRunningAsync(t, log),
+            Open = OpenKeyringAsync,
+        };
     }
 
     /// <summary>

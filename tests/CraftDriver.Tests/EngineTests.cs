@@ -9,15 +9,17 @@ namespace CraftDriver.Tests;
 /// <summary>Motor + VFS + Graph falso, em diretório temporário.</summary>
 public sealed class Harness : IDisposable
 {
-    public readonly string Dir = Path.Combine(Path.GetTempPath(), "odl-test-" + Guid.NewGuid().ToString("N")[..8]);
+    public readonly string Dir = Path.Combine(Path.GetTempPath(), "craftdriver-test-" + Guid.NewGuid().ToString("N")[..8]);
     public readonly FakeGraph Remote = new();
     public readonly AppConfig Config;
     public readonly StateDb Db;
+    public string DbPath => Path.Combine(Dir, "state.db");
     public readonly SyncEngine Engine;
     public readonly VirtualFs Fs;
     public const string Name = "OneDrive - Teste";
 
-    public Harness()
+    /// <param name="configure">Ajustes na configuração antes de o motor existir (ex.: cache em outro sistema de arquivos).</param>
+    public Harness(Action<AppConfig>? configure = null)
     {
         // menor que o padrão (3 s) para a suíte ficar rápida, mas maior que a pausa do teste de salvamento
         DriveSync.UploadSettleMs = 1000;
@@ -29,7 +31,8 @@ public sealed class Harness : IDisposable
             Accounts = [new AccountConfig { Id = "acc", Username = "teste@exemplo.com" }],
             Drives = [new DriveConfig { DriveId = FakeGraph.DriveId, AccountId = "acc", DisplayName = Name }],
         };
-        Db = new StateDb(Path.Combine(Dir, "state.db"));
+        configure?.Invoke(Config);
+        Db = new StateDb(DbPath);
         Engine = new SyncEngine(Config, Db, new ContentCache(Config.CacheDir), new ActivityLog(Path.Combine(Dir, "log.txt")), _ => Remote);
         Fs = new VirtualFs(Engine);
         Engine.Start();
@@ -222,16 +225,18 @@ public class EngineTests
     }
 
     [Fact]
-    public void Conflito_de_edicao_mantem_as_duas_versoes()
+    public async Task Conflito_de_edicao_mantem_as_duas_versoes()
     {
         using var h = new Harness();
+        var events = new List<ConflictRecord>();
+        h.Engine.ConflictDetected += c => { lock (events) events.Add(c); };
         h.Remote.RemoteCreate("/", "plano.txt", "base");
         h.Settle();
         h.ReadFile("/plano.txt");
         h.Engine.Paused = true; // segura o envio
         h.WriteFile("/plano.txt", "versão local", create: false);
         h.Remote.RemoteUpdate("/plano.txt", "versão remota");
-        h.Drive.RunDeltaAsync(CancellationToken.None).GetAwaiter().GetResult();
+        await h.Drive.RunDeltaAsync(CancellationToken.None);
         h.Engine.Paused = false;
         h.Settle();
 
@@ -240,6 +245,19 @@ public class EngineTests
         var conflict = paths.Single(p => p.Contains("conflito"));
         Assert.Equal("versão local", h.Remote.ReadText(conflict));
         Assert.Equal("versão remota", h.ReadFile("/plano.txt"));
+
+        // fica registrado (aba Conflitos) apontando para a cópia, e avisa uma vez
+        var rec = Assert.Single(h.Db.Conflicts());
+        Assert.Equal(FakeGraph.DriveId, rec.DriveId);
+        Assert.Equal("plano.txt", rec.Original);
+        Assert.Equal(conflict.TrimStart('/'), rec.Copy);
+        Assert.Equal(h.Fs.Resolve(h.P(conflict))!.Value.Item!.Lid, rec.Lid);
+        Assert.Contains("edição", rec.Reason);
+        Assert.Equal(rec.Id, Assert.Single(events).Id);
+
+        h.Db.DismissConflict(rec.Id);
+        Assert.Empty(h.Db.Conflicts());
+        Assert.Contains(h.Remote.ListPaths(), p => p.Contains("conflito")); // dispensar não apaga a cópia
     }
 
     [Fact]
@@ -322,7 +340,39 @@ public class EngineTests
     }
 
     [Fact]
-    public void Exclusao_em_massa_pode_ser_restaurada()
+    public void Exclusao_em_massa_lista_o_que_foi_apagado()
+    {
+        using var h = new Harness();
+        h.Config.MassDeleteThreshold = 10;
+        h.Remote.RemoteCreate("/", "Docs", null, folder: true);
+        h.Remote.RemoteCreate("/Docs", "Sub", null, folder: true);
+        for (var i = 0; i < 3; i++) h.Remote.RemoteCreate("/Docs", $"solto{i}.txt", "x");
+        ApagarAnexos(h, 8);
+        // pasta inteira (com subpasta), arquivos soltos numa pasta que fica, e a subpasta vazia dela
+        for (var i = 0; i < 3; i++) Assert.Equal(0, h.Fs.Unlink(h.P($"/Docs/solto{i}.txt")));
+        Assert.Equal(0, h.Fs.Rmdir(h.P("/Docs/Sub")));
+        Harness.WaitUntil(() => h.Drive.DeleteHold, "retenção");
+
+        var held = h.Drive.HeldDeletes();
+        // a pasta apagada aparece uma vez, com o total dentro; o conteúdo dela não é listado item a item
+        Assert.Equal(
+            [("/Anexos", true, 9), ("/Docs/solto0.txt", false, 1), ("/Docs/solto1.txt", false, 1),
+             ("/Docs/solto2.txt", false, 1), ("/Docs/Sub", true, 1)],
+            held.Select(x => (x.Path, x.IsFolder, x.Count)).ToList());
+        Assert.Equal(13, held.Sum(x => x.Count));
+
+        // limite: os primeiros N mais o total continua certo para o "e mais X"
+        var first = h.Drive.HeldDeletes(limit: 2);
+        Assert.Equal(2, first.Count);
+        Assert.Equal("/Anexos", first[0].Path);
+
+        h.Drive.ConfirmDeletes();
+        h.Settle();
+        Assert.Empty(h.Drive.HeldDeletes());
+    }
+
+    [Fact]
+    public async Task Exclusao_em_massa_pode_ser_restaurada()
     {
         using var h = new Harness();
         h.Config.MassDeleteThreshold = 10;
@@ -330,7 +380,7 @@ public class EngineTests
         Harness.WaitUntil(() => h.Drive.DeleteHold, "retenção");
         Assert.Equal(-Errno.ENOENT, h.Fs.GetAttr(h.P("/Anexos"), out _));
 
-        h.Drive.RestoreDeletesAsync().GetAwaiter().GetResult();
+        await h.Drive.RestoreDeletesAsync(TestContext.Current.CancellationToken);
         Harness.WaitUntil(() => h.Fs.Resolve(h.P("/Anexos/f29.pdf")) != null, "itens restaurados");
         h.Settle();
 
@@ -374,7 +424,7 @@ public class EngineTests
         Assert.Equal("escrito sem internet", h.ReadFile("/offline.txt"));
         h.Remote.OfflineMode = false;
         // backoff: força nova tentativa
-        foreach (var op in h.Db.AllOps()) h.Db.FailOp(op.Id, "teste", TimeSpan.Zero);
+        if (h.Db.PeekOp(FakeGraph.DriveId) is { } op) h.Db.FailOp(op.Id, "teste", TimeSpan.Zero); // a fila só avança pela cabeça
         h.Settle();
         Assert.Equal("escrito sem internet", h.Remote.ReadText("/offline.txt"));
     }
@@ -399,18 +449,21 @@ public class EngineTests
     }
 
     [Fact]
-    public void Arquivo_criado_nos_dois_lados_vira_conflito()
+    public async Task Arquivo_criado_nos_dois_lados_vira_conflito()
     {
         using var h = new Harness();
         h.Engine.Paused = true;
         h.WriteFile("/igual.txt", "daqui");
         h.Remote.RemoteCreate("/", "igual.txt", "de lá");
-        h.Drive.RunDeltaAsync(CancellationToken.None).GetAwaiter().GetResult();
+        await h.Drive.RunDeltaAsync(CancellationToken.None);
         h.Engine.Paused = false;
         h.Settle();
         var paths = h.Remote.ListPaths();
         Assert.Equal(2, paths.Count);
         Assert.Equal("de lá", h.Remote.ReadText("/igual.txt"));
         Assert.Equal("daqui", h.Remote.ReadText(paths.Single(p => p.Contains("conflito"))));
+        var rec = Assert.Single(h.Db.Conflicts());
+        Assert.Equal("igual.txt", rec.Original);
+        Assert.Contains("conflito", rec.Copy);
     }
 }

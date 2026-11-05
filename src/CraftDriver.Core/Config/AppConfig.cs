@@ -19,6 +19,9 @@ public static class AppPaths
     /// <summary>Permite isolar tudo num diretório (testes / perfis). Variável CRAFTDRIVER_HOME.</summary>
     static string? Override => Environment.GetEnvironmentVariable("CRAFTDRIVER_HOME");
 
+    /// <summary>CRAFTDRIVER_HOME em uso (instância isolada: testes, desenvolvimento, verificação com conta real).</summary>
+    public static string? HomeOverride => Override;
+
     public static string ConfigDir => Override is { } o ? Path.Combine(o, "config")
         : Path.Combine(Xdg("XDG_CONFIG_HOME", Path.Combine(Home, ".config")), AppName);
 
@@ -112,11 +115,25 @@ public sealed class DriveConfig
 public sealed class AppConfig
 {
     /// <summary>
-    /// Client ID do app "OneDrive Linux" registrado no Microsoft Entra ID
+    /// Client ID do registro do craftDriver no Microsoft Entra ID (criado quando o projeto se chamava
+    /// "OneDrive Linux" — o nome exibido na tela de consentimento vem do registro, não daqui)
     /// (contas pessoais e organizacionais; redirects http://localhost e nativeclient).
     /// Troque pelo seu próprio registro no Entra ID quando possível.
     /// </summary>
     public const string DefaultClientId = "979715f8-d815-4f25-ac64-05cbccc74cc2";
+
+    /// <summary>Versão do formato do config.json gravada por este craftDriver.</summary>
+    public const int CurrentSchemaVersion = 1;
+
+    /// <summary>Versão do formato (arquivos sem o campo são da versão 1). Primeiro campo do JSON.</summary>
+    [JsonPropertyOrder(-1)]
+    public int SchemaVersion { get; set; } = CurrentSchemaVersion;
+
+    /// <summary>
+    /// O arquivo é de um craftDriver mais novo: gravar por cima apagaria campos que esta versão não conhece,
+    /// então <see cref="Save"/> não faz nada nesta execução.
+    /// </summary>
+    [JsonIgnore] public bool ReadOnly { get; private set; }
 
     public string ClientId { get; set; } = DefaultClientId;
     public string Authority { get; set; } = "https://login.microsoftonline.com/common";
@@ -124,9 +141,24 @@ public sealed class AppConfig
 
     public string MountPoint { get; set; } = AppPaths.DefaultMountPoint;
     public string CacheDir { get; set; } = AppPaths.DefaultCacheDir;
+    /// <summary>"system" (segue o portal/desktop), "light" ou "dark".</summary>
+    public string Theme { get; set; } = "system";
     public int PollIntervalSeconds { get; set; } = 30;
+    /// <summary>Downloads simultâneos por drive (sob demanda + fixados). 1–32; mudanças valem na hora (SyncEngine.ApplyTransferLimits).</summary>
+    public int DownloadConcurrency { get; set; } = 4;
+    /// <summary>Banda de download agregada por drive, em bytes/s. 0 (ou negativo) = ilimitado.</summary>
+    public long DownloadBytesPerSecond { get; set; }
+    /// <summary>Banda de upload por drive, em bytes/s. 0 (ou negativo) = ilimitado.</summary>
+    public long UploadBytesPerSecond { get; set; }
     /// <summary>Limite do cache de arquivos sob demanda (não fixados). 0 = sem limite.</summary>
     public long CacheLimitMB { get; set; } = 10 * 1024;
+    /// <summary>
+    /// Leitura por faixas: arquivos só-na-nuvem a partir deste tamanho abrem na hora (para leitura) e baixam só os
+    /// blocos lidos. 0 = desativado (sempre baixa o arquivo inteiro no open).
+    /// </summary>
+    public long StreamingThresholdMB { get; set; } = 8;
+    /// <summary>Tamanho do bloco da leitura por faixas (cada bloco = um pedido Range). Limitado a 64 KiB–64 MiB.</summary>
+    public int StreamingBlockKB { get; set; } = 4096;
     public bool StartMinimized { get; set; }
     /// <summary>
     /// Exclusão em massa: se mais itens que isso forem apagados de uma drive de uma vez, as exclusões
@@ -138,7 +170,8 @@ public sealed class AppConfig
     /// <summary>
     /// Processos que NÃO podem baixar arquivos que só estão na nuvem
     /// (indexadores e geradores de miniatura baixariam o OneDrive inteiro).
-    /// Comparado como substring da linha de comando do processo.
+    /// Comparado como substring do nome do programa (argv[0] sem o caminho, ou o nome da thread em /proc/PID/comm);
+    /// os argumentos não contam (abrir "thumbnail.jpg" com o cat não é bloqueado).
     /// </summary>
     public List<string> BlockedProcesses { get; set; } =
     [
@@ -156,33 +189,149 @@ public sealed class AppConfig
     public List<AccountConfig> Accounts { get; set; } = [];
     public List<DriveConfig> Drives { get; set; } = [];
 
-    static readonly JsonSerializerOptions JsonOpts = new() { WriteIndented = true };
+    /// <summary>
+    /// Problema encontrado ao carregar (arquivo inválido → padrões; nomes de pasta ajustados). Mostrado na
+    /// interface/terminal; o arquivo original inválido fica salvo ao lado.
+    /// </summary>
+    [JsonIgnore] public string? LoadWarning { get; private set; }
+
+    /// <summary>
+    /// Nomes de pasta das drives viram nomes de diretório no ponto de montagem: sem "/", não vazios,
+    /// diferentes de "."/"..", e únicos (sem diferenciar maiúsculas, como o UniqueDisplayName) — duas drives
+    /// com o mesmo nome deixavam a segunda inacessível. Retorna as renomeações feitas.
+    /// </summary>
+    public List<string> NormalizeDriveNames()
+    {
+        var changes = new List<string>();
+        var used = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var d in Drives)
+        {
+            var name = d.DisplayName.Replace('/', '-').Trim();
+            if (name is "" or "." or "..") name = "Drive";
+            var unique = name;
+            for (var i = 2; used.Contains(unique); i++) unique = $"{name} ({i})";
+            used.Add(unique);
+            if (unique != d.DisplayName)
+            {
+                changes.Add($"\"{d.DisplayName}\" → \"{unique}\"");
+                d.DisplayName = unique;
+            }
+        }
+        return changes;
+    }
+
+    /// <summary>
+    /// Inclui (ou substitui) a conta e cria a drive principal dela se ainda não existir.
+    /// Usado tanto pela instância aberta quanto pelo <c>craftdriver login</c> sem instância.
+    /// Retorna a drive criada, ou null se ela já existia.
+    /// </summary>
+    public DriveConfig? UpsertAccount(AccountConfig acc, string driveId, string? driveWebUrl)
+    {
+        Accounts.RemoveAll(a => a.Id == acc.Id);
+        Accounts.Add(acc);
+        if (Drives.Any(d => d.DriveId == driveId)) return null;
+        var label = acc.IsPersonal ? "OneDrive - Pessoal" : "OneDrive - " + Domain(acc.Username);
+        var dc = new DriveConfig
+        {
+            DriveId = driveId, AccountId = acc.Id, DisplayName = UniqueDisplayName(label),
+            Kind = acc.IsPersonal ? "personal" : "business", WebUrl = driveWebUrl,
+        };
+        Drives.Add(dc);
+        return dc;
+    }
+
+    public string UniqueDisplayName(string wanted)
+    {
+        wanted = wanted.Replace('/', '-').Trim();
+        var name = wanted;
+        for (var i = 2; Drives.Any(d => d.DisplayName.Equals(name, StringComparison.OrdinalIgnoreCase)); i++)
+            name = $"{wanted} ({i})";
+        return name;
+    }
+
+    static string Domain(string username)
+    {
+        var at = username.IndexOf('@');
+        if (at < 0) return username;
+        var domain = username[(at + 1)..];
+        var dot = domain.IndexOf('.');
+        return dot > 0 ? domain[..dot] : domain;
+    }
+
     static readonly object SaveLock = new();
 
     public static AppConfig Load(string? path = null)
     {
         path ??= AppPaths.ConfigFile;
         if (!File.Exists(path)) return new AppConfig();
+        AppConfig cfg;
         try
         {
-            return JsonSerializer.Deserialize<AppConfig>(File.ReadAllText(path), JsonOpts) ?? new AppConfig();
+            cfg = JsonSerializer.Deserialize(File.ReadAllText(path), ConfigJsonContext.Default.AppConfig) ?? new AppConfig();
         }
-        catch (JsonException)
+        catch (JsonException ex)
         {
-            File.Copy(path, path + ".corrompido", true);
-            return new AppConfig();
+            // não sobrescreve cópias de falhas anteriores; a próxima gravação substitui o arquivo inválido
+            var backup = $"{path}.corrompido-{DateTime.Now:yyyyMMdd-HHmmss}";
+            File.Copy(path, backup, true);
+            return new AppConfig
+            {
+                LoadWarning = $"A configuração ({path}) é inválida e foi ignorada: {ex.Message} " +
+                              $"Contas e pastas não foram carregadas; o arquivo original foi guardado em {backup}. " +
+                              "Corrija-o (ou copie-o de volta) com o craftDriver fechado.",
+            };
         }
+        if (cfg.SchemaVersion > CurrentSchemaVersion)
+        {
+            cfg.ReadOnly = true;
+            cfg.LoadWarning = $"A configuração ({path}) é de uma versão mais nova do craftDriver (formato {cfg.SchemaVersion}; " +
+                              $"esta entende até {CurrentSchemaVersion}). Ela foi carregada, mas alterações não serão gravadas " +
+                              "nesta execução para não apagar o que esta versão não conhece. Atualize o craftDriver.";
+            return cfg;
+        }
+        var renamed = cfg.NormalizeDriveNames();
+        if (renamed.Count > 0)
+            cfg.LoadWarning = "Nomes de pasta repetidos ou inválidos foram ajustados: " + string.Join(", ", renamed);
+        return cfg;
     }
 
+    /// <summary>
+    /// Grava atomicamente (temporário + rename) com permissão 0600: o arquivo tem os ids das contas e o
+    /// Client ID, e o temporário já nasce 0600, sem janela legível por outros usuários.
+    /// </summary>
     public void Save(string? path = null)
     {
+        if (ReadOnly) return;
         path ??= AppPaths.ConfigFile;
         lock (SaveLock)
         {
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            SchemaVersion = CurrentSchemaVersion;
             var tmp = path + ".tmp";
-            File.WriteAllText(tmp, JsonSerializer.Serialize(this, JsonOpts));
+            File.Delete(tmp); // UnixCreateMode só vale para arquivo novo
+            using (var fs = new FileStream(tmp, new FileStreamOptions
+            {
+                Mode = FileMode.CreateNew, Access = FileAccess.Write,
+                UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite,
+            }))
+            using (var w = new StreamWriter(fs))
+                w.Write(JsonSerializer.Serialize(this, ConfigJsonContext.Default.AppConfig));
             File.Move(tmp, path, true);
         }
     }
+
+    // ---- janela principal e bandeja (acrescentados no fim: menos conflito com outras mudanças) ----
+
+    /// <summary>Tamanho da janela principal (DIPs) no estado normal; null = padrão do XAML.</summary>
+    public double? WindowWidth { get; set; }
+    public double? WindowHeight { get; set; }
+    /// <summary>
+    /// Posição (pixels de tela) da janela principal no estado normal; null = o sistema escolhe. Só é usada se
+    /// couber numa tela atual. No Wayland/XWayland o compositor pode ignorar o pedido de posição.
+    /// </summary>
+    public int? WindowX { get; set; }
+    public int? WindowY { get; set; }
+    public bool WindowMaximized { get; set; }
+    /// <summary>O aviso "o craftDriver continua na bandeja" já foi mostrado (só aparece uma vez).</summary>
+    public bool TrayNoticeShown { get; set; }
 }

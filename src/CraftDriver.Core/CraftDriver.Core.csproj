@@ -7,6 +7,11 @@
     <SupportedOSPlatformVersion></SupportedOSPlatformVersion>
     <NoWarn>$(NoWarn);CA1416</NoWarn>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <!-- O pacote é publicado com trimming (packaging/build.sh): qualquer uso que o trimmer não consiga analisar
+         (JSON por reflexão etc.) quebra o build em vez de virar falha em produção. -->
+    <IsTrimmable>true</IsTrimmable>
+    <EnableTrimAnalyzer>true</EnableTrimAnalyzer>
+    <WarningsAsErrors>$(WarningsAsErrors);IL2026;IL2046;IL2057;IL2067;IL2070;IL2072;IL2075;IL2087;IL2090;IL2091;IL2104;IL3050</WarningsAsErrors>
   </PropertyGroup>
 
   <ItemGroup>

@@ -18,6 +18,9 @@ public sealed class FakeGraph : IGraphApi
         public bool Deleted;
         public long Seq;
         public DateTimeOffset Modified = DateTimeOffset.UtcNow;
+        /// <summary>Atalho ("Adicionar a Meus arquivos"): drive e item apontados.</summary>
+        public string? RemoteDrive, RemoteId;
+        public bool RemoteIsFolder;
         public string ETag => $"e-{Id}-{Version}-{MetaVersion}";
         public string CTag => $"c-{Id}-{Version}";
     }
@@ -29,9 +32,19 @@ public sealed class FakeGraph : IGraphApi
     public const string DriveId = "fake-drive";
     public int Uploads, Downloads, Deletes, Moves;
     public bool OfflineMode;
+    /// <summary>Os próximos N downloads chegam corrompidos (último byte trocado), sem erro de rede.</summary>
+    public int CorruptNextDownloads;
+    /// <summary>Erro (permanente) a lançar no envio de um arquivo, pelo nome.</summary>
+    public Func<string, Exception?>? UploadError;
 
-    public FakeGraph()
+    readonly string _driveId;
+
+    public FakeGraph() : this(DriveId) { }
+
+    /// <summary>Drive com outro id (ver <see cref="AddOwnerDrive"/>).</summary>
+    public FakeGraph(string driveId)
     {
+        _driveId = driveId;
         _nodes["root"] = new Node { Id = "root", Name = "root", IsFolder = true, Seq = ++_seq };
     }
 
@@ -45,6 +58,7 @@ public sealed class FakeGraph : IGraphApi
         Id = n.Id, Name = n.Name, ParentId = n.ParentId, IsFolder = n.IsFolder, IsRoot = n.Id == "root", IsDeleted = n.Deleted,
         Size = n.Content.Length, LastModified = n.Modified, Created = n.Modified, ETag = n.ETag, CTag = n.IsFolder ? null : n.CTag,
         QuickXorHash = n.IsFolder ? null : QuickXorHash.Compute(n.Content),
+        IsRemoteShortcut = n.RemoteId != null, RemoteDriveId = n.RemoteDrive, RemoteId = n.RemoteId, RemoteIsFolder = n.RemoteIsFolder,
     };
 
     Node? Child(string parentId, string name) =>
@@ -80,6 +94,7 @@ public sealed class FakeGraph : IGraphApi
                 Content = text == null ? [] : System.Text.Encoding.UTF8.GetBytes(text), Version = 1, Seq = ++_seq,
             };
             _nodes[n.Id] = n;
+            RecordVersion(n);
             return n;
         }
     }
@@ -93,6 +108,7 @@ public sealed class FakeGraph : IGraphApi
             n.Version++;
             n.Modified = DateTimeOffset.UtcNow;
             n.Seq = ++_seq;
+            RecordVersion(n);
         }
     }
 
@@ -102,6 +118,17 @@ public sealed class FakeGraph : IGraphApi
         {
             var n = FindByPath(path)!;
             MarkDeleted(n);
+        }
+    }
+
+    /// <summary>Exclusão em que o delta só traz a pasta (sem um evento por filho, como pode vir no OneDrive for Business).</summary>
+    public void RemoteDeleteFolderOnly(string path)
+    {
+        lock (_lock)
+        {
+            var n = FindByPath(path)!;
+            n.Deleted = true;
+            n.Seq = ++_seq;
         }
     }
 
@@ -136,30 +163,36 @@ public sealed class FakeGraph : IGraphApi
 
     public Task<GraphDrive> GetDriveAsync(string driveId, CancellationToken ct)
     {
+        if (Route(driveId) is { } o) return o.GetDriveAsync(driveId, ct);
         Check();
         return Task.FromResult(new GraphDrive(DriveId, "OneDrive", "personal", null, "Teste", 5L << 30, 1L << 30));
     }
 
     public Task<RemoteItem> GetRootAsync(string driveId, CancellationToken ct)
     {
+        if (Route(driveId) is { } o) return o.GetRootAsync(driveId, ct);
         Check();
         lock (_lock) return Task.FromResult(ToRemote(_nodes["root"]));
     }
 
     public Task<RemoteItem?> GetItemAsync(string driveId, string itemId, CancellationToken ct)
     {
+        if (Route(driveId) is { } o) return o.GetItemAsync(driveId, itemId, ct);
+        if (Restricted) { Check(); lock (_lock) return Task.FromResult(_nodes.TryGetValue(itemId, out var r) && !r.Deleted && ShareOf(r) != null ? ToRemote(r) : null); }
         Check();
         lock (_lock) return Task.FromResult(_nodes.TryGetValue(itemId, out var n) && !n.Deleted ? ToRemote(n) : null);
     }
 
     public Task<RemoteItem?> GetChildByNameAsync(string driveId, string parentId, string name, CancellationToken ct)
     {
+        if (Route(driveId) is { } o) return o.GetChildByNameAsync(driveId, parentId, name, ct);
         Check();
         lock (_lock) return Task.FromResult(Child(parentId, name) is { } n ? ToRemote(n) : null);
     }
 
     public Task<DeltaPage> GetDeltaAsync(string driveId, string? link, CancellationToken ct)
     {
+        if (Route(driveId) is { } o) return o.GetDeltaAsync(driveId, link, ct);
         Check();
         lock (_lock)
         {
@@ -172,8 +205,18 @@ public sealed class FakeGraph : IGraphApi
         }
     }
 
-    public Task DownloadAsync(string driveId, string itemId, Stream destination, Action<long>? progress, CancellationToken ct)
+    /// <summary>Último limite de envio configurado por drive (bytes/s).</summary>
+    public readonly System.Collections.Concurrent.ConcurrentDictionary<string, long> UploadLimits = new();
+    public void ConfigureUploadBandwidth(string driveId, long bytesPerSecond) => UploadLimits[driveId] = bytesPerSecond;
+
+    /// <summary>Executado no início de cada download (ex.: segurar até cancelar).</summary>
+    public Func<CancellationToken, Task>? BeforeDownload;
+
+    public async Task DownloadAsync(string driveId, string itemId, Stream destination, long offset, Action<long>? progress, CancellationToken ct)
     {
+        if (Route(driveId) is { } o) { await o.DownloadAsync(driveId, itemId, destination, offset, progress, ct); return; }
+        if (Restricted) lock (_lock) if (!_nodes.TryGetValue(itemId, out var r) || ShareOf(r) == null) throw new GraphException(HttpStatusCode.Forbidden, "accessDenied", "sem acesso");
+        if (BeforeDownload is { } before) await before(ct);
         Check();
         byte[] data;
         lock (_lock)
@@ -181,16 +224,116 @@ public sealed class FakeGraph : IGraphApi
             if (!_nodes.TryGetValue(itemId, out var n) || n.Deleted) throw new GraphException(HttpStatusCode.NotFound, "itemNotFound", "não existe");
             data = n.Content.ToArray();
             Downloads++;
+            DownloadOffsets.Add(offset);
+            BytesServed += Math.Max(0, data.Length - (offset > 0 && offset < data.Length ? offset : 0));
+            if (CorruptNextDownloads > 0 && data.Length > 0)
+            {
+                CorruptNextDownloads--;
+                data[^1] ^= 0xFF;
+            }
         }
-        destination.Write(data);
+        if (offset > 0 && offset < data.Length)
+            destination.Seek(offset, SeekOrigin.Begin); // 206: só o restante
+        else
+        {
+            destination.SetLength(0);
+            offset = 0;
+        }
+        // como o GraphClient: WriteAsync (o fluxo com limite de banda não aceita escrita síncrona)
+        var rest = data.AsMemory((int)offset);
+        if (DropDownloadAfter is { } drop && drop < rest.Length)
+        {
+            DropDownloadAfter = null;
+            await destination.WriteAsync(rest[..(int)drop], ct);
+            await destination.FlushAsync(ct);
+            throw new HttpIOException(HttpRequestError.ResponseEnded, "conexão caiu (simulado)");
+        }
+        await destination.WriteAsync(rest, ct);
         progress?.Invoke(data.Length);
-        return Task.CompletedTask;
     }
 
-    public Task<RemoteItem> UploadAsync(string driveId, string parentId, string name, string? itemId, string? ifMatchETag,
-        string localFile, DateTimeOffset modified, Action<long>? progress, CancellationToken ct)
+    /// <summary>O próximo download entrega só estes bytes e a conexão "cai".</summary>
+    public long? DropDownloadAfter;
+    public readonly List<long> DownloadOffsets = [];
+
+    /// <summary>Faixas pedidas com <see cref="DownloadRangeAsync"/> (offset, tamanho).</summary>
+    public readonly List<(long offset, long length)> RangeRequests = [];
+    /// <summary>Total de bytes de conteúdo entregues (downloads inteiros + faixas).</summary>
+    public long BytesServed;
+
+    public async Task DownloadRangeAsync(string driveId, string itemId, Stream destination, long offset, long length,
+        Action<long>? progress, CancellationToken ct)
     {
+        if (BeforeDownload is { } before) await before(ct);
         Check();
+        byte[] data;
+        lock (_lock)
+        {
+            if (!_nodes.TryGetValue(itemId, out var n) || n.Deleted) throw new GraphException(HttpStatusCode.NotFound, "itemNotFound", "não existe");
+            if (offset < 0 || offset >= n.Content.Length)
+                throw new GraphException(HttpStatusCode.RequestedRangeNotSatisfiable, "invalidRange", "faixa fora do arquivo");
+            var len = (int)Math.Min(length, n.Content.Length - offset);
+            data = n.Content.AsSpan((int)offset, len).ToArray();
+            RangeRequests.Add((offset, length));
+            BytesServed += len;
+            if (CorruptNextDownloads > 0 && data.Length > 0)
+            {
+                CorruptNextDownloads--;
+                data[^1] ^= 0xFF;
+            }
+        }
+        await destination.WriteAsync(data, ct);
+        progress?.Invoke(data.Length);
+        if (data.Length != length) throw new HttpIOException(HttpRequestError.ResponseEnded, "faixa incompleta (simulado)");
+    }
+
+    /// <summary>Cria um arquivo binário (conteúdo arbitrário) como se viesse de outro dispositivo.</summary>
+    public Node RemoteCreateBytes(string parentPath, string name, byte[] content)
+    {
+        var n = RemoteCreate(parentPath, name, null);
+        lock (_lock) n.Content = content;
+        return n;
+    }
+
+    public void RemoteUpdateBytes(string path, byte[] content)
+    {
+        lock (_lock)
+        {
+            var n = FindByPath(path)!;
+            n.Content = content;
+            n.Version++;
+            n.Modified = DateTimeOffset.UtcNow;
+            n.Seq = ++_seq;
+        }
+    }
+    /// <summary>URLs de sessão recebidas em cada envio (simula a persistência da sessão de upload).</summary>
+    public readonly List<string?> UploadSessionsSeen = [];
+    /// <summary>Próximo envio: grava esta "sessão" e cai a conexão (retomável).</summary>
+    public string? FailUploadAfterSession;
+
+    /// <summary>Executado no início de cada envio (nome do arquivo, token), ex.: segurar até cancelar.</summary>
+    public Func<string, CancellationToken, Task>? BeforeUpload;
+
+    public async Task<RemoteItem> UploadAsync(string driveId, string parentId, string name, string? itemId, string? ifMatchETag,
+        string localFile, DateTimeOffset modified, Action<long>? progress, CancellationToken ct, IUploadSessionStore? session = null)
+    {
+        if (Route(driveId) is { } o) return await o.UploadAsync(driveId, parentId, name, itemId, ifMatchETag, localFile, modified, progress, ct, session);
+        CheckWrite(itemId ?? parentId);
+        if (BeforeUpload is { } before) await before(name, ct);
+        Check();
+        UploadSessionsSeen.Add(session?.Url);
+        if (FailUploadAfterSession is { } fakeUrl)
+        {
+            FailUploadAfterSession = null;
+            session?.Save(fakeUrl);
+            throw new HttpRequestException("conexão caiu durante o envio (simulado)");
+        }
+        if (UploadError?.Invoke(name) is { } uploadError) throw uploadError;
+        if (RealUploadSessions && new FileInfo(localFile).Length > SimpleUploadLimit)
+        {
+            var sent = await SessionClient.UploadAsync(driveId, parentId, name, itemId, ifMatchETag, localFile, modified, progress, ct, session);
+            lock (_lock) return ToRemote(_nodes[sent.Id]);
+        }
         var data = File.ReadAllBytes(localFile);
         lock (_lock)
         {
@@ -205,19 +348,23 @@ public sealed class FakeGraph : IGraphApi
             else
             {
                 if (Child(parentId, name) != null) throw new GraphException(HttpStatusCode.Conflict, "nameAlreadyExists", "já existe");
+                CheckPathLength(parentId, name);
                 n = new Node { Id = "id" + ++_nextId, Name = name, ParentId = parentId, Version = 1 };
                 _nodes[n.Id] = n;
             }
             n.Content = data;
             n.Modified = modified;
             n.Seq = ++_seq;
+            RecordVersion(n);
             progress?.Invoke(data.Length);
-            return Task.FromResult(ToRemote(n));
+            return ToRemote(n);
         }
     }
 
     public Task<RemoteItem> CreateFolderAsync(string driveId, string parentId, string name, CancellationToken ct)
     {
+        if (Route(driveId) is { } o) return o.CreateFolderAsync(driveId, parentId, name, ct);
+        CheckWrite(parentId);
         Check();
         lock (_lock)
         {
@@ -226,6 +373,7 @@ public sealed class FakeGraph : IGraphApi
                 if (existing.IsFolder) return Task.FromResult(ToRemote(existing));
                 throw new GraphException(HttpStatusCode.Conflict, "nameAlreadyExists", "já existe");
             }
+            CheckPathLength(parentId, name);
             var n = new Node { Id = "id" + ++_nextId, Name = name, ParentId = parentId, IsFolder = true, Version = 1, Seq = ++_seq };
             _nodes[n.Id] = n;
             return Task.FromResult(ToRemote(n));
@@ -234,6 +382,8 @@ public sealed class FakeGraph : IGraphApi
 
     public Task DeleteAsync(string driveId, string itemId, CancellationToken ct)
     {
+        if (Route(driveId) is { } o) return o.DeleteAsync(driveId, itemId, ct);
+        CheckWrite(itemId);
         Check();
         lock (_lock)
         {
@@ -245,9 +395,13 @@ public sealed class FakeGraph : IGraphApi
 
     public Task<RemoteItem> MoveAsync(string driveId, string itemId, string newParentId, string newName, CancellationToken ct)
     {
+        if (Route(driveId) is { } o) return o.MoveAsync(driveId, itemId, newParentId, newName, ct);
+        CheckWrite(itemId);
+        CheckWrite(newParentId);
         Check();
         lock (_lock)
         {
+            CheckPathLength(newParentId, newName);
             Moves++;
             var n = _nodes[itemId];
             if (Child(newParentId, newName) is { } clash && clash.Id != itemId) MarkDeleted(clash); // conflictBehavior=replace
@@ -261,6 +415,8 @@ public sealed class FakeGraph : IGraphApi
 
     public Task<RemoteItem> SetModifiedAsync(string driveId, string itemId, DateTimeOffset modified, CancellationToken ct)
     {
+        if (Route(driveId) is { } o) return o.SetModifiedAsync(driveId, itemId, modified, ct);
+        CheckWrite(itemId);
         Check();
         lock (_lock)
         {
@@ -269,6 +425,400 @@ public sealed class FakeGraph : IGraphApi
             n.MetaVersion++;
             n.Seq = ++_seq;
             return Task.FromResult(ToRemote(n));
+        }
+    }
+
+    // ---------- outras drives: compartilhados comigo e atalhos ----------
+
+    readonly Dictionary<string, FakeGraph> _others = new();
+
+    /// <summary>Drive de outro usuário: só os itens compartilhados (e descendentes) são acessíveis.</summary>
+    public bool Restricted;
+    /// <summary>Compartilhamentos desta drive (dona): id do item → pode escrever.</summary>
+    public readonly Dictionary<string, bool> Shares = new();
+    /// <summary>Escritas recusadas por falta de permissão (não deveriam nem chegar aqui).</summary>
+    public int DeniedWrites;
+    /// <summary>Entradas de /me/drive/sharedWithMe: (drive dona, id do item).</summary>
+    public readonly List<(FakeGraph owner, string id)> SharedWithMe = [];
+    public int SharedWithMeCalls, ChildrenCalls;
+    public bool SharedWithMeFails;
+    /// <summary>Tamanho da página de /children (para exercitar o nextLink).</summary>
+    public int ChildrenPageSize = 200;
+
+    public string Id => _driveId;
+
+    /// <summary>Cria a drive de outro usuário (o dono), acessível pela mesma conta só no que for compartilhado.</summary>
+    public FakeGraph AddOwnerDrive(string driveId)
+    {
+        var g = new FakeGraph(driveId) { Restricted = true };
+        lock (_lock) _others[driveId] = g;
+        return g;
+    }
+
+    FakeGraph? Route(string driveId)
+    {
+        if (driveId == _driveId) return null;
+        FakeGraph? o;
+        lock (_lock) o = _others.TryGetValue(driveId, out var x) ? x : null;
+        if (o != null) Check(); // sem rede aqui = sem rede para a drive do dono também
+        return o;
+    }
+
+    /// <summary>Compartilhamento que dá acesso ao nó (ele ou um ancestral); null = sem acesso.</summary>
+    bool? ShareOf(Node n)
+    {
+        if (!Restricted) return true;
+        for (Node? cur = n; cur != null; cur = cur.ParentId != null && _nodes.TryGetValue(cur.ParentId, out var p) ? p : null)
+            if (Shares.TryGetValue(cur.Id, out var w)) return w;
+        return null;
+    }
+
+    void CheckWrite(string itemId)
+    {
+        if (!Restricted) return;
+        lock (_lock)
+        {
+            if (_nodes.TryGetValue(itemId, out var n) && ShareOf(n) == true) return;
+            DeniedWrites++;
+        }
+        throw new GraphException(HttpStatusCode.Forbidden, "accessDenied", "sem permissão de escrita");
+    }
+
+    /// <summary>O dono compartilha <paramref name="path"/> (da drive dele) com o usuário desta drive.</summary>
+    public Node ShareWithMe(FakeGraph owner, string path, bool writable)
+    {
+        var n = owner.FindByPath(path) ?? throw new InvalidOperationException("não existe: " + path);
+        lock (owner._lock) owner.Shares[n.Id] = writable;
+        lock (_lock) SharedWithMe.Add((owner, n.Id));
+        return n;
+    }
+
+    /// <summary>O dono para de compartilhar (some de sharedWithMe e o acesso acaba).</summary>
+    public void Unshare(FakeGraph owner, string path)
+    {
+        var n = owner.FindByPath(path)!;
+        lock (owner._lock) owner.Shares.Remove(n.Id);
+        lock (_lock) SharedWithMe.RemoveAll(x => x.owner == owner && x.id == n.Id);
+    }
+
+    /// <summary>"Adicionar atalho a Meus arquivos": cria o atalho em <paramref name="parentPath"/> desta drive.</summary>
+    public Node AddShortcut(string parentPath, string name, FakeGraph owner, string targetPath)
+    {
+        var target = owner.FindByPath(targetPath)!;
+        lock (_lock)
+        {
+            var parent = FindByPath(parentPath) ?? throw new InvalidOperationException("pai não existe");
+            var n = new Node
+            {
+                Id = "id" + ++_nextId, Name = name, ParentId = parent.Id, IsFolder = target.IsFolder, Version = 1, Seq = ++_seq,
+                RemoteDrive = owner._driveId, RemoteId = target.Id, RemoteIsFolder = target.IsFolder,
+            };
+            _nodes[n.Id] = n;
+            return n;
+        }
+    }
+
+    public Task<List<RemoteItem>> GetSharedWithMeAsync(CancellationToken ct)
+    {
+        Check();
+        if (SharedWithMeFails) throw new GraphException(HttpStatusCode.ServiceUnavailable, "serviceNotAvailable", "falha simulada");
+        List<(FakeGraph owner, string id)> entries;
+        lock (_lock)
+        {
+            SharedWithMeCalls++;
+            entries = SharedWithMe.ToList();
+        }
+        var list = new List<RemoteItem>();
+        foreach (var (owner, id) in entries)
+            lock (owner._lock)
+            {
+                var n = owner._nodes[id];
+                if (n.Deleted) continue;
+                var r = owner.ToRemote(n);
+                list.Add(new RemoteItem
+                {
+                    Id = "swm-" + id, Name = n.Name, IsFolder = n.IsFolder, Size = r.Size, LastModified = n.Modified, Created = n.Modified,
+                    IsRemoteShortcut = true, RemoteDriveId = owner._driveId, RemoteId = id, RemoteIsFolder = n.IsFolder,
+                });
+            }
+        return Task.FromResult(list);
+    }
+
+    public Task<DeltaPage> GetChildrenAsync(string driveId, string itemId, string? next, CancellationToken ct)
+    {
+        if (Route(driveId) is { } o) return o.GetChildrenAsync(driveId, itemId, next, ct);
+        Check();
+        lock (_lock)
+        {
+            ChildrenCalls++;
+            if (!_nodes.TryGetValue(itemId, out var folder) || folder.Deleted || ShareOf(folder) == null)
+                throw new GraphException(HttpStatusCode.NotFound, "itemNotFound", "não existe");
+            var all = _nodes.Values.Where(n => !n.Deleted && n.ParentId == itemId).OrderBy(n => n.Name).ToList();
+            var start = next == null ? 0 : int.Parse(next.Split(':')[2]);
+            var page = all.Skip(start).Take(ChildrenPageSize).Select(ToRemote).ToList();
+            var end = start + page.Count;
+            return Task.FromResult(new DeltaPage(page, end < all.Count ? $"children:{itemId}:{end}" : null, null));
+        }
+    }
+
+    public Task<bool> CanWriteAsync(string driveId, string itemId, CancellationToken ct)
+    {
+        if (Route(driveId) is { } o) return o.CanWriteAsync(driveId, itemId, ct);
+        Check();
+        lock (_lock) return Task.FromResult(_nodes.TryGetValue(itemId, out var n) && ShareOf(n) == true);
+    }
+
+    // ---------- compartilhamento, versões e Lixeira ----------
+
+    /// <summary>Simula o tenant que proíbe links "qualquer pessoa" (anonymous): createLink com esse escopo dá 403.</summary>
+    public bool RefuseAnonymousLinks;
+    public readonly List<(string ItemId, string Type, string Scope)> LinkRequests = [];
+    public int VersionRestores, VersionDownloads, TrashRestores;
+    readonly Dictionary<string, List<(string Id, byte[] Content, DateTimeOffset Modified)>> _versions = new();
+
+    void RecordVersion(Node n)
+    {
+        if (n.IsFolder) return;
+        if (!_versions.TryGetValue(n.Id, out var list)) _versions[n.Id] = list = [];
+        list.Add(($"{list.Count + 1}.0", n.Content.ToArray(), n.Modified));
+    }
+
+    Node Existing(string itemId) =>
+        _nodes.TryGetValue(itemId, out var n) && !n.Deleted ? n : throw new GraphException(HttpStatusCode.NotFound, "itemNotFound", "não existe");
+
+    public Task<SharingLink> CreateLinkAsync(string driveId, string itemId, string type, string scope, CancellationToken ct)
+    {
+        Check();
+        lock (_lock)
+        {
+            LinkRequests.Add((itemId, type, scope));
+            Existing(itemId);
+            if (scope == "anonymous" && RefuseAnonymousLinks)
+                throw new GraphException(HttpStatusCode.Forbidden, "accessDenied", "Sharing links of type anonymous are disabled by policy");
+            return Task.FromResult(new SharingLink($"https://1drv.ms/fake/{itemId}?{type}&{scope}", type, scope));
+        }
+    }
+
+    public Task<IReadOnlyList<DriveItemVersion>> ListVersionsAsync(string driveId, string itemId, CancellationToken ct)
+    {
+        Check();
+        lock (_lock)
+        {
+            Existing(itemId);
+            IReadOnlyList<DriveItemVersion> list = (_versions.GetValueOrDefault(itemId) ?? [])
+                .Select(v => new DriveItemVersion(v.Id, v.Modified, v.Content.Length, "Teste"))
+                .Reverse().ToList();
+            return Task.FromResult(list);
+        }
+    }
+
+    public Task RestoreVersionAsync(string driveId, string itemId, string versionId, CancellationToken ct)
+    {
+        Check();
+        lock (_lock)
+        {
+            var n = Existing(itemId);
+            var v = _versions.GetValueOrDefault(itemId)?.FirstOrDefault(x => x.Id == versionId) is { Id: not null } found
+                ? found : throw new GraphException(HttpStatusCode.NotFound, "itemNotFound", "versão não existe");
+            VersionRestores++;
+            n.Content = v.Content.ToArray();
+            n.Version++;
+            n.Modified = DateTimeOffset.UtcNow;
+            n.Seq = ++_seq;
+            RecordVersion(n);
+            return Task.CompletedTask;
+        }
+    }
+
+    public Task DownloadVersionAsync(string driveId, string itemId, string versionId, Stream destination, CancellationToken ct)
+    {
+        Check();
+        byte[] data;
+        lock (_lock)
+        {
+            Existing(itemId);
+            var v = _versions.GetValueOrDefault(itemId)?.FirstOrDefault(x => x.Id == versionId) is { Id: not null } found
+                ? found : throw new GraphException(HttpStatusCode.NotFound, "itemNotFound", "versão não existe");
+            VersionDownloads++;
+            data = v.Content.ToArray();
+        }
+        destination.Write(data);
+        return Task.CompletedTask;
+    }
+
+    public Task<RemoteItem> RestoreDeletedAsync(string driveId, string itemId, CancellationToken ct)
+    {
+        Check();
+        lock (_lock)
+        {
+            if (!_nodes.TryGetValue(itemId, out var n) || !n.Deleted)
+                throw new GraphException(HttpStatusCode.NotFound, "itemNotFound", "não está na Lixeira");
+            TrashRestores++;
+            void Undelete(Node x)
+            {
+                x.Deleted = false;
+                x.Seq = ++_seq;
+                foreach (var c in _nodes.Values.Where(c => c.ParentId == x.Id && c.Deleted).ToList()) Undelete(c);
+            }
+            Undelete(n);
+            return Task.FromResult(ToRemote(n));
+        }
+    }
+
+    /// <summary>
+    /// Limite do caminho inteiro na nuvem (o OneDrive/SharePoint recusa mais de 400 caracteres com
+    /// <c>pathIsTooLong</c>); null = sem limite. Vale para criar pasta, enviar arquivo novo e mover.
+    /// </summary>
+    public int? MaxPathChars;
+    public int PathTooLongRejections;
+
+    /// <summary>Chamar com <c>_lock</c> preso.</summary>
+    void CheckPathLength(string parentId, string name)
+    {
+        if (MaxPathChars is not { } max) return;
+        var len = name.Length + 1;
+        for (var cur = _nodes.GetValueOrDefault(parentId); cur is { ParentId: not null }; cur = _nodes.GetValueOrDefault(cur.ParentId))
+            len += cur.Name.Length + 1;
+        if (len <= max) return;
+        PathTooLongRejections++;
+        throw new GraphException(HttpStatusCode.BadRequest, "pathIsTooLong", "Path exceeds maximum length.");
+    }
+
+    // ---------- envio grande em sessão pelo protocolo real ----------
+
+    const long SimpleUploadLimit = 4 * 1024 * 1024;
+
+    /// <summary>
+    /// Arquivos acima do limite do PUT simples (4 MiB) sobem pelo <see cref="GraphClient"/> de verdade
+    /// (createUploadSession, partes com Content-Range, consulta de nextExpectedRanges ao retomar) contra um servidor
+    /// HTTP falso que grava nesta drive — o código de sessão/retomada exercitado é o de produção.
+    /// </summary>
+    public bool RealUploadSessions;
+    /// <summary>Bytes de partes aceitas pelo servidor de sessões (soma de todos os PUTs gravados).</summary>
+    public long SessionBytesReceived;
+    public int SessionsCreated, SessionStatusQueries;
+    /// <summary>Offset de cada parte que chegou ao servidor de sessões (aceita ou não).</summary>
+    public readonly List<long> ChunkOffsets = [];
+    /// <summary>Executado antes de gravar cada parte (offset, token do pedido), ex.: segurar até o motor parar.</summary>
+    public Func<long, CancellationToken, Task>? BeforeUploadChunk;
+
+    /// <summary>As sessões abertas expiram no servidor: a URL guardada passa a responder 404.</summary>
+    public void ExpireUploadSessions()
+    {
+        lock (_lock) _sessions.Clear();
+    }
+
+    sealed class UploadSession
+    {
+        public string? ItemId, ParentId, Name;
+        public byte[] Data = [];
+        public long Received;
+        public DateTimeOffset Modified = DateTimeOffset.UtcNow;
+    }
+
+    readonly Dictionary<string, UploadSession> _sessions = new();
+    int _nextSession;
+    GraphClient? _sessionClient;
+
+    GraphClient SessionClient
+    {
+        get
+        {
+            lock (_lock) return _sessionClient ??= new GraphClient((_, _) => Task.FromResult("token"), new HttpClient(new SessionServer(this)));
+        }
+    }
+
+    /// <summary>Servidor falso das sessões de upload (só os pedidos que o GraphClient faz num envio grande).</summary>
+    sealed class SessionServer(FakeGraph g) : HttpMessageHandler
+    {
+        const string UploadBase = "https://upload.fake/sessao/";
+
+        static HttpResponseMessage Json(HttpStatusCode code, string json) =>
+            new(code) { Content = new StringContent(json, System.Text.Encoding.UTF8, "application/json") };
+
+        static HttpResponseMessage Error(HttpStatusCode code, string err) => Json(code, $$$"""{"error":{"code":"{{{err}}}","message":"{{{err}}}"}}""");
+
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage req, CancellationToken ct)
+        {
+            var url = req.RequestUri!.OriginalString;
+            if (url.EndsWith("/createUploadSession", StringComparison.Ordinal) && req.Method == HttpMethod.Post)
+            {
+                using var doc = System.Text.Json.JsonDocument.Parse(await req.Content!.ReadAsStringAsync(ct));
+                var modified = doc.RootElement.GetProperty("item").GetProperty("fileSystemInfo").GetProperty("lastModifiedDateTime").GetDateTimeOffset();
+                var rest = url[(url.IndexOf("/items/", StringComparison.Ordinal) + 7)..^"/createUploadSession".Length];
+                var s = new UploadSession { Modified = modified };
+                var colon = rest.IndexOf(":/", StringComparison.Ordinal);
+                lock (g._lock)
+                {
+                    if (colon >= 0)
+                    {
+                        s.ParentId = Uri.UnescapeDataString(rest[..colon]);
+                        s.Name = Uri.UnescapeDataString(rest[(colon + 2)..^1]);
+                        if (g.Child(s.ParentId, s.Name) != null) return Error(HttpStatusCode.Conflict, "nameAlreadyExists");
+                    }
+                    else
+                    {
+                        s.ItemId = Uri.UnescapeDataString(rest);
+                        if (!g._nodes.TryGetValue(s.ItemId, out var n) || n.Deleted) return Error(HttpStatusCode.NotFound, "itemNotFound");
+                        if (req.Headers.TryGetValues("If-Match", out var m) && m.First() != n.ETag) return Error(HttpStatusCode.PreconditionFailed, "resourceModified");
+                    }
+                    var id = UploadBase + ++g._nextSession;
+                    g._sessions[id] = s;
+                    g.SessionsCreated++;
+                    return Json(HttpStatusCode.OK, $$"""{"uploadUrl":"{{id}}"}""");
+                }
+            }
+            if (!url.StartsWith(UploadBase, StringComparison.Ordinal)) return Error(HttpStatusCode.NotFound, "itemNotFound");
+            if (req.Method == HttpMethod.Get)
+            {
+                lock (g._lock)
+                {
+                    g.SessionStatusQueries++;
+                    return g._sessions.TryGetValue(url, out var s)
+                        ? Json(HttpStatusCode.OK, $$"""{"nextExpectedRanges":["{{s.Received}}-"]}""")
+                        : Error(HttpStatusCode.NotFound, "itemNotFound");
+                }
+            }
+            if (req.Method == HttpMethod.Delete)
+            {
+                lock (g._lock) g._sessions.Remove(url);
+                return new HttpResponseMessage(HttpStatusCode.NoContent);
+            }
+            var range = req.Content!.Headers.ContentRange!;
+            var data = await req.Content.ReadAsByteArrayAsync(ct);
+            lock (g._lock) g.ChunkOffsets.Add(range.From!.Value);
+            if (g.BeforeUploadChunk is { } before) await before(range.From!.Value, ct);
+            lock (g._lock)
+            {
+                if (!g._sessions.TryGetValue(url, out var s)) return Error(HttpStatusCode.NotFound, "itemNotFound");
+                if (range.From != s.Received) return Error(HttpStatusCode.RequestedRangeNotSatisfiable, "invalidRange");
+                var total = range.Length!.Value;
+                if (s.Data.Length != total) Array.Resize(ref s.Data, (int)total);
+                data.CopyTo(s.Data, range.From!.Value);
+                s.Received = range.To!.Value + 1;
+                g.SessionBytesReceived += data.Length;
+                if (s.Received < total) return Json(HttpStatusCode.Accepted, $$"""{"nextExpectedRanges":["{{s.Received}}-"]}""");
+
+                g._sessions.Remove(url);
+                g.Uploads++;
+                Node n;
+                if (s.ItemId != null)
+                {
+                    if (!g._nodes.TryGetValue(s.ItemId, out n!) || n.Deleted) return Error(HttpStatusCode.NotFound, "itemNotFound");
+                    n.Version++;
+                }
+                else
+                {
+                    if (g.Child(s.ParentId!, s.Name!) != null) return Error(HttpStatusCode.Conflict, "nameAlreadyExists");
+                    n = new Node { Id = "id" + ++g._nextId, Name = s.Name!, ParentId = s.ParentId, Version = 1 };
+                    g._nodes[n.Id] = n;
+                }
+                n.Content = s.Data;
+                n.Modified = s.Modified;
+                n.Seq = ++g._seq;
+                g.RecordVersion(n);
+                return Json(HttpStatusCode.Created, $$$"""{"id":"{{{n.Id}}}","name":"{{{n.Name}}}","size":{{{n.Content.Length}}},"file":{}}""");
+            }
         }
     }
 }

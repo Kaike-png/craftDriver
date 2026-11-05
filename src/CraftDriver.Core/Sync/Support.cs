@@ -7,15 +7,77 @@ public enum ActivityKind { Info, Upload, Download, Delete, Move, Conflict, Error
 
 public sealed record ActivityEntry(DateTime Time, ActivityKind Kind, string Text);
 
-public sealed class Transfer
+public sealed class Transfer(Func<long>? clockMs = null)
 {
+    /// <summary>Velocidade medida só nos últimos segundos, para acompanhar mudanças de ritmo.</summary>
+    const long WindowMs = 5000;
+
+    readonly Func<long> _now = clockMs ?? (() => Environment.TickCount64);
+    readonly CancellationTokenSource _cts = new();
+    readonly Queue<(long at, long bytes)> _samples = new();
+    long _done;
+
     public long Id { get; init; }
     public string Name { get; init; } = "";
     public bool Upload { get; init; }
     public long Total { get; init; }
-    public long Done;
+
+    /// <summary>Bytes já transferidos. Atribuições alimentam a medição de velocidade.</summary>
+    public long Done
+    {
+        get => Interlocked.Read(ref _done);
+        set
+        {
+            Interlocked.Exchange(ref _done, value);
+            lock (_samples)
+            {
+                var now = _now();
+                _samples.Enqueue((now, value));
+                while (_samples.Count > 2 && now - _samples.Peek().at > WindowMs) _samples.Dequeue();
+            }
+        }
+    }
+
     public double Percent => Total <= 0 ? 0 : Math.Min(100, Done * 100.0 / Total);
+
+    /// <summary>Bytes por segundo na janela recente; 0 sem medida ou se parou há mais que a janela.</summary>
+    public double BytesPerSecond
+    {
+        get
+        {
+            lock (_samples)
+            {
+                if (_samples.Count < 2) return 0;
+                var now = _now();
+                var last = _samples.Last();
+                if (now - last.at > WindowMs) return 0;
+                var first = _samples.Peek();
+                var ms = last.at - first.at;
+                return ms <= 0 ? 0 : (last.bytes - first.bytes) * 1000.0 / ms;
+            }
+        }
+    }
+
+    /// <summary>Tempo restante estimado pela velocidade recente; null sem estimativa.</summary>
+    public TimeSpan? Remaining
+    {
+        get
+        {
+            var rate = BytesPerSecond;
+            if (rate <= 0 || Total <= 0) return null;
+            return TimeSpan.FromSeconds(Math.Round(Math.Max(0, Total - Done) / rate));
+        }
+    }
+
+    /// <summary>Cancelamento pedido pelo usuário (só esta transferência).</summary>
+    public CancellationToken Token => _cts.Token;
+    public bool Cancelled => _cts.IsCancellationRequested;
+    internal void Cancel() => _cts.Cancel();
 }
+
+/// <summary>O usuário cancelou a transferência (botão na janela).</summary>
+public sealed class TransferCancelledException(string name, bool upload)
+    : OperationCanceledException(upload ? $"Envio de '{name}' cancelado por você" : $"Download de '{name}' cancelado por você");
 
 /// <summary>Registro de atividade (para a interface) + log em arquivo.</summary>
 public sealed class ActivityLog
@@ -73,6 +135,14 @@ public sealed class ActivityLog
         _transfers[t.Id] = t;
         Changed?.Invoke();
         return t;
+    }
+
+    /// <summary>Cancela uma transferência em andamento; false se ela já terminou.</summary>
+    public bool CancelTransfer(long id)
+    {
+        if (!_transfers.TryGetValue(id, out var t)) return false;
+        t.Cancel();
+        return true;
     }
 
     public void EndTransfer(Transfer t)
@@ -141,6 +211,8 @@ public sealed class NamePolicy(AppConfig cfg)
 public sealed class ContentCache
 {
     readonly string _root;
+    readonly object _directoriesLock = new();
+    readonly Dictionary<string, string> _directories = new(StringComparer.Ordinal);
 
     public ContentCache(string cacheDir)
     {
@@ -156,12 +228,64 @@ public sealed class ContentCache
 
     public string PathFor(string driveId, long lid)
     {
-        var dir = Path.Combine(_root, DriveKey(driveId));
-        Directory.CreateDirectory(dir);
-        return Path.Combine(dir, lid.ToString());
+        lock (_directoriesLock)
+        {
+            if (!_directories.TryGetValue(driveId, out var dir))
+            {
+                dir = Path.Combine(_root, DriveKey(driveId));
+                Directory.CreateDirectory(dir);
+                _directories.Add(driveId, dir);
+            }
+            return Path.Combine(dir, lid.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        }
     }
 
     public string NewTempFile() => Path.Combine(TempDir, Guid.NewGuid().ToString("N"));
+
+    /// <summary>Downloads parciais (retomados com Range): um por item e versão (cTag).</summary>
+    public string PartialDir => Path.Combine(_root, ".partial");
+
+    /// <summary>Cópias congeladas de arquivos em envio (retomadas pela sessão de upload após reiniciar).</summary>
+    public string UploadsDir => Path.Combine(_root, ".uploads");
+
+    static string Short(string s) =>
+        Convert.ToHexString(System.Security.Cryptography.SHA1.HashData(System.Text.Encoding.UTF8.GetBytes(s)))[..12].ToLowerInvariant();
+
+    public string PartialPathFor(string driveId, long lid, string? ctag)
+    {
+        Directory.CreateDirectory(PartialDir);
+        return Path.Combine(PartialDir, $"{DriveKey(driveId)}-{lid}-{Short(ctag ?? "")}");
+    }
+
+    /// <summary>
+    /// Apaga downloads parciais de outras versões do item (a nuvem mudou desde então). Os arquivos da leitura por
+    /// faixas da mesma versão (<c>{keep}.stream</c>/<c>{keep}.blocks</c>) ficam.
+    /// </summary>
+    public void DeleteOtherPartials(string driveId, long lid, string keep)
+    {
+        if (!Directory.Exists(PartialDir)) return;
+        foreach (var f in Directory.EnumerateFiles(PartialDir, $"{DriveKey(driveId)}-{lid}-*"))
+            if (!f.StartsWith(keep, StringComparison.Ordinal)) try { File.Delete(f); } catch (IOException) { }
+    }
+
+    public string NewUploadSnapshot()
+    {
+        Directory.CreateDirectory(UploadsDir);
+        return Path.Combine(UploadsDir, Guid.NewGuid().ToString("N"));
+    }
+
+    /// <summary>
+    /// Limpeza ao iniciar: temporários de execuções anteriores e cópias de envio que nenhuma operação usa mais.
+    /// Downloads parciais ficam (são retomados).
+    /// </summary>
+    public void CleanStale(IEnumerable<string> liveSnapshots)
+    {
+        foreach (var f in Directory.EnumerateFiles(TempDir)) try { File.Delete(f); } catch (IOException) { }
+        if (!Directory.Exists(UploadsDir)) return;
+        var keep = new HashSet<string>(liveSnapshots);
+        foreach (var f in Directory.EnumerateFiles(UploadsDir))
+            if (!keep.Contains(f)) try { File.Delete(f); } catch (IOException) { }
+    }
 
     public bool Exists(string driveId, long lid) => File.Exists(PathFor(driveId, lid));
 
@@ -172,14 +296,29 @@ public sealed class ContentCache
 
     public void DeleteDrive(string driveId)
     {
-        try { Directory.Delete(Path.Combine(_root, DriveKey(driveId)), true); } catch (DirectoryNotFoundException) { }
+        lock (_directoriesLock)
+        {
+            _directories.Remove(driveId, out var dir);
+            try { Directory.Delete(dir ?? Path.Combine(_root, DriveKey(driveId)), true); }
+            catch (DirectoryNotFoundException) { }
+        }
     }
 
-    public long TotalBytes()
+    /// <summary>Varredura fora da thread chamadora (UI). O resultado inclui parciais e snapshots, sem total obsoleto.</summary>
+    public Task<long> TotalBytesAsync(CancellationToken ct = default) => Task.Run(() => ScanBytes(ct), ct);
+
+    public long TotalBytes() => ScanBytes(CancellationToken.None);
+
+    long ScanBytes(CancellationToken ct)
     {
         long total = 0;
         foreach (var f in new DirectoryInfo(_root).EnumerateFiles("*", SearchOption.AllDirectories))
-            total += f.Length;
+        {
+            ct.ThrowIfCancellationRequested();
+            // arquivo esparso da leitura por faixas: conta só os blocos já baixados, não o tamanho aparente
+            try { total += f.Name.EndsWith(StreamSession.DataSuffix, StringComparison.Ordinal) ? StreamSession.StoredBytes(f.FullName) : f.Length; }
+            catch (FileNotFoundException) { } // upload/download terminou durante a varredura
+        }
         return total;
     }
 }

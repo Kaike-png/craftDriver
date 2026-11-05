@@ -2,6 +2,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
+using Avalonia.Media.Imaging;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
 using CraftDriver.App.Services;
@@ -54,7 +55,7 @@ public class ScreenTests
     {
         Directory.CreateDirectory(Out);
         Pump();
-        w.CaptureRenderedFrame()!.Save(Path.Combine(Out, name + ".png"));
+        w.CaptureRenderedFrame()!.Save(Path.Combine(Out, name + ".png"), PngBitmapEncoderOptions.Default);
     }
 
     [AvaloniaFact]

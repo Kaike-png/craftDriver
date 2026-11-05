@@ -1,20 +1,14 @@
 <Project Sdk="Microsoft.NET.Sdk">
-  <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
-    <ImplicitUsings>enable</ImplicitUsings>
-    <Nullable>enable</Nullable>
-    <IsPackable>false</IsPackable>
-    <OutputType>Exe</OutputType>
-  </PropertyGroup>
+  <!-- Propriedades comuns e pacotes de teste: ../Directory.Build.props e ../Directory.Packages.props -->
   <ItemGroup>
-    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
-    <PackageReference Include="xunit.v3" Version="3.2.2" />
-    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4" />
-    <PackageReference Include="Avalonia.Headless.XUnit" Version="12.1.5" />
-    <PackageReference Include="Avalonia.Skia" Version="12.1.5" />
+    <PackageReference Include="Avalonia.Headless.XUnit" />
+    <PackageReference Include="Avalonia.Skia" />
   </ItemGroup>
   <ItemGroup>
-    <Using Include="Xunit" />
     <ProjectReference Include="..\..\src\CraftDriver.App\CraftDriver.App.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- Graph falsa em memória, a mesma dos testes do motor (AppHost.GraphFactory) -->
+    <Compile Include="..\CraftDriver.Tests\FakeGraph.cs" Link="FakeGraph.cs" />
   </ItemGroup>
 </Project>

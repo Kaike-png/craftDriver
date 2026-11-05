@@ -15,6 +15,12 @@ public sealed class RemoteItem
     public bool IsPackage { get; set; }
     /// <summary>Atalho para item de outra drive ("Adicionar a Meus arquivos").</summary>
     public bool IsRemoteShortcut { get; set; }
+    /// <summary>Drive dona do item apontado (remoteItem.parentReference.driveId), em atalhos e "Compartilhados comigo".</summary>
+    public string? RemoteDriveId { get; set; }
+    /// <summary>Id do item apontado na drive dona (remoteItem.id).</summary>
+    public string? RemoteId { get; set; }
+    /// <summary>O item apontado é pasta (remoteItem.folder).</summary>
+    public bool RemoteIsFolder { get; set; }
     public long Size { get; set; }
     public DateTimeOffset LastModified { get; set; }
     public DateTimeOffset Created { get; set; }
@@ -38,6 +44,14 @@ public sealed class RemoteItem
             IsRemoteShortcut = e.TryGetProperty("remoteItem", out _),
         };
         if (e.TryGetProperty("parentReference", out var p)) it.ParentId = p.Str("id");
+        if (e.TryGetProperty("remoteItem", out var ri) && ri.ValueKind == JsonValueKind.Object)
+        {
+            it.RemoteId = ri.Str("id");
+            if (ri.TryGetProperty("parentReference", out var rp)) it.RemoteDriveId = rp.Str("driveId");
+            it.RemoteIsFolder = ri.TryGetProperty("folder", out _) || (it.IsFolder && !ri.TryGetProperty("file", out _));
+            if (string.IsNullOrEmpty(it.Name)) it.Name = ri.Str("name") ?? "";
+            if (it.Size == 0 && ri.TryGetProperty("size", out var rs) && rs.ValueKind == JsonValueKind.Number) it.Size = rs.GetInt64();
+        }
         if (e.TryGetProperty("file", out var f) && f.TryGetProperty("hashes", out var h))
             it.QuickXorHash = h.Str("quickXorHash");
         if (e.TryGetProperty("fileSystemInfo", out var fsi))

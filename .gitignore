@@ -3,3 +3,6 @@ obj/
 *.user
 .idea/
 dist/
+coverage/
+.tools/
+TestResults/
