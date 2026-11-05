@@ -321,6 +321,13 @@ public sealed class DriveSync
 
     /// <summary>Exclusões só vão para a nuvem depois desse tempo sem novas exclusões locais.</summary>
     public static int DeleteQuietMs { get; set; } = 3000;
+
+    /// <summary>
+    /// Espera depois de o arquivo ser fechado antes de enviar. Editores (LibreOffice, OnlyOffice, WPS…)
+    /// gravam num temporário e o renomeiam por cima do original logo em seguida; enviar antes disso
+    /// criaria o temporário na nuvem só para apagá-lo depois (indo parar na Lixeira).
+    /// </summary>
+    public static int UploadSettleMs { get; set; } = 3000;
     /// <summary>Janela usada para somar exclusões de uma mesma "rajada".</summary>
     public static TimeSpan MassDeleteWindow { get; set; } = TimeSpan.FromMinutes(2);
 
@@ -802,6 +809,11 @@ public sealed class DriveSync
                         break;
                     }
                 }
+                if (op.Kind == OpKind.Upload && now - op.Created < UploadSettleMs)
+                {
+                    wait = TimeSpan.FromMilliseconds(UploadSettleMs - (now - op.Created) + 50);
+                    break;
+                }
                 Busy = true;
                 try
                 {
@@ -991,7 +1003,7 @@ public sealed class DriveSync
             if (cur == null)
             {
                 // excluído localmente durante o envio
-                Db.Enqueue(DriveId, OpKind.Delete, 0, r.Id);
+                Db.Enqueue(DriveId, OpKind.Delete, 0, r.Id, null, item.Name);
                 return;
             }
             cur.ItemId = r.Id;

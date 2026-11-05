@@ -19,6 +19,8 @@ public sealed class Harness : IDisposable
 
     public Harness()
     {
+        // menor que o padrão (3 s) para a suíte ficar rápida, mas maior que a pausa do teste de salvamento
+        DriveSync.UploadSettleMs = 1000;
         Directory.CreateDirectory(Dir);
         Config = new AppConfig
         {
@@ -187,6 +189,25 @@ public class EngineTests
         Assert.Equal("v2 do editor", h.Remote.ReadText("/texto.md"));
         Assert.Equal(n.Id, h.Remote.FindByPath("/texto.md")!.Id);
         Assert.DoesNotContain(h.Remote.ListPaths(), p => p.Contains("goutputstream"));
+    }
+
+    [Fact]
+    public void Salvamento_com_temporario_de_nome_comum_nao_cria_item_extra_na_nuvem()
+    {
+        using var h = new Harness();
+        var n = h.Remote.RemoteCreate("/", "planilha.xlsx", "v1");
+        h.Settle();
+        var uploads = h.Remote.Uploads;
+        // editores que gravam num temporário sem padrão conhecido e renomeiam por cima logo após fechar
+        h.WriteFile("/planilha.xlsx.sb-1a2b3c", "v2 do editor");
+        Thread.Sleep(300);
+        Assert.Equal(0, h.Fs.Rename(h.P("/planilha.xlsx.sb-1a2b3c"), h.P("/planilha.xlsx"), 0));
+        h.Settle();
+        Assert.Equal("v2 do editor", h.Remote.ReadText("/planilha.xlsx"));
+        Assert.Equal(n.Id, h.Remote.FindByPath("/planilha.xlsx")!.Id);
+        Assert.Equal(0, h.Remote.Deletes);          // nada vai para a Lixeira
+        Assert.Equal(1, h.Remote.Uploads - uploads); // só a planilha é enviada
+        Assert.DoesNotContain(h.Remote.ListPaths(), p => p.Contains(".sb-"));
     }
 
     [Fact]
