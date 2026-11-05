@@ -1,5 +1,6 @@
 using Avalonia.Controls;
 using Avalonia.Platform.Storage;
+using CraftDriver.App.Services;
 using CraftDriver.App.ViewModels;
 using CraftDriver.Core.Config;
 
@@ -7,16 +8,49 @@ namespace CraftDriver.App.Views;
 
 public partial class MainWindow : Window
 {
+    bool _placementRestored;
+    Avalonia.Size _normalSize;
+    Avalonia.PixelPoint? _normalPosition;
+
+    /// <summary>
+    /// Grava tamanho/posição/maximizado no config.json. Roda em todo fechamento (inclusive o que só esconde na
+    /// bandeja e o do "Sair"). A posição só é lembrada se o sistema informou alguma (no Wayland pode não haver).
+    /// </summary>
+    internal void SavePlacement()
+    {
+        if (DataContext is not MainViewModel vm) return;
+        if (WindowState == WindowState.Normal)
+        {
+            _normalSize = ClientSize;
+            _normalPosition = Position;
+        }
+        WindowPlacement.Store(vm.Host.Config, _normalSize, _normalPosition, WindowState == WindowState.Maximized);
+        try { vm.Host.Config.Save(); }
+        catch (Exception ex) { vm.Host.Activity.Add(CraftDriver.Core.Sync.ActivityKind.Error, "Não foi possível salvar o tamanho da janela: " + ex.Message); }
+    }
+
     public MainWindow()
     {
         InitializeComponent();
         Icon = App.LoadIcon("cloud");
+        // último tamanho/posição no estado normal (maximizado não sobrescreve o tamanho a restaurar)
+        PositionChanged += (_, _) => { if (WindowState == WindowState.Normal && IsVisible) _normalPosition = Position; };
+        SizeChanged += (_, _) => { if (WindowState == WindowState.Normal && IsVisible) _normalSize = ClientSize; };
+        Closing += (_, _) => SavePlacement();
         DataContextChanged += (_, _) =>
         {
             if (DataContext is not MainViewModel vm) return;
-            vm.AddAccountRequested += async () =>
+            if (!_placementRestored)
             {
-                var dlg = new LoginWindow(vm.Host);
+                _placementRestored = true;
+                WindowPlacement.Restore(this, vm.Host.Config);
+                _normalSize = new Avalonia.Size(Width, Height);
+                if (vm.Host.Config.WindowX is { } x && vm.Host.Config.WindowY is { } y && WindowStartupLocation == WindowStartupLocation.Manual)
+                    _normalPosition = new Avalonia.PixelPoint(x, y);
+            }
+            vm.AddAccountRequested += async reauth =>
+            {
+                var dlg = new LoginWindow(vm.Host, reauth);
                 await dlg.ShowDialog(this);
                 return dlg.Success;
             };
@@ -25,6 +59,11 @@ public partial class MainWindow : Window
                 var dlg = new AddLibraryWindow(vm.Host, acc);
                 await dlg.ShowDialog(this);
                 if (dlg.Added) vm.LibraryAdded();
+            };
+            vm.ChooseFoldersRequested += async folders =>
+            {
+                await new ChooseFoldersWindow(folders).ShowDialog(this);
+                vm.RefreshDrives();
             };
             vm.PickFolderRequested += async () =>
             {
@@ -36,6 +75,23 @@ public partial class MainWindow : Window
                     AllowMultiple = false,
                 });
                 return res.Count > 0 ? res[0].TryGetLocalPath() : null;
+            };
+            vm.ConfirmRequested += async request =>
+            {
+                if (!IsVisible) Show(); // pedido vindo da bandeja: o diálogo precisa de uma janela-mãe visível
+                var dlg = new ConfirmWindow(request);
+                await dlg.ShowDialog(this);
+                return dlg.Result;
+            };
+            vm.PickSettingsFolderRequested += async title =>
+            {
+                var res = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions { Title = title, AllowMultiple = false });
+                return res.Count > 0 ? res[0].TryGetLocalPath() : null;
+            };
+            vm.RestartRequested += () =>
+            {
+                AppRestart.ScheduleRelaunch();
+                vm.QuitCommand.Execute(null);
             };
         };
     }

@@ -22,32 +22,55 @@ public partial class LoginWindow : Window
     Uri? _authUri, _autoUri;
     TaskCompletionSource<Uri>? _pasted;
     bool _personal;
+    /// <summary>Último fluxo iniciado: "Tentar de novo" o repete (mesmo tipo de conta e método).</summary>
+    Func<Task>? _lastStart;
     public bool Success { get; private set; }
+
+    /// <summary>Testes: substitui a chamada ao MSAL (ex.: lançar MsalServiceException simulada).</summary>
+    internal Func<CancellationToken, Task<AccountConfig>>? SignInForTest { get; set; }
+
+    /// <summary>Último erro mostrado (testes).</summary>
+    public LoginError? LastError { get; private set; }
+
+    readonly AccountConfig? _reauth;
 
     public LoginWindow() : this(App.Host) { }
 
-    public LoginWindow(AppHost host)
+    /// <param name="reauth">Conta cuja sessão expirou: pula a escolha do tipo e já abre o login certo.</param>
+    public LoginWindow(AppHost host, AccountConfig? reauth = null)
     {
         _host = host;
+        _reauth = reauth;
         InitializeComponent();
+        if (reauth != null)
+        {
+            Title = "Entrar novamente";
+            Opened += async (_, _) =>
+            {
+                _personal = reauth.IsPersonal;
+                if (_personal) await StartTracked(() => StartAutoAsync(openBrowser: true));
+                else await StartTracked(StartDeviceCodeAsync);
+            };
+        }
         Icon = App.LoadIcon("cloud");
         CloseButton.Click += (_, _) => Close();
         Closed += (_, _) => _cts.Cancel();
-        PersonalButton.Click += async (_, _) => { _personal = true; await StartAutoAsync(openBrowser: true); };
+        PersonalButton.Click += async (_, _) => { _personal = true; await StartTracked(() => StartAutoAsync(openBrowser: true)); };
+        RetryButton.Click += async (_, _) => await RetryAsync();
         ReopenAuto.Click += (_, _) => { if (_autoUri != null) DesktopIntegration.OpenPath(_autoUri.AbsoluteUri); };
         SwitchToManual.Click += async (_, _) =>
         {
             _cts.Cancel();
             _cts = new CancellationTokenSource();
             AutoPanel.IsVisible = false;
-            await StartBrowserAsync(openBrowser: true);
+            await StartTracked(() => StartBrowserAsync(openBrowser: true));
         };
-        WorkButton.Click += async (_, _) => { _personal = false; await StartDeviceCodeAsync(); };
+        WorkButton.Click += async (_, _) => { _personal = false; await StartTracked(StartDeviceCodeAsync); };
         SwitchToBrowser.Click += async (_, _) =>
         {
             _cts.Cancel();
             _cts = new CancellationTokenSource();
-            await StartBrowserAsync(openBrowser: true);
+            await StartTracked(() => StartBrowserAsync(openBrowser: true));
         };
         OpenBrowser.Click += async (_, _) =>
         {
@@ -68,8 +91,30 @@ public partial class LoginWindow : Window
     public Task StartForTestAsync(bool personal, bool manual = false)
     {
         _personal = personal;
-        if (!personal) return StartDeviceCodeAsync();
-        return manual ? StartBrowserAsync(openBrowser: false) : StartAutoAsync(openBrowser: false);
+        if (!personal) return StartTracked(StartDeviceCodeAsync);
+        return manual ? StartTracked(() => StartBrowserAsync(openBrowser: false)) : StartTracked(() => StartAutoAsync(openBrowser: false));
+    }
+
+    Task StartTracked(Func<Task> start)
+    {
+        _lastStart = start;
+        return start();
+    }
+
+    /// <summary>"Tentar de novo": novo token de cancelamento, limpa o erro e repete o último fluxo.</summary>
+    public async Task RetryAsync()
+    {
+        if (_lastStart == null) return;
+        _cts.Cancel();
+        _cts = new CancellationTokenSource();
+        ErrorPanel.IsVisible = false;
+        RetryButton.IsVisible = false;
+        ErrorDetails.IsExpanded = false;
+        LastError = null;
+        CloseButton.Content = "Cancelar";
+        PasteBox.Text = "";
+        PasteError.IsVisible = false;
+        await _lastStart();
     }
 
     /// <summary>URL do login automático (testes).</summary>
@@ -161,22 +206,42 @@ public partial class LoginWindow : Window
     {
         try
         {
-            var acc = await signIn();
+            var acc = SignInForTest != null ? await SignInForTest(_cts.Token) : await signIn();
             Success = true;
             Busy.IsVisible = false;
             CodePanel.IsVisible = false;
             BrowserPanel.IsVisible = false;
             AutoPanel.IsVisible = false;
-            StatusText.Text = $"Conectado como {acc.Username}. Seus arquivos aparecerão em {_host.Config.MountPoint}.";
+            StatusText.Text = _reauth == null
+                ? $"Conectado como {acc.Username}. Seus arquivos aparecerão em {_host.Config.MountPoint}."
+                : acc.Id == _reauth.Id
+                    ? $"Sessão de {acc.Username} renovada. A sincronização continua de onde parou."
+                    : $"Você entrou como {acc.Username}, não como {_reauth.Username}: ela foi adicionada como outra conta. " +
+                      $"Para renovar {_reauth.Username}, use \"Entrar novamente\" e escolha esse usuário.";
             CloseButton.Content = "Concluir";
         }
-        catch (OperationCanceledException) { }
+        catch (OperationCanceledException) when (_cts.IsCancellationRequested) { }
         catch (Exception ex)
         {
-            Busy.IsVisible = false;
-            FinishBrowser.IsEnabled = true;
-            StatusText.Text = "Não foi possível entrar: " + ex.Message;
-            CloseButton.Content = "Fechar";
+            ShowError(LoginErrors.Describe(ex));
         }
+    }
+
+    void ShowError(LoginError err)
+    {
+        LastError = err;
+        Busy.IsVisible = false;
+        FinishBrowser.IsEnabled = true;
+        // os painéis do fluxo que falhou saem: o código/URL antigos não valem mais
+        CodePanel.IsVisible = false;
+        AutoPanel.IsVisible = false;
+        BrowserPanel.IsVisible = false;
+        StatusText.Text = "Não foi possível entrar.";
+        ErrorText.Text = err.Message;
+        ErrorDetailText.Text = err.Detail;
+        ErrorDetails.IsExpanded = false;
+        ErrorPanel.IsVisible = true;
+        RetryButton.IsVisible = err.CanRetry && _lastStart != null;
+        CloseButton.Content = "Fechar";
     }
 }

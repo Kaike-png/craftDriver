@@ -11,3 +11,22 @@ Terminal=false
 Categories=Network;FileTransfer;
 Keywords=OneDrive;SharePoint;Microsoft;cloud;nuvem;sync;
 StartupWMClass=CraftDriver.App
+Actions=open-folder;sync;pause;
+
+[Desktop Action open-folder]
+Name=Abrir pasta
+Name[en]=Open folder
+Icon=folder-cloud
+Exec=craftdriver open
+
+[Desktop Action sync]
+Name=Sincronizar agora
+Name[en]=Sync now
+Icon=view-refresh
+Exec=craftdriver sync --notify
+
+[Desktop Action pause]
+Name=Pausar sincronização
+Name[en]=Pause syncing
+Icon=media-playback-pause
+Exec=craftdriver pause --notify

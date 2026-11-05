@@ -4,6 +4,7 @@
              RequestedThemeVariant="Default">
     <Application.Styles>
         <FluentTheme />
+        <StyleInclude Source="avares://CraftDriver.App/Styles/CraftDriverStyles.axaml" />
         <Style Selector="TextBlock.h1">
             <Setter Property="FontSize" Value="22" />
             <Setter Property="FontWeight" Value="SemiBold" />

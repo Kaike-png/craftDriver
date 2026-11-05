@@ -25,7 +25,7 @@
             </Grid>
             <Grid ColumnDefinitions="*,Auto,Auto">
                 <TextBlock x:Name="StatusText" TextWrapping="Wrap" VerticalAlignment="Center" />
-                <Button x:Name="CancelButton" Grid.Column="1" Content="Fechar" Margin="8,0" />
+                <Button x:Name="CancelButton" Grid.Column="1" Content="Fechar" IsCancel="True" Margin="8,0" />
                 <Button x:Name="AddButton" Grid.Column="2" Classes="accent" Content="Sincronizar" IsEnabled="False" />
             </Grid>
         </StackPanel>

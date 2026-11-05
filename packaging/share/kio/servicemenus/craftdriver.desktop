@@ -4,19 +4,29 @@ MimeType=all/all;
 X-KDE-ServiceTypes=KonqPopupMenu/Plugin
 X-KDE-Submenu=craftDriver
 X-KDE-Priority=TopLevel
-Actions=pin;free;status;
+Actions=craftdriver_pin;craftdriver_free;craftdriver_status;craftdriver_share;craftdriver_versions;
 
-[Desktop Action pin]
+[Desktop Action craftdriver_pin]
 Name=Sempre manter neste dispositivo
 Icon=emblem-downloads
 Exec=craftdriver pin --notify %F
 
-[Desktop Action free]
+[Desktop Action craftdriver_free]
 Name=Liberar espaço
 Icon=edit-clear
 Exec=craftdriver unpin --notify %F
 
-[Desktop Action status]
+[Desktop Action craftdriver_status]
 Name=Status no craftDriver
 Icon=help-about
 Exec=craftdriver status --notify %F
+
+[Desktop Action craftdriver_share]
+Name=Copiar link de compartilhamento
+Icon=insert-link
+Exec=craftdriver share --notify %F
+
+[Desktop Action craftdriver_versions]
+Name=Versões anteriores…
+Icon=document-open-recent
+Exec=craftdriver versions %f

@@ -39,7 +39,7 @@
                 <TextBlock TextWrapping="Wrap" Text="2. No final o navegador mostra uma página em branco. Copie o endereço inteiro da barra de endereços (começa com https://login.microsoftonline.com/common/oauth2/nativeclient?code=…) e cole aqui:" />
                 <TextBox x:Name="PasteBox" PlaceholderText="https://login.microsoftonline.com/common/oauth2/nativeclient?code=…" TextWrapping="Wrap" />
                 <Button x:Name="FinishBrowser" Classes="accent" HorizontalAlignment="Right" Content="Concluir login" />
-                <TextBlock x:Name="PasteError" Foreground="IndianRed" TextWrapping="Wrap" IsVisible="False" />
+                <TextBlock x:Name="PasteError" Classes="error" TextWrapping="Wrap" IsVisible="False" />
             </StackPanel>
         </Border>
 
@@ -60,6 +60,18 @@
             <TextBlock x:Name="StatusText" TextWrapping="Wrap" Text="Preparando o login…" />
             <ProgressBar x:Name="Busy" IsIndeterminate="True" />
         </StackPanel>
-        <Button x:Name="CloseButton" HorizontalAlignment="Right" Content="Cancelar" />
+        <!-- erro do login: mensagem em português, detalhe técnico recolhível e "Tentar de novo" sem fechar a janela -->
+        <Border Classes="card" x:Name="ErrorPanel" IsVisible="False">
+            <StackPanel Spacing="8">
+                <TextBlock x:Name="ErrorText" Classes="error" TextWrapping="Wrap" FontWeight="SemiBold" />
+                <Expander x:Name="ErrorDetails" Header="Detalhes técnicos" HorizontalAlignment="Stretch">
+                    <SelectableTextBlock x:Name="ErrorDetailText" TextWrapping="Wrap" FontFamily="monospace" FontSize="12" />
+                </Expander>
+            </StackPanel>
+        </Border>
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8">
+            <Button x:Name="RetryButton" Classes="accent" Content="Tentar de novo" IsVisible="False" />
+            <Button x:Name="CloseButton" Content="Cancelar" IsCancel="True" />
+        </StackPanel>
     </StackPanel>
 </Window>

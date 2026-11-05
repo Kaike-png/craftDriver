@@ -1,0 +1,46 @@
+<Styles xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <!-- Cores próprias do app, com variante clara e escura (antes: #C42B1C / IndianRed fixos, ilegíveis no escuro). -->
+    <Styles.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.ThemeDictionaries>
+                <ResourceDictionary x:Key="Light">
+                    <SolidColorBrush x:Key="CdErrorBrush" Color="#C42B1C" />
+                    <SolidColorBrush x:Key="CdErrorBackgroundBrush" Color="#1FC42B1C" />
+                    <SolidColorBrush x:Key="CdWarningBackgroundBrush" Color="#26C42B1C" />
+                </ResourceDictionary>
+                <ResourceDictionary x:Key="Dark">
+                    <SolidColorBrush x:Key="CdErrorBrush" Color="#FF99A4" />
+                    <SolidColorBrush x:Key="CdErrorBackgroundBrush" Color="#33FF99A4" />
+                    <SolidColorBrush x:Key="CdWarningBackgroundBrush" Color="#40FF99A4" />
+                </ResourceDictionary>
+            </ResourceDictionary.ThemeDictionaries>
+        </ResourceDictionary>
+    </Styles.Resources>
+
+    <Style Selector="TextBlock.error">
+        <Setter Property="Foreground" Value="{DynamicResource CdErrorBrush}" />
+    </Style>
+    <Style Selector="TextBlock.empty">
+        <Setter Property="Opacity" Value="0.7" />
+        <Setter Property="TextWrapping" Value="Wrap" />
+        <Setter Property="Margin" Value="0,12" />
+    </Style>
+    <Style Selector="Border#MessageBar">
+        <Setter Property="Background" Value="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}" />
+    </Style>
+    <Style Selector="Border#MessageBar.error">
+        <Setter Property="Background" Value="{DynamicResource CdErrorBackgroundBrush}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource CdErrorBrush}" />
+        <Setter Property="BorderThickness" Value="0,1,0,0" />
+    </Style>
+    <Style Selector="Border.danger">
+        <Setter Property="Background" Value="{DynamicResource CdWarningBackgroundBrush}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource CdErrorBrush}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="CornerRadius" Value="8" />
+    </Style>
+    <Style Selector="Button.danger">
+        <Setter Property="Foreground" Value="{DynamicResource CdErrorBrush}" />
+    </Style>
+</Styles>

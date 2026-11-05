@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.kaike_png.craftdriver</id>
+  <metadata_license>MIT</metadata_license>
+  <project_license>MIT</project_license>
+
+  <name>craftDriver</name>
+  <summary>Sync client for OneDrive and SharePoint with files on demand</summary>
+  <summary xml:lang="pt-BR">Cliente de sincronização para OneDrive e SharePoint com arquivos sob demanda</summary>
+
+  <description>
+    <p>
+      craftDriver is an unofficial client that mounts your OneDrive and SharePoint document libraries
+      as a folder. Files are listed right away and downloaded only when opened; changes are sent back
+      to the cloud in the background.
+    </p>
+    <p xml:lang="pt-BR">
+      O craftDriver é um cliente não oficial que monta seu OneDrive e as bibliotecas de documentos do
+      SharePoint como uma pasta. Os arquivos aparecem na hora e só são baixados quando abertos; as
+      alterações voltam para a nuvem em segundo plano.
+    </p>
+    <ul>
+      <li>Files on demand, with “always keep on this device” and “free up space”</li>
+      <li xml:lang="pt-BR">Arquivos sob demanda, com “sempre manter neste dispositivo” e “liberar espaço”</li>
+      <li>Personal, work and school accounts, plus SharePoint libraries</li>
+      <li xml:lang="pt-BR">Contas pessoais, de trabalho e escola, e bibliotecas do SharePoint</li>
+      <li>Protection against accidental mass deletion, with confirm or restore</li>
+      <li xml:lang="pt-BR">Proteção contra exclusão em massa acidental, com confirmação ou restauração</li>
+      <li>File manager menus (Dolphin, Nautilus, Nemo), tray icon and command line</li>
+      <li xml:lang="pt-BR">Menus no gerenciador de arquivos (Dolphin, Nautilus, Nemo), ícone na bandeja e linha de comando</li>
+    </ul>
+    <p>
+      OneDrive and SharePoint are trademarks of Microsoft. This project is not affiliated with Microsoft.
+    </p>
+    <p xml:lang="pt-BR">
+      OneDrive e SharePoint são marcas da Microsoft. Este projeto não tem ligação com a Microsoft.
+    </p>
+  </description>
+
+  <launchable type="desktop-id">craftdriver.desktop</launchable>
+  <icon type="stock">craftdriver</icon>
+
+  <url type="homepage">https://github.com/Kaike-png/craftDriver</url>
+  <url type="bugtracker">https://github.com/Kaike-png/craftDriver/issues</url>
+  <url type="vcs-browser">https://github.com/Kaike-png/craftDriver</url>
+
+  <developer id="io.github.kaike_png">
+    <name>Kaike</name>
+  </developer>
+
+  <categories>
+    <category>Network</category>
+    <category>FileTransfer</category>
+  </categories>
+
+  <keywords>
+    <keyword>OneDrive</keyword>
+    <keyword>SharePoint</keyword>
+    <keyword>cloud</keyword>
+    <keyword>sync</keyword>
+    <keyword xml:lang="pt-BR">nuvem</keyword>
+    <keyword xml:lang="pt-BR">sincronização</keyword>
+  </keywords>
+
+  <provides>
+    <binary>craftdriver</binary>
+  </provides>
+
+  <supports>
+    <control>pointing</control>
+    <control>keyboard</control>
+  </supports>
+
+  <content_rating type="oars-1.1" />
+
+  <releases>
+    <release version="0.1.4" date="2026-11-04" />
+  </releases>
+</component>

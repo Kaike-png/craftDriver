@@ -8,6 +8,10 @@
     <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
     <NoWarn>$(NoWarn);CA1416</NoWarn>
     <Version>0.1.4</Version>
+    <!-- O pacote é publicado com trimming (packaging/build.sh): qualquer uso que o trimmer não consiga analisar
+         (JSON por reflexão etc.) quebra o build em vez de virar falha em produção. -->
+    <EnableTrimAnalyzer>true</EnableTrimAnalyzer>
+    <WarningsAsErrors>$(WarningsAsErrors);IL2026;IL2046;IL2057;IL2067;IL2070;IL2072;IL2075;IL2087;IL2090;IL2091;IL2104;IL3050</WarningsAsErrors>
   </PropertyGroup>
 
   <ItemGroup>
@@ -24,6 +28,20 @@
       <PrivateAssets Condition="'$(Configuration)' != 'Debug'">All</PrivateAssets>
     </PackageReference>
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" />
+    <!-- notificações pelo D-Bus; mesma versão que o Avalonia.FreeDesktop já traz (nenhum pacote novo) -->
+    <PackageReference Include="Tmds.DBus.Protocol" Version="0.94.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="CraftDriver.UiTests" />
+  </ItemGroup>
+
+  <!-- Fonte única dos .desktop: os mesmos arquivos que os pacotes instalam em /usr/share (modo usuário só troca o Exec) -->
+  <ItemGroup>
+    <EmbeddedResource Include="..\..\packaging\share\applications\craftdriver.desktop" LogicalName="share/applications/craftdriver.desktop" />
+    <EmbeddedResource Include="..\..\packaging\share\kio\servicemenus\craftdriver.desktop" LogicalName="share/kio/servicemenus/craftdriver.desktop" />
+    <EmbeddedResource Include="..\..\packaging\share\icons\hicolor\scalable\apps\craftdriver.svg" LogicalName="share/icons/hicolor/scalable/apps/craftdriver.svg" />
+    <EmbeddedResource Include="..\..\packaging\share\icons\hicolor\symbolic\apps\craftdriver-symbolic.svg" LogicalName="share/icons/hicolor/symbolic/apps/craftdriver-symbolic.svg" />
   </ItemGroup>
 
   <ItemGroup>

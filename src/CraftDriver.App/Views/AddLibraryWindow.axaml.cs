@@ -34,6 +34,7 @@ public partial class AddLibraryWindow : Window
         AccountBox.SelectedIndex = Math.Max(0, preferred == null ? 0 : _accounts.FindIndex(a => a.Id == preferred.Id));
 
         CancelButton.Click += (_, _) => Close();
+        Closed += (_, _) => { _sitesCts?.Cancel(); _libsCts?.Cancel(); };
         SearchButton.Click += async (_, _) => await SearchAsync();
         AccountBox.SelectionChanged += async (_, _) => await LoadFollowedAsync();
         SitesList.SelectionChanged += async (_, _) => await LoadLibsAsync();
@@ -54,31 +55,55 @@ public partial class AddLibraryWindow : Window
     AccountConfig? Account => (AccountBox.SelectedItem as AccountItem)?.Account;
     GraphClient? Client => Account is { } a ? _host.ClientFor(a.Id) : null;
 
-    async Task Run(string busy, Func<Task> action)
+    // Cada carga cancela a anterior do mesmo tipo: trocar de conta/site ou pesquisar de novo enquanto uma
+    // resposta lenta ainda chega não pode sobrescrever a lista nova com a antiga.
+    CancellationTokenSource? _sitesCts, _libsCts;
+
+    static CancellationToken Restart(ref CancellationTokenSource? cts)
+    {
+        cts?.Cancel();
+        cts?.Dispose();
+        cts = new CancellationTokenSource();
+        return cts.Token;
+    }
+
+    async Task Run(string busy, CancellationToken ct, Func<Task> action)
     {
         StatusText.Text = busy;
         try
         {
             await action();
         }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { /* substituída por outra carga */ }
         catch (Exception ex)
         {
-            StatusText.Text = "Erro: " + ex.Message;
+            if (!ct.IsCancellationRequested) StatusText.Text = "Erro: " + ex.Message;
         }
+    }
+
+    void ClearLibs()
+    {
+        _libsCts?.Cancel();
+        _libs = [];
+        LibsList.ItemsSource = null;
+        UpdateName();
     }
 
     async Task LoadFollowedAsync()
     {
         if (Client is not { } c) return;
-        await Run("Carregando sites seguidos…", async () =>
+        var ct = Restart(ref _sitesCts);
+        ClearLibs();
+        await Run("Carregando sites seguidos…", ct, async () =>
         {
-            var sites = await c.GetFollowedSitesAsync(CancellationToken.None);
+            var sites = await c.GetFollowedSitesAsync(ct);
             try
             {
-                var root = await c.GetRootSiteAsync(CancellationToken.None);
+                var root = await c.GetRootSiteAsync(ct);
                 if (sites.All(s => s.Id != root.Id)) sites.Insert(0, root with { DisplayName = root.DisplayName + " (site raiz)" });
             }
             catch (GraphException) { }
+            ct.ThrowIfCancellationRequested();
             SitesList.ItemsSource = sites;
             StatusText.Text = sites.Count == 0 ? "Nenhum site seguido. Pesquise pelo nome ou cole a URL." : $"{sites.Count} site(s).";
         });
@@ -88,15 +113,18 @@ public partial class AddLibraryWindow : Window
     {
         if (Client is not { } c) return;
         var q = SearchBox.Text?.Trim() ?? "";
-        await Run("Pesquisando…", async () =>
+        var ct = Restart(ref _sitesCts);
+        ClearLibs();
+        await Run("Pesquisando…", ct, async () =>
         {
             List<SiteInfo> sites;
             if (q.StartsWith("http", StringComparison.OrdinalIgnoreCase))
             {
-                var s = await c.GetSiteByUrlAsync(q, CancellationToken.None);
+                var s = await c.GetSiteByUrlAsync(q, ct);
                 sites = s == null ? [] : [s];
             }
-            else sites = await c.SearchSitesAsync(q, CancellationToken.None);
+            else sites = await c.SearchSitesAsync(q, ct);
+            ct.ThrowIfCancellationRequested();
             SitesList.ItemsSource = sites;
             StatusText.Text = sites.Count == 0 ? "Nenhum site encontrado." : $"{sites.Count} site(s) encontrados.";
         });
@@ -104,10 +132,18 @@ public partial class AddLibraryWindow : Window
 
     async Task LoadLibsAsync()
     {
-        if (Client is not { } c || SitesList.SelectedItem is not SiteInfo site) return;
-        await Run($"Carregando bibliotecas de {site.DisplayName}…", async () =>
+        if (Client is not { } c || SitesList.SelectedItem is not SiteInfo site)
         {
-            _libs = await c.GetSiteDrivesAsync(site.Id, CancellationToken.None);
+            ClearLibs();
+            return;
+        }
+        var ct = Restart(ref _libsCts);
+        LibsList.ItemsSource = null;
+        await Run($"Carregando bibliotecas de {site.DisplayName}…", ct, async () =>
+        {
+            var libs = await c.GetSiteDrivesAsync(site.Id, ct);
+            ct.ThrowIfCancellationRequested();
+            _libs = libs;
             LibsList.ItemsSource = _libs.Select(l => new LibItem(l)).ToList();
             if (_libs.Count > 0) LibsList.SelectedIndex = 0;
             StatusText.Text = _libs.Count == 0 ? "Este site não tem bibliotecas acessíveis." : "Escolha a biblioteca.";

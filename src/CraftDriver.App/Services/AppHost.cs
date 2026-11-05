@@ -21,10 +21,29 @@ public sealed class AppHost
     IpcServer? _ipc;
     Task? _mountTask;
 
+    /// <summary>Link de compartilhamento, versões anteriores e Lixeira.</summary>
+    public ItemActions Actions { get; }
+
+    /// <summary>Troca a Graph das drives (testes: Graph falsa). Lido quando o motor cria cada drive.</summary>
+    internal Func<DriveConfig, IGraphApi>? GraphFactory { get; set; }
+
     public string? MountError { get; private set; }
     public bool Mounted => FuseHost.IsMounted;
     public event Action? ShowRequested;
     public event Action? QuitRequested;
+
+    /// <summary>
+    /// "Entrar novamente" pedido de fora da janela (botão da notificação de sessão expirada). Disparado
+    /// numa thread do pool: o assinante despacha para a UI e abre o mesmo fluxo do botão da aba Contas.
+    /// Sem assinante (--headless), a notificação não oferece o botão e indica o <c>craftdriver login</c>.
+    /// </summary>
+    public event Action<AccountConfig>? ReauthRequested;
+
+    /// <summary>Envia notificações da área de trabalho (troque nos testes para capturar).</summary>
+    public Action<string, string, NotificationAction[]> Notify { get; set; } = (t, b, a) => DesktopIntegration.Notify(t, b, a);
+
+    readonly SessionExpiryTracker _sessions = new();
+    Timer? _sessionTimer;
 
     AppHost(AppConfig cfg, AuthService auth)
     {
@@ -32,22 +51,100 @@ public sealed class AppHost
         Auth = auth;
         Activity = new ActivityLog(AppPaths.LogFile);
         Db = new StateDb(AppPaths.DatabaseFile);
-        Engine = new SyncEngine(cfg, Db, new ContentCache(cfg.CacheDir), Activity, dc => ClientFor(dc.AccountId));
+        Engine = new SyncEngine(cfg, Db, new ContentCache(cfg.CacheDir), Activity, dc => GraphFactory?.Invoke(dc) ?? ClientFor(dc.AccountId));
         Fs = new VirtualFs(Engine);
+        Actions = new ItemActions(Engine, Fs);
         FuseHost.Log = s => Activity.Debug(s);
         Engine.MassDeleteDetected += d =>
         {
-            DesktopIntegration.Notify("craftDriver — muitos arquivos apagados",
-                $"{d.HeldDeleteCount} itens foram apagados de \"{d.Config.DisplayName}\". Nada foi excluído da nuvem ainda: abra o craftDriver para confirmar ou restaurar.");
+            Notify("craftDriver — muitos arquivos apagados",
+                $"{d.HeldDeleteCount} itens foram apagados de \"{d.Config.DisplayName}\". Nada foi excluído da nuvem ainda: abra o craftDriver para confirmar ou restaurar.",
+                MassDeleteActions(d.DriveId));
             ShowRequested?.Invoke();
         };
+        Engine.ConflictDetected += OnConflict;
     }
 
-    public static async Task<AppHost> CreateAsync()
+    /// <summary>Pede para mostrar a janela (ex.: ação de notificação tratada pelo ViewModel).</summary>
+    public void RequestShow() => ShowRequested?.Invoke();
+
+    long _lastConflictNotice;
+    /// <summary>Intervalo mínimo entre notificações de conflito: numa rajada, o resto fica só na aba Conflitos.</summary>
+    internal static TimeSpan ConflictNoticeInterval { get; set; } = TimeSpan.FromSeconds(30);
+
+    /// <summary>Chamado na thread do motor (às vezes com o lock do banco): só agenda a notificação.</summary>
+    internal void OnConflict(ConflictRecord c)
+    {
+        var now = Environment.TickCount64;
+        var last = Interlocked.Read(ref _lastConflictNotice);
+        if (last != 0 && now - last < ConflictNoticeInterval.TotalMilliseconds) return;
+        if (Interlocked.CompareExchange(ref _lastConflictNotice, now, last) != last) return;
+        NotificationAction[] actions = ShowRequested == null
+            ? []
+            : [new(NotificationAction.Default, "Ver conflitos", () => ShowRequested?.Invoke()), new("show", "Ver conflitos", () => ShowRequested?.Invoke())];
+        Notify("craftDriver — conflito", $"{c.Original}: {c.Reason}. As duas versões foram mantidas; a sua está em \"{c.Copy}\".", actions);
+    }
+
+    NotificationAction[] MassDeleteActions(string driveId)
+    {
+        var restore = new NotificationAction("restore", "Restaurar", () =>
+        {
+            var n = RestoreHeldDeletesAsync(driveId).GetAwaiter().GetResult();
+            if (n > 0) Activity.Add(ActivityKind.Info, "Exclusões canceladas pela notificação; os itens estão sendo restaurados.");
+        });
+        if (ShowRequested == null) return [restore]; // --headless: não há janela para abrir
+        return
+        [
+            new(NotificationAction.Default, "Abrir craftDriver", () => ShowRequested?.Invoke()),
+            new("open", "Abrir craftDriver", () => ShowRequested?.Invoke()),
+            restore,
+        ];
+    }
+
+    /// <summary>Cancela as exclusões retidas (de uma drive ou de todas) e restaura os itens. Devolve quantas drives.</summary>
+    internal async Task<int> RestoreHeldDeletesAsync(string? driveId = null)
+    {
+        var held = Engine.Drives.Concat(Engine.SharedDrives).Where(d => d.DeleteHold && (driveId == null || d.DriveId == driveId)).ToList();
+        foreach (var d in held) await d.RestoreDeletesAsync();
+        return held.Count;
+    }
+
+    // ---------- sessão expirada ----------
+
+    /// <summary>Verifica as drives do motor (chamado a cada 5 s pelo timer, na thread dona da configuração).</summary>
+    internal void CheckSessions() => CheckSessions(Engine.Drives.Select(d => (d.Config.AccountId, d.AuthRequired)));
+
+    /// <summary>Notifica uma vez por conta cada vez que ela passa a pedir login (não a cada ciclo de sincronização).</summary>
+    internal void CheckSessions(IEnumerable<(string AccountId, bool AuthRequired)> drives)
+    {
+        foreach (var id in _sessions.Update(drives))
+        {
+            var acc = Config.Accounts.FirstOrDefault(a => a.Id == id);
+            if (acc == null) continue;
+            if (ReauthRequested == null)
+            {
+                Notify("craftDriver — sessão expirada",
+                    $"A sessão de {acc.Username} expirou e a sincronização dessa conta está parada. Entre novamente com \"craftdriver login\".", []);
+                continue;
+            }
+            void Reauth() => ReauthRequested?.Invoke(acc);
+            Notify("craftDriver — sessão expirada",
+                $"A sessão de {acc.Username} expirou e a sincronização dessa conta está parada até você entrar novamente.",
+                [new(NotificationAction.Default, "Entrar novamente", Reauth), new("relogin", "Entrar novamente", Reauth)]);
+        }
+    }
+
+    public static Task<AppHost> CreateAsync() => CreateAsync(null, null, CancellationToken.None);
+
+    /// <summary>
+    /// Com a configuração já carregada (o Program a lê antes do Avalonia para aplicar tema/escala) e com o
+    /// progresso/desistência da espera pelo chaveiro (janela de espera; ver AuthService.CreateAsync).
+    /// </summary>
+    public static async Task<AppHost> CreateAsync(AppConfig? cfg, Action<string>? status, CancellationToken skipKeyring)
     {
         AppPaths.EnsureDirs();
-        var cfg = AppConfig.Load();
-        var auth = await AuthService.CreateAsync(cfg);
+        cfg ??= AppConfig.Load();
+        var auth = await AuthService.CreateAsync(cfg, status, skipKeyring);
         return new AppHost(cfg, auth);
     }
 
@@ -58,9 +155,20 @@ public sealed class AppHost
     {
         foreach (var note in Auth.StartupNotes)
             Activity.Add(Auth.KeyringUnavailable ? ActivityKind.Error : ActivityKind.Info, note);
+        if (Config.LoadWarning is { } warning)
+        {
+            Activity.Add(ActivityKind.Error, warning);
+            // arquivo inválido: grava já os padrões (o original ficou salvo) para não repetir o aviso a cada início
+            Config.Save();
+        }
         Activity.Add(ActivityKind.Info, $"Iniciado. Tokens em: {Auth.CacheStorage}");
         Engine.Start();
         Mount();
+        _sessionTimer = new Timer(_ =>
+        {
+            try { RunOnMain(CheckSessions).ContinueWith(t => _ = t.Exception, TaskContinuationOptions.OnlyOnFaulted); }
+            catch { /* melhor esforço */ }
+        }, null, TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(5));
         try
         {
             _ipc = new IpcServer(AppPaths.SocketPath, HandleIpcAsync);
@@ -98,6 +206,7 @@ public sealed class AppHost
 
     public async Task ShutdownAsync()
     {
+        if (_sessionTimer != null) await _sessionTimer.DisposeAsync();
         try { await UnmountAsync(); } catch { }
         Engine.Stop();
         _ipc?.Dispose();
@@ -118,44 +227,39 @@ public sealed class AppHost
     async Task<AccountConfig> AddAccountAsync(Func<CancellationToken, Task<AccountConfig>> signIn, CancellationToken ct)
     {
         var acc = await signIn(ct);
-        var existing = Config.Accounts.FirstOrDefault(a => a.Id == acc.Id);
-        if (existing != null) Config.Accounts.Remove(existing);
-        Config.Accounts.Add(acc);
-
-        var client = ClientFor(acc.Id);
-        var drive = await client.GetMyDriveAsync(ct);
-        if (Config.Drives.All(d => d.DriveId != drive.Id))
-        {
-            var label = acc.IsPersonal ? "OneDrive - Pessoal" : "OneDrive - " + Domain(acc.Username);
-            Config.Drives.Add(new DriveConfig
-            {
-                DriveId = drive.Id, AccountId = acc.Id, DisplayName = UniqueDisplayName(label),
-                Kind = acc.IsPersonal ? "personal" : "business", WebUrl = drive.WebUrl,
-            });
-        }
-        Config.Save();
-        Engine.ReloadDrives();
-        Activity.Add(ActivityKind.Info, $"Conta adicionada: {acc.Username}");
+        var drive = await ClientFor(acc.Id).GetMyDriveAsync(ct);
+        RegisterAccount(acc, drive.Id, drive.WebUrl);
         return acc;
     }
 
-    static string Domain(string username)
+    /// <summary>
+    /// Grava na configuração em memória (a desta instância é a que vale enquanto ela roda) uma conta
+    /// cujos tokens já estão no cache, e liga a drive dela. Chamado após o login pela janela e pelo
+    /// comando IPC "add-account" que o <c>craftdriver login</c> envia.
+    /// </summary>
+    public void RegisterAccount(AccountConfig acc, string driveId, string? driveWebUrl)
     {
-        var at = username.IndexOf('@');
-        if (at < 0) return username;
-        var domain = username[(at + 1)..];
-        var dot = domain.IndexOf('.');
-        return dot > 0 ? domain[..dot] : domain;
+        Config.UpsertAccount(acc, driveId, driveWebUrl);
+        Config.Save();
+        Engine.ReloadDrives();
+        Engine.SyncNow(); // drives que estavam pedindo login voltam a tentar
+        Activity.Add(ActivityKind.Info, $"Conta adicionada: {acc.Username}");
+        AccountsChanged?.Invoke();
     }
 
-    public string UniqueDisplayName(string wanted)
-    {
-        wanted = wanted.Replace('/', '-').Trim();
-        var name = wanted;
-        for (var i = 2; Config.Drives.Any(d => d.DisplayName.Equals(name, StringComparison.OrdinalIgnoreCase)); i++)
-            name = $"{wanted} ({i})";
-        return name;
-    }
+    /// <summary>Contas/drives mudaram fora da janela (ex.: <c>craftdriver login</c> no terminal).</summary>
+    public event Action? AccountsChanged;
+
+    /// <summary>
+    /// Executa alterações de configuração na thread dona do estado (a de UI, quando há janela),
+    /// para que comandos IPC não alterem as listas enquanto a interface as percorre.
+    /// </summary>
+    public Func<Action, Task> RunOnMain { get; set; } = a => { a(); return Task.CompletedTask; };
+
+    /// <summary>Abre uma pasta no gerenciador de arquivos (comando IPC "open"; troque nos testes).</summary>
+    public Action<string> OpenFolder { get; set; } = DesktopIntegration.OpenPath;
+
+    public string UniqueDisplayName(string wanted) => Config.UniqueDisplayName(wanted);
 
     public async Task RemoveAccountAsync(string accountId)
     {
@@ -166,12 +270,6 @@ public sealed class AppHost
         await Auth.SignOutAsync(accountId);
     }
 
-    /// <summary>Refaz o login de uma conta cuja sessão expirou.</summary>
-    public async Task ReauthenticateAsync(bool personal, Func<string, string, string, Task> onCode, CancellationToken ct)
-    {
-        await AddAccountAsync(personal, onCode, ct);
-        Engine.SyncNow();
-    }
 
     // ---------- bibliotecas (SharePoint) ----------
 
@@ -209,15 +307,42 @@ public sealed class AppHost
         Engine.ReloadDrives();
     }
 
+    // ---------- problemas (operações que falharam de forma permanente) ----------
+
+    public static string KindLabel(string kind) => kind switch
+    {
+        OpKind.Upload => "enviar",
+        OpKind.Mkdir => "criar pasta",
+        OpKind.Delete => "excluir na nuvem",
+        OpKind.Move => "mover/renomear",
+        OpKind.SetTime => "atualizar data",
+        _ => kind,
+    };
+
+    /// <summary>Caminho local do item da falha (ou só o nome, se o item não existe mais).</summary>
+    public string FailurePath(FailedOp f) =>
+        f.Lid != 0 && Db.Get(f.Lid) is { } it ? LocalPathOf(it) : f.Name ?? f.RemoteId ?? "?";
+
+    public bool RetryFailure(long id)
+    {
+        var f = Db.Failures().FirstOrDefault(x => x.Id == id);
+        return f != null && Engine.GetDrive(f.DriveId)?.RetryFailure(id) == true;
+    }
+
+    public int RetryAllFailures() => Db.Failures().Count(f => Engine.GetDrive(f.DriveId)?.RetryFailure(f.Id) == true);
+
+    /// <summary>Descarta o registro da falha (as alterações locais do item continuam lá).</summary>
+    public void DismissFailure(long id) => Db.DismissFailure(id);
+
     // ---------- caminhos locais ----------
 
-    public Item? ItemFromLocalPath(string path)
+    public Item? ItemFromLocalPath(string path, bool includeExcluded = false)
     {
         var mount = Path.GetFullPath(Config.MountPoint).TrimEnd('/');
         var full = Path.GetFullPath(path).TrimEnd('/');
         if (full != mount && !full.StartsWith(mount + "/")) return null;
         var rel = full.Length == mount.Length ? "/" : full[mount.Length..];
-        return Fs.Resolve(rel)?.Item;
+        return Fs.Resolve(rel, includeExcluded)?.Item;
     }
 
     public string LocalPathOf(Item item)
@@ -238,18 +363,35 @@ public sealed class AppHost
 
     // ---------- comandos IPC (CLI e menus do gerenciador de arquivos) ----------
 
-    async Task<IpcResponse> HandleIpcAsync(IpcRequest req)
+    internal async Task<IpcResponse> HandleIpcAsync(IpcRequest req)
     {
         switch (req.Cmd)
         {
             case "ping":
                 return new(true, "pong");
+            case "add-account":
+            {
+                var add = req.Args.Length == 1 ? IpcJson.DeserializeAddAccount(req.Args[0]) : null;
+                if (add?.Account is not { Id.Length: > 0 } acc || string.IsNullOrEmpty(add.DriveId))
+                    return new(false, "Pedido add-account inválido");
+                // o login gravou os tokens no cache compartilhado; confere que esta instância os enxerga
+                if (!await Auth.HasAccountAsync(acc.Id))
+                    return new(false, $"A conta {acc.Username} entrou, mas o craftDriver em execução não encontrou os tokens dela " +
+                                      $"({Auth.CacheStorage}). Reinicie o craftDriver.");
+                await RunOnMain(() => RegisterAccount(acc, add.DriveId, add.DriveWebUrl));
+                return new(true, $"Conta conectada: {acc.Username} ({(acc.IsPersonal ? "pessoal" : "corporativa/escolar")})");
+            }
             case "show":
                 // instância --headless não tem janela (nenhum assinante no evento)
                 if (ShowRequested == null)
                     return new(false, "O craftDriver já está rodando sem interface (--headless). Encerre-o com \"craftdriver quit\" e abra de novo.");
                 ShowRequested.Invoke();
                 return new(true, "ok");
+            case "open":
+                if (!Mounted)
+                    return new(false, "A pasta do craftDriver não está montada" + (MountError != null ? $" ({MountError})" : "") + ".");
+                OpenFolder(Config.MountPoint);
+                return new(true, "Abrindo " + Config.MountPoint);
             case "quit":
                 QuitRequested?.Invoke();
                 return new(true, "encerrando");
@@ -264,7 +406,7 @@ public sealed class AppHost
                 return new(true, "Retomado");
             case "deletes":
             {
-                var held = Engine.Drives.Where(d => d.DeleteHold).ToList();
+                var held = Engine.Drives.Concat(Engine.SharedDrives).Where(d => d.DeleteHold).ToList();
                 if (held.Count == 0) return new(true, "Nenhuma exclusão aguardando confirmação.");
                 switch (req.Args.FirstOrDefault())
                 {
@@ -272,15 +414,37 @@ public sealed class AppHost
                         foreach (var d in held) d.ConfirmDeletes();
                         return new(true, "Exclusões confirmadas; enviando para a nuvem.");
                     case "restore":
-                        foreach (var d in held) await d.RestoreDeletesAsync();
+                        await RestoreHeldDeletesAsync();
                         return new(true, "Exclusões canceladas; os itens estão sendo restaurados.");
                     default:
                         return new(true, string.Join('\n', held.Select(d => $"{d.Config.DisplayName}: {d.HeldDeleteCount} itens apagados aguardando confirmação")) +
                                          "\nUse: craftdriver deletes confirm | restore");
                 }
             }
+            case "retry":
+            {
+                var n = RetryAllFailures();
+                return new(true, n == 0 ? "Nenhum problema para tentar de novo." : $"{n} operação(ões) devolvida(s) à fila.");
+            }
             case "status" when req.Args.Length == 0:
                 return new(true, StatusSummary());
+            case "exclude":
+            case "include":
+            {
+                // incluir aceita o caminho de uma pasta já excluída (escondida da montagem)
+                var lines = new List<string>();
+                var ok = true;
+                foreach (var p in req.Args)
+                {
+                    var item = ItemFromLocalPath(p, includeExcluded: req.Cmd == "include");
+                    var error = item == null ? "fora da pasta sincronizada ou não encontrado" : Engine.SetExcluded(item.Lid, req.Cmd == "exclude");
+                    ok &= error == null;
+                    lines.Add(error != null ? $"{p}: {error}"
+                        : req.Cmd == "exclude" ? $"{p}: não será mais sincronizada neste computador (continua na nuvem)"
+                        : $"{p}: voltou a ser sincronizada");
+                }
+                return new(ok, string.Join('\n', lines));
+            }
             case "status":
             case "pin":
             case "unpin":
@@ -314,9 +478,176 @@ public sealed class AppHost
                 await Task.CompletedTask;
                 return new(ok, string.Join('\n', lines));
             }
+            case "share":
+                return await ShareAsync(req.Args);
+            case "versions":
+                return await VersionsAsync(req.Args);
+            case "trash":
+                return await TrashAsync(req.Args);
             default:
                 return new(false, "Comando desconhecido: " + req.Cmd);
         }
+    }
+
+    // ---------- link de compartilhamento, versões e Lixeira ----------
+
+    /// <summary>Copia texto para a área de transferência; devolve null ou o motivo da falha (troque nos testes).</summary>
+    public Func<string, Task<string?>> CopyToClipboard { get; set; } = text => ClipboardService.CopyAsync(text);
+
+    /// <summary>Abre uma URL no navegador (troque nos testes).</summary>
+    public Action<string> OpenUrl { get; set; } = DesktopIntegration.OpenPath;
+
+    /// <summary>Pedido de abrir a janela "Versões" de um arquivo (lid). Sem assinante (--headless), o IPC responde em texto.</summary>
+    public event Action<long>? VersionsRequested;
+
+    /// <summary>Pedido de abrir a janela "Lixeira". Sem assinante (--headless), o IPC responde em texto.</summary>
+    public event Action? TrashRequested;
+
+    public void RequestVersions(long lid) => VersionsRequested?.Invoke(lid);
+    public void RequestTrash() => TrashRequested?.Invoke();
+
+    static string[] Paths(string[] args) => args.Where(a => !a.StartsWith("--")).ToArray();
+    static string? Flag(string[] args, string name) =>
+        args.FirstOrDefault(a => a.StartsWith(name + "="))?[(name.Length + 1)..];
+
+    public static string ScopeText(string scope) => scope switch
+    {
+        "anonymous" => "qualquer pessoa com o link",
+        "organization" => "pessoas da sua organização",
+        "users" => "só as pessoas escolhidas",
+        _ => scope,
+    };
+
+    /// <summary>
+    /// "craftdriver share [--edit] [--notify] arquivos…": cria o link (view, ou edit), copia para a área de
+    /// transferência e imprime. Com --notify (menus) a notificação sai daqui, com "Abrir no navegador".
+    /// </summary>
+    async Task<IpcResponse> ShareAsync(string[] args)
+    {
+        var edit = args.Contains("--edit");
+        var notify = args.Contains("--notify");
+        var paths = Paths(args);
+        if (paths.Length == 0) return new(false, "Informe o arquivo ou a pasta: craftdriver share [--edit] <caminho>");
+        var lines = new List<string>();
+        var links = new List<(string Name, ShareResult Link)>();
+        var errors = new List<string>();
+        foreach (var p in paths)
+        {
+            var item = ItemFromLocalPath(p);
+            if (item == null) { errors.Add($"{p}: fora da pasta sincronizada ou não encontrado"); continue; }
+            try
+            {
+                var r = await Actions.CreateShareLinkAsync(item.Lid, edit, Engine.Token);
+                links.Add((item.Name, r));
+                lines.Add($"{r.Url}  ({item.Name}: {ScopeText(r.Scope)}, {(r.Type == "edit" ? "pode editar" : "somente leitura")})" +
+                          (r.FellBackToOrganization ? " — a política da organização não permite links para qualquer pessoa" : ""));
+            }
+            catch (ItemActionException e) { errors.Add($"{p}: {e.Message}"); }
+        }
+        lines.AddRange(errors);
+        string? clipError = null;
+        if (links.Count > 0)
+        {
+            clipError = await CopyToClipboard(string.Join('\n', links.Select(l => l.Link.Url)));
+            lines.Add(clipError == null
+                ? (links.Count == 1 ? "Link copiado para a área de transferência." : $"{links.Count} links copiados para a área de transferência.")
+                : "Não foi possível copiar para a área de transferência: " + clipError);
+        }
+        var ok = links.Count == paths.Length;
+        var text = string.Join('\n', lines);
+        if (notify)
+        {
+            if (links.Count == 0) Notify("craftDriver — link não criado", text, []);
+            else
+            {
+                var (name, link) = links[0];
+                void Open() => OpenUrl(link.Url);
+                var body = links.Count == 1
+                    ? $"{name}: {ScopeText(link.Scope)} {(link.Type == "edit" ? "pode editar" : "pode ver")}." +
+                      (link.FellBackToOrganization ? " Links para qualquer pessoa estão desativados pela sua organização." : "")
+                    : $"{links.Count} links criados.";
+                if (clipError != null) body += $"\nNão copiado ({clipError}): {string.Join(' ', links.Select(l => l.Link.Url))}";
+                if (errors.Count > 0) body += "\n" + string.Join('\n', errors);
+                Notify(clipError == null ? "Link copiado" : "craftDriver — link criado", body,
+                    [new(NotificationAction.Default, "Abrir no navegador", Open), new("open-link", "Abrir no navegador", Open)]);
+            }
+        }
+        return new(ok, text);
+    }
+
+    public static string VersionLine(DriveItemVersion v, bool current) =>
+        $"{v.Modified.ToLocalTime():yyyy-MM-dd HH:mm}  {CraftDriver.App.ViewModels.Fmt.Bytes(v.Size),9}  {v.ModifiedBy ?? "—"}" +
+        (current ? "  (atual)" : "") + $"  [id {v.Id}]";
+
+    /// <summary>
+    /// "craftdriver versions arquivo": abre a janela Versões; com --list (ou --headless) lista no terminal;
+    /// --restore=ID restaura; --copy=ID baixa a versão como cópia ao lado.
+    /// </summary>
+    async Task<IpcResponse> VersionsAsync(string[] args)
+    {
+        var paths = Paths(args);
+        if (paths.Length != 1) return new(false, "Informe um arquivo: craftdriver versions <arquivo> [--list | --restore=ID | --copy=ID]");
+        var item = ItemFromLocalPath(paths[0]);
+        if (item == null) return new(false, $"{paths[0]}: fora da pasta sincronizada ou não encontrado");
+        if (item.IsDir) return new(false, $"\"{item.Name}\" é uma pasta; versões anteriores existem só para arquivos.");
+        try
+        {
+            if (Flag(args, "--restore") is { } restore)
+            {
+                await Actions.RestoreVersionAsync(item.Lid, restore, Engine.Token);
+                return new(true, $"Versão {restore} restaurada como a atual de \"{item.Name}\".");
+            }
+            if (Flag(args, "--copy") is { } copy)
+            {
+                var v = (await Actions.ListVersionsAsync(item.Lid, Engine.Token)).FirstOrDefault(x => x.Id == copy)
+                        ?? throw new ItemActionException($"Versão {copy} não encontrada.");
+                var name = await Actions.DownloadVersionCopyAsync(item.Lid, v, Engine.Token);
+                return new(true, $"Versão salva como \"{name}\" ao lado do original.");
+            }
+            if (!args.Contains("--list") && VersionsRequested != null)
+            {
+                VersionsRequested.Invoke(item.Lid);
+                return new(true, $"Abrindo as versões de \"{item.Name}\".");
+            }
+            var list = await Actions.ListVersionsAsync(item.Lid, Engine.Token);
+            if (list.Count == 0) return new(true, $"\"{item.Name}\" não tem versões anteriores guardadas.");
+            return new(true, $"Versões de \"{item.Name}\" (mais nova primeiro):\n" +
+                             string.Join('\n', list.Select((v, i) => "  " + VersionLine(v, i == 0))) +
+                             "\nRestaurar: craftdriver versions <arquivo> --restore=ID · baixar cópia: --copy=ID");
+        }
+        catch (ItemActionException e) { return new(false, e.Message); }
+    }
+
+    /// <summary>"craftdriver trash [--list | restore ID | open]": excluídos recentes e restauração.</summary>
+    async Task<IpcResponse> TrashAsync(string[] args)
+    {
+        switch (args.FirstOrDefault())
+        {
+            case "restore":
+                if (args.Length < 2 || !long.TryParse(args[1], out var id)) return new(false, "Use: craftdriver trash restore <número da lista>");
+                try { return new(true, $"\"{await Actions.RestoreFromTrashAsync(id, Engine.Token)}\" restaurado da Lixeira; voltando para a pasta."); }
+                catch (ItemActionException e) { return new(false, e.Message); }
+            case "open":
+            {
+                var urls = Engine.Drives.Select(d => ItemActions.RecycleBinUrl(d.Config)).Distinct().ToList();
+                if (urls.Count == 0) return new(false, "Nenhuma conta conectada.");
+                foreach (var u in urls) OpenUrl(u);
+                return new(true, "Abrindo no navegador: " + string.Join(' ', urls));
+            }
+            case null when TrashRequested != null:
+                TrashRequested.Invoke();
+                return new(true, "Abrindo a Lixeira.");
+        }
+        var list = Db.Trash();
+        if (list.Count == 0) return new(true, "Nenhum item excluído recentemente (o craftDriver lista o que viu ser excluído desde a instalação).");
+        var lines = new List<string> { "Excluídos recentemente (mais novos primeiro):" };
+        foreach (var t in list)
+        {
+            var d = Engine.GetDrive(t.DriveId)?.Config;
+            var how = d == null ? "drive não conectada" : ItemActions.CanRestoreFromTrash(d) ? "craftdriver trash restore " + t.Id : "só pelo navegador: " + ItemActions.RecycleBinUrl(d);
+            lines.Add($"  {t.Id,4}  {DateTimeOffset.FromUnixTimeMilliseconds(t.At).ToLocalTime():yyyy-MM-dd HH:mm}  {t.Name}{(t.IsDir ? "/" : "")}  ({d?.DisplayName ?? t.DriveId}; {how})");
+        }
+        return new(true, string.Join('\n', lines));
     }
 
     public string StatusSummary()
@@ -327,6 +658,12 @@ public sealed class AppHost
             $"Montagem: {(Mounted ? Config.MountPoint : "não montado" + (MountError != null ? " (" + MountError + ")" : ""))}",
             $"Operações pendentes: {Db.PendingOps()}",
         };
+        var failures = Db.Failures();
+        if (failures.Count > 0)
+        {
+            lines.Add($"Problemas ({failures.Count}) — tente de novo com \"craftdriver retry\":");
+            lines.AddRange(failures.Select(f => $"  ✖ {KindLabel(f.Kind)} {FailurePath(f)}: {f.Error}"));
+        }
         foreach (var d in Engine.Drives)
         {
             var (files, dirs, cached, dirty) = Db.Counts(d.DriveId);

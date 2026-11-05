@@ -1,0 +1,15 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="CraftDriver.App.Views.NoTrayCloseWindow"
+        Title="Fechar o craftDriver?" Width="500" SizeToContent="Height" CanResize="False"
+        WindowStartupLocation="CenterOwner">
+    <StackPanel Margin="24" Spacing="12">
+        <TextBlock Classes="h2" Text="Não há área de notificação (bandeja) nesta sessão" TextWrapping="Wrap" />
+        <TextBlock x:Name="BodyText" TextWrapping="Wrap" />
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8">
+            <Button x:Name="CancelButton" Content="Cancelar" IsCancel="True" />
+            <Button x:Name="MinimizeButton" Content="Minimizar" />
+            <Button x:Name="QuitButton" Classes="accent" Content="Encerrar o craftDriver" IsDefault="True" />
+        </StackPanel>
+    </StackPanel>
+</Window>
