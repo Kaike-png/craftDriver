@@ -7,7 +7,7 @@ Marque `[x]` ao concluir.
 
 **Ainda abertos da rodada 1:** uploads paralelos (§3, ver §13.1); instalação em modo usuário das extensões Thunar/PCManFM/Nautilus (§6);
 bandeja com PNG em vez de ícone simbólico (§6); 2ª execução durante a espera do chaveiro abre outra instância (§8, ver §15.3);
-arm64 e Actions nunca executados de verdade (§9/§11); Graph real: 416 em retry, SharePoint/conta de trabalho, Office×`O_APPEND`,
+pacote Arch arm64 e app montando FUSE num ARM instalado (§9); Graph real: 416 em retry, SharePoint/conta de trabalho, Office×`O_APPEND`,
 link de compartilhamento, retomada de envio (§11).
 
 ## 1. Bugs — perda/corrupção de dados
@@ -318,11 +318,14 @@ link de compartilhamento, retomada de envio (§11).
   **Feito:** levantadas pelo código (`xdg-open`, `dbus-send`, `notify-send`, `wl-copy`/`xclip`/`xsel`), nomes
   conferidos em cada distro: obrigatórias `xdg-utils` e `dbus-bin|dbus` / `dbus-tools` / `dbus`; recomendadas
   `libnotify(-bin)` e cópia para a área de transferência. Os 4 contêineres instalam com elas.
-- [~] Só amd64; README menciona aarch64. AppImage viável com o tarball; Flatpak fora de escopo (FUSE).
-  **Parcial:** `ARCHES="x64 arm64" packaging/build.sh` gera tarball/.deb/.rpm arm64 (ELF aarch64 conferido) e PKGBUILD
-  com `source_x86_64`/`source_aarch64`; o CI roda a suíte (com FUSE real) num executor `ubuntu-24.04-arm` e testa os
-  pacotes arm64 em contêineres lá (`package-arm64`; `run.sh` escolhe pela arquitetura, Arch pulado por falta de
-  imagem arm64). **Nunca executado**: sem emulação arm64 aqui e o Actions não roda localmente — só actionlint.
+- [x] Só amd64; README menciona aarch64. AppImage viável com o tarball; Flatpak fora de escopo (FUSE).
+  **Feito:** `ARCHES="x64 arm64" packaging/build.sh` gera tarball/.deb/.rpm arm64 e PKGBUILD com
+  `source_x86_64`/`source_aarch64`. **Executado no GitHub Actions** (run 42106498338, executor `ubuntu-24.04-arm`):
+  `CraftDriver.Tests` 234 aprovados + 4 pulados de propósito (3 exigem `direct_io`, ausente na libfuse 3.14; 1 é o
+  cenário do processo filho), com FUSE real e `FuseLayoutTests` conferindo os offsets aarch64 nos cabeçalhos reais;
+  `UiTests` 118/118; pacotes arm64 instalados em Ubuntu, Debian e Fedora com a janela abrindo nos três.
+  O primeiro run achou um teste que só passava com `direct_io` (desmontagem com reads no mesmo arquivo), corrigido.
+  **Não verificado:** pacote Arch arm64 (sem imagem) e o app instalado montando a pasta num ARM de verdade.
   AppImage não feito (o app já depende do fuse3 do sistema; o tarball cobre "qualquer distro").
 - [x] CI: `ScreenTests.cs:94-137` chama endpoints reais da Microsoft (flaky); PNGs das telas não viram artefato; sem cache NuGet,
   `timeout-minutes`, `concurrency`, `dotnet format`; `smoke.sh:26` não falha sem janela; `--generate-notes` silencioso (`ci.yml:85`).
@@ -378,15 +381,16 @@ download e `open`, rename para nome local-only, hash divergente, falha de downlo
 
 ## 11. Não verificado
 
-- [~] Layout de `struct stat`/`fuse_config` em aarch64 e libfuse < 3.17 (offsets x86_64 conferidos com libfuse 3.18.3 via `offsetof`).
-  **Parcial:** `tools/fuse-layout/probe.c` mede `stat`, `statvfs`, `fuse_entry_param`, `fuse_file_info` e os índices de
+- [x] Layout de `struct stat`/`fuse_config` em aarch64 e libfuse < 3.17 (offsets x86_64 conferidos com libfuse 3.18.3 via `offsetof`).
+  **Feito:** `tools/fuse-layout/probe.c` mede `stat`, `statvfs`, `fuse_entry_param`, `fuse_file_info` e os índices de
   `fuse_lowlevel_ops` por `offsetof` (só compila, serve para cruzado); `FuseLayout.cs` guarda os valores e
   `FuseLayoutTests` confere contra x86_64 3.18, x86_64 3.14 e aarch64 3.14 (Debian 12) e contra os cabeçalhos da
   máquina em que roda. **Defeitos corrigidos:** no aarch64 a `stat` tem 128 bytes (não 144), então
   `attr_timeout`/`entry_timeout` eram gravados 16 bytes fora do lugar; na libfuse 3.14 a `fuse_file_info` tem 40
   bytes e o open copiava 64 (lia além do fim). `fuse_config` não é mais usado (API low-level, `fuse_loop_cfg_*`).
   Suíte inteira no Ubuntu 24.04 (libfuse 3.14, usuário comum): 229 aprovados, 3 pulados por exigirem `direct_io`
-  (garantias que a 3.14 não dá; docs/streaming.md). **Falta:** rodar em aarch64 de verdade (o CI ARM roda o teste).
+  (garantias que a 3.14 não dá; docs/streaming.md). **Conferido em aarch64 real** no CI ARM (teste contra os
+  cabeçalhos da máquina, passou).
 - [x] Corridas LRU×Open e `Unmount` use-after-free (raciocínio, não reproduzidas).
   **Feito:** LRU×Open **existia**: o Open decidia "cache em dia" pela cópia do item lida antes da reserva; um despejo
   que conferiu `IsOpen` antes apagava o arquivo e o open dava `EIO`. Reproduzida com costura
