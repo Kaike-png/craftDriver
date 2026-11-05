@@ -1,0 +1,20 @@
+# Ação do craftDriver para PCManFM / PCManFM-Qt (ver craftdriver-menu.desktop).
+# ShowIfTrue restringe ao ponto de montagem: só mostra quando TODOS os itens têm o xattr
+# user.onedrive.status. O comando imprime "true" (o que a especificação DES-EMA pede) E sai com
+# status 0 (o que o libfm-qt de fato confere, via system()); fora do craftDriver não imprime nada e
+# sai com 1. Precisa do getfattr (pacote attr).
+[Desktop Entry]
+Type=Action
+Name=Versões anteriores…
+Tooltip=Lista as versões guardadas na nuvem para restaurar ou baixar uma cópia (craftDriver)
+Icon=document-open-recent
+Profiles=craftdriver;
+
+[X-Action-Profile craftdriver]
+Name=Versões anteriores…
+# um arquivo só (pastas não têm versões)
+MimeTypes=all/allfiles;
+SelectionCount==1
+TryExec=craftdriver
+ShowIfTrue=sh -c 'for f in "$@"; do getfattr --only-values -n user.onedrive.status -- "$f" >/dev/null 2>&1 || exit 1; done; echo true' craftdriver %F
+Exec=craftdriver versions %f

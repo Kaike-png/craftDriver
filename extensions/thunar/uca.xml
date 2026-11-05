@@ -1,0 +1,93 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Ações personalizadas do Thunar para o craftDriver (trecho para ~/.config/Thunar/uca.xml).
+
+  Instale com extensions/thunar/install-uca.py (mescla sem apagar suas ações, é idempotente e
+  faz backup); a opção "remove" do script tira só estas. Ou copie os <action> à mão para dentro de <actions>.
+
+  LIMITAÇÃO: o Thunar só filtra ações por nome de arquivo (<patterns>) e tipo, nunca por caminho ou
+  atributo, então estas ações aparecem em QUALQUER arquivo ("Versões anteriores…" só em arquivos, não em pastas). Fora do ponto de montagem o próprio
+  "craftdriver" recusa os itens e avisa por notificação.
+  <submenu> exige Thunar 4.18+; versões antigas ignoram a tag e mostram as ações no nível de cima.
+-->
+<actions>
+<action>
+	<icon>emblem-downloads</icon>
+	<name>Sempre manter neste dispositivo</name>
+	<submenu>craftDriver</submenu>
+	<unique-id>craftdriver-pin</unique-id>
+	<command>craftdriver pin --notify %F</command>
+	<description>Baixa e mantém os itens neste dispositivo (craftDriver)</description>
+	<range></range>
+	<patterns>*</patterns>
+	<directories/>
+	<audio-files/>
+	<image-files/>
+	<other-files/>
+	<text-files/>
+	<video-files/>
+</action>
+<action>
+	<icon>edit-clear</icon>
+	<name>Liberar espaço</name>
+	<submenu>craftDriver</submenu>
+	<unique-id>craftdriver-free</unique-id>
+	<command>craftdriver unpin --notify %F</command>
+	<description>Remove a cópia local; os itens continuam na nuvem (craftDriver)</description>
+	<range></range>
+	<patterns>*</patterns>
+	<directories/>
+	<audio-files/>
+	<image-files/>
+	<other-files/>
+	<text-files/>
+	<video-files/>
+</action>
+<action>
+	<icon>help-about</icon>
+	<name>Status no craftDriver</name>
+	<submenu>craftDriver</submenu>
+	<unique-id>craftdriver-status</unique-id>
+	<command>craftdriver status --notify %F</command>
+	<description>Mostra o status de sincronização dos itens (craftDriver)</description>
+	<range></range>
+	<patterns>*</patterns>
+	<directories/>
+	<audio-files/>
+	<image-files/>
+	<other-files/>
+	<text-files/>
+	<video-files/>
+</action>
+<action>
+	<icon>insert-link</icon>
+	<name>Copiar link de compartilhamento</name>
+	<submenu>craftDriver</submenu>
+	<unique-id>craftdriver-share</unique-id>
+	<command>craftdriver share --notify %F</command>
+	<description>Cria um link para o item e copia para a área de transferência (craftDriver)</description>
+	<range></range>
+	<patterns>*</patterns>
+	<directories/>
+	<audio-files/>
+	<image-files/>
+	<other-files/>
+	<text-files/>
+	<video-files/>
+</action>
+<action>
+	<icon>document-open-recent</icon>
+	<name>Versões anteriores…</name>
+	<submenu>craftDriver</submenu>
+	<unique-id>craftdriver-versions</unique-id>
+	<command>craftdriver versions %f</command>
+	<description>Versões guardadas na nuvem: restaurar ou baixar uma cópia (craftDriver; só arquivos)</description>
+	<range></range>
+	<patterns>*</patterns>
+	<audio-files/>
+	<image-files/>
+	<other-files/>
+	<text-files/>
+	<video-files/>
+</action>
+</actions>

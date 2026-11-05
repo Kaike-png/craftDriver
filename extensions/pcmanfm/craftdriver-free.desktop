@@ -1,0 +1,18 @@
+# Ação do craftDriver para PCManFM / PCManFM-Qt (ver craftdriver-menu.desktop).
+# ShowIfTrue restringe ao ponto de montagem: só mostra quando TODOS os itens têm o xattr
+# user.onedrive.status. O comando imprime "true" (o que a especificação DES-EMA pede) E sai com
+# status 0 (o que o libfm-qt de fato confere, via system()); fora do craftDriver não imprime nada e
+# sai com 1. Precisa do getfattr (pacote attr).
+[Desktop Entry]
+Type=Action
+Name=Liberar espaço
+Tooltip=Remove a cópia local; os itens continuam na nuvem (craftDriver)
+Icon=edit-clear
+Profiles=craftdriver;
+
+[X-Action-Profile craftdriver]
+Name=Liberar espaço
+MimeTypes=all/all;
+TryExec=craftdriver
+ShowIfTrue=sh -c 'for f in "$@"; do getfattr --only-values -n user.onedrive.status -- "$f" >/dev/null 2>&1 || exit 1; done; echo true' craftdriver %F
+Exec=craftdriver unpin --notify %F

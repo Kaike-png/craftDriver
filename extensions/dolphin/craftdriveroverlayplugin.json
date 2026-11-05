@@ -1,0 +1,7 @@
+{
+    "KPlugin": {
+        "Name": "craftDriver",
+        "Description": "Emblemas de status dos arquivos do craftDriver (OneDrive/SharePoint)",
+        "License": "MIT"
+    }
+}

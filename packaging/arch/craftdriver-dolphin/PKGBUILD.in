@@ -1,0 +1,32 @@
+# Maintainer: Kaike de Paula <kaikedepaula8@gmail.com>
+# Gerado por packaging/build.sh a partir de packaging/arch/craftdriver-dolphin/PKGBUILD.in
+# Plugins KF6 do Dolphin (extensions/dolphin): emblemas de status (kf6/overlayicon) e menu craftDriver
+# só para arquivos do craftDriver (kf6/kfileitemaction). Compilado da fonte da tag v${pkgver}.
+pkgname=craftdriver-dolphin
+pkgver=@VERSION@
+pkgrel=1
+pkgdesc="Plugins do Dolphin para o craftDriver: emblemas de status e menu só dentro do ponto de montagem"
+arch=('x86_64')
+url="https://github.com/Kaike-png/craftDriver"
+license=('MIT')
+depends=('craftdriver' 'kio' 'kcoreaddons' 'qt6-base' 'glibc' 'gcc-libs')
+optdepends=('dolphin: o gerenciador de arquivos que carrega os plugins')
+makedepends=('cmake' 'extra-cmake-modules' 'git' 'ninja')
+source=("craftDriver::git+${url}.git#tag=v${pkgver}")
+sha256sums=('SKIP')
+
+build() {
+  cmake -S craftDriver/extensions/dolphin -B build -G Ninja \
+    -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_BUILD_TYPE=None -DBUILD_TESTING=ON
+  cmake --build build
+}
+
+check() {
+  # Os testes gravam user xattrs em arquivos temporários ($srcdir) e carregam os .so como o Dolphin.
+  CRAFTDRIVER_TEST_DIR="$srcdir" QT_QPA_PLATFORM=offscreen ctest --test-dir build --output-on-failure
+}
+
+package() {
+  DESTDIR="$pkgdir" cmake --install build
+  install -Dm644 craftDriver/LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

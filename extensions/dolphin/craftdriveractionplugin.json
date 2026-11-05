@@ -1,0 +1,12 @@
+{
+    "KPlugin": {
+        "Name": "craftDriver",
+        "Description": "Fixar, liberar espaço e ver o status de arquivos do craftDriver",
+        "Icon": "craftdriver",
+        "License": "MIT",
+        "MimeTypes": [
+            "application/octet-stream",
+            "inode/directory"
+        ]
+    }
+}
