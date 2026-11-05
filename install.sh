@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Publica o OneDrive Linux em ~/.local/opt/craftdriver e cria o comando ~/.local/bin/craftdriver.
+# Publica o craftDriver em ~/.local/opt/craftdriver e cria o comando ~/.local/bin/craftdriver.
 # Uso: ./install.sh            (instala/atualiza)
 #      ./install.sh --uninstall
 set -euo pipefail

@@ -9,39 +9,156 @@ on:
 permissions:
   contents: read
 
+# Um run por ref: um push novo na mesma branch/PR cancela o anterior. Tags (release) nunca são canceladas.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+env:
+  DOTNET_NOLOGO: '1'
+  DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+
 jobs:
-  test:
+  # Antes de tudo (e em paralelo aos testes): notas da release na tag e formatação.
+  checks:
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Notas da release (só em tag)
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          # a seção "## [X.Y.Z]" do CHANGELOG.md vira o texto da release; sem ela a tag falha aqui
+          if ! packaging/release-notes.sh "$GITHUB_REF_NAME" > "$RUNNER_TEMP/notes.md"; then
+            echo "::error file=CHANGELOG.md,title=Notas da release ausentes::Acrescente a seção \"## [${GITHUB_REF_NAME#v}]\" ao CHANGELOG.md antes de publicar a tag $GITHUB_REF_NAME (a release não sai com notas geradas automaticamente)."
+            exit 1
+          fi
+          echo "Notas: $(wc -l < "$RUNNER_TEMP/notes.md") linhas"
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      # cache do NuGet sem lock files: a chave muda com qualquer .csproj/.props (versões de pacote)
+      - uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('**/*.csproj', '**/Directory.Packages.props', '**/Directory.Build.props') }}
+          restore-keys: nuget-${{ runner.os }}-${{ runner.arch }}-
+      # Só espaços/indentação/fim de linha (.editorconfig). Estilo e analisadores ficam com o build, que
+      # já sai sem avisos; aplicar `dotnet format style` no código atual seria um diff enorme.
+      - name: Formatação (dotnet format whitespace)
+        run: dotnet format whitespace CraftDriver.slnx --verify-no-changes
+
+  # x64 e arm64: no executor ARM os testes FUSE reais exercitam o layout aarch64 de struct stat/fuse_config.
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '10.0.x'
+      # cache do NuGet sem lock files: a chave muda com qualquer .csproj/.props (versões de pacote)
+      - uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('**/*.csproj', '**/Directory.Packages.props', '**/Directory.Build.props') }}
+          restore-keys: nuget-${{ runner.os }}-${{ runner.arch }}-
       - name: Dependências (FUSE3)
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq fuse3 libfuse3-3 attr
+          # libfuse3-dev + gcc: FuseLayoutTests compila tools/fuse-layout/probe.c e confere os offsets desta
+          # arquitetura (no executor ARM é a única verificação real do layout aarch64)
+          sudo apt-get install -y -qq fuse3 libfuse3-3 libfuse3-dev gcc attr
           sudo chmod 666 /dev/fuse
           grep -q '^user_allow_other' /etc/fuse.conf || echo user_allow_other | sudo tee -a /etc/fuse.conf
-      - name: Testes
-        run: dotnet test CraftDriver.slnx -c Release
+      - name: Testes das extensões (Nautilus com gi falso, Thunar, PCManFM)
+        run: for d in nautilus thunar pcmanfm; do python3 -m unittest discover -s "extensions/$d/tests" -v; done
+      # Os testes de UI não acessam a rede (Microsoft falsa em tests/CraftDriver.UiTests/FakeMicrosoftLogin.cs);
+      # os PNGs das telas vão para CRAFTDRIVER_UI_OUT e viram artefato mesmo se algo falhar.
+      - name: Testes (com cobertura)
+        env:
+          CRAFTDRIVER_UI_OUT: ${{ runner.temp }}/craftdriver-ui
+        run: dotnet test CraftDriver.slnx -c Release --collect:"XPlat Code Coverage" --logger trx --results-directory coverage
+      - name: Relatório de cobertura
+        if: ${{ !cancelled() }}
+        run: |
+          dotnet tool install --tool-path .tools dotnet-reportgenerator-globaltool --version 5.5.12
+          .tools/reportgenerator "-reports:coverage/**/coverage.cobertura.xml" "-targetdir:coverage/report" "-reporttypes:MarkdownSummaryGithub;HtmlInline"
+          cat coverage/report/SummaryGithub.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: cobertura-${{ matrix.arch }}
+          path: coverage/report/
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: resultados-testes-${{ matrix.arch }}
+          path: coverage/**/*.trx
+          if-no-files-found: warn
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: telas-ui-${{ matrix.arch }}
+          path: ${{ runner.temp }}/craftdriver-ui/
+          if-no-files-found: warn
+
+  # Plugin C++ do Dolphin (extensions/dolphin): precisa de KF6, que o Ubuntu 24.04 não tem, então compila e
+  # testa num contêiner archlinux (o mesmo ambiente do pacote craftdriver-dolphin do AUR). Não entra no
+  # .deb/.rpm; é distribuído como pacote à parte, compilado da fonte.
+  dolphin-plugin:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    container: archlinux:latest
+    steps:
+      - name: Dependências (KF6, ECM)
+        run: pacman -Syu --noconfirm --needed base-devel git cmake ninja extra-cmake-modules kio qt6-base breeze-icons attr
+      - uses: actions/checkout@v4
+      - name: Compilar
+        run: |
+          cmake -S extensions/dolphin -B build-dolphin -G Ninja -DCMAKE_INSTALL_PREFIX=/usr -DBUILD_TESTING=ON
+          cmake --build build-dolphin
+      - name: Testes (carregam os .so como o Dolphin; arquivos com user xattrs no workspace)
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/xattr-tmp"
+          CRAFTDRIVER_TEST_DIR="$GITHUB_WORKSPACE/xattr-tmp" QT_QPA_PLATFORM=offscreen ctest --test-dir build-dolphin --output-on-failure
+      - name: Instalação em DESTDIR
+        run: |
+          DESTDIR="$PWD/dest" cmake --install build-dolphin
+          find dest -type f | sort
 
   package:
-    needs: test
+    needs: [checks, test, dolphin-plugin]
     runs-on: ubuntu-24.04
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '10.0.x'
+      # cache do NuGet sem lock files: a chave muda com qualquer .csproj/.props (versões de pacote)
+      - uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('**/*.csproj', '**/Directory.Packages.props', '**/Directory.Build.props') }}
+          restore-keys: nuget-${{ runner.os }}-${{ runner.arch }}-
       - name: Versão
         id: ver
         run: |
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then v="${GITHUB_REF_NAME#v}"; else v="$(grep -oP '(?<=<Version>)[^<]+' src/CraftDriver.App/CraftDriver.App.csproj)"; fi
           echo "version=$v" >> "$GITHUB_OUTPUT"
-      - name: Gerar pacotes (.tar.gz, .deb, .rpm, PKGBUILD)
-        run: packaging/build.sh "${{ steps.ver.outputs.version }}"
-      - name: Testar pacotes em contêineres (Ubuntu, Debian, Fedora, Arch)
+      # x64 e arm64 (compilação cruzada) num job só: o PKGBUILD do AUR precisa das duas somas
+      - name: Gerar pacotes (.tar.gz, .deb, .rpm, PKGBUILD) x64 + arm64
+        run: ARCHES="x64 arm64" packaging/build.sh "${{ steps.ver.outputs.version }}"
+      - name: Testar pacotes x64 em contêineres (Ubuntu, Debian, Fedora, Arch)
         run: packaging/test/run.sh
       - uses: actions/upload-artifact@v4
         with:
@@ -54,11 +171,40 @@ jobs:
             dist/*.pkg.tar.zst
             dist/aur/
             dist/test/
+      # logs e capturas de tela do smoke (dist/test) também quando um contêiner falha
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: smoke-falhou-${{ steps.ver.outputs.version }}
+          path: dist/test/
+          if-no-files-found: warn
+
+  # Os pacotes arm64 gerados acima, instalados e testados num executor ARM (sem Arch: não há imagem archlinux arm64).
+  package-arm64:
+    needs: package
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: craftdriver-*
+          path: dist
+          merge-multiple: true
+      - name: Testar pacotes arm64 em contêineres (Ubuntu, Debian, Fedora)
+        run: OUT="$PWD/dist/test-arm64" packaging/test/run.sh ubuntu debian fedora
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: smoke-arm64
+          path: dist/test-arm64/
+          if-no-files-found: warn
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: package
+    needs: [package, package-arm64]
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     permissions:
       contents: write
     steps:
@@ -74,13 +220,15 @@ jobs:
         run: |
           cd art
           cp aur/PKGBUILD PKGBUILD
+          cp aur/craftdriver-dolphin/PKGBUILD PKGBUILD-craftdriver-dolphin
           cp test/*.pkg.tar.zst .
-          sha256sum *.tar.gz *.deb *.rpm *.pkg.tar.zst > SHA256SUMS
-          files=(*.tar.gz *.sha256 *.deb *.rpm *.pkg.tar.zst PKGBUILD SHA256SUMS)
+          sha256sum -- *.tar.gz *.deb *.rpm *.pkg.tar.zst > SHA256SUMS
+          files=(*.tar.gz *.sha256 *.deb *.rpm *.pkg.tar.zst PKGBUILD PKGBUILD-craftdriver-dolphin SHA256SUMS)
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            echo "::notice title=Release já existia::$GITHUB_REF_NAME: arquivos substituídos; título e notas mantidos como estão."
             gh release upload "$GITHUB_REF_NAME" "${files[@]}" --clobber
           else
-            notes="packaging/release-notes/${GITHUB_REF_NAME}.md"
-            if [ -f "../$notes" ]; then gh release create "$GITHUB_REF_NAME" "${files[@]}" --title "craftDriver $GITHUB_REF_NAME" --notes-file "../$notes"
-            else gh release create "$GITHUB_REF_NAME" "${files[@]}" --title "craftDriver $GITHUB_REF_NAME" --generate-notes; fi
+            # antes caía calado em --generate-notes quando o arquivo faltava; o job checks já barra a tag sem notas
+            ../packaging/release-notes.sh "$GITHUB_REF_NAME" > "$RUNNER_TEMP/notes.md"
+            gh release create "$GITHUB_REF_NAME" "${files[@]}" --title "craftDriver $GITHUB_REF_NAME" --notes-file "$RUNNER_TEMP/notes.md"
           fi

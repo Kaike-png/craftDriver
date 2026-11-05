@@ -1,7 +1,7 @@
 # Configuração do nfpm (https://nfpm.goreleaser.com) para gerar .deb e .rpm.
 # Modelo: packaging/build.sh troca @VERSION@ e @STAGING@ e gera dist/nfpm.yaml.
 name: craftdriver
-arch: amd64
+arch: @ARCH@
 platform: linux
 version: @VERSION@
 release: "1"
@@ -25,11 +25,19 @@ overrides:
       - libx11-6
       - libice6
       - libsm6
+      # ICU fica: com InvariantGlobalization números/datas sairiam em formato inglês (ver docs/empacotamento.md)
       - libicu78 | libicu77 | libicu76 | libicu74 | libicu72 | libicu71 | libicu70 | libicu67
+      - xdg-utils          # xdg-open: abrir a pasta, o navegador do login e os links
+      - dbus-bin | dbus    # dbus-send: iniciar o chaveiro e mostrar o arquivo no gerenciador
     recommends:
       - libsecret-1-0
+      - libnotify-bin      # notify-send: só se o serviço de notificações não responder pelo D-Bus
+      - wl-clipboard | xclip | xsel   # copiar o link de compartilhamento
       - fonts-dejavu-core
       - fonts-noto-color-emoji
+    suggests:
+      - python3-nautilus   # extensão do Nautilus (emblemas + menu)
+      - attr               # getfattr, usado pelas ações do PCManFM
   rpm:
     depends:
       - fuse3
@@ -38,16 +46,23 @@ overrides:
       - libICE
       - libSM
       - libicu
+      - xdg-utils
+      - dbus-tools
     recommends:
       - libsecret
+      - libnotify
+      - (wl-clipboard or xclip or xsel)
       - dejavu-sans-fonts
       - google-noto-color-emoji-fonts
+    suggests:
+      - nautilus-python    # extensão do Nautilus (emblemas + menu)
+      - attr               # getfattr, usado pelas ações do PCManFM
 
 contents:
-  - src: @STAGING@/craftdriver
-    dst: /usr/lib/craftdriver/craftdriver
-    file_info:
-      mode: 0755
+  # o app inteiro (apphost "craftdriver" + DLLs + .so); "tree" preserva os modos dos arquivos
+  - src: @STAGING@/lib
+    dst: /usr/lib/craftdriver
+    type: tree
   - src: /usr/lib/craftdriver/craftdriver
     dst: /usr/bin/craftdriver
     type: symlink
@@ -59,8 +74,58 @@ contents:
     dst: /usr/share/kio/servicemenus/craftdriver.desktop
     file_info:
       mode: 0755
+  # Extensões de gerenciador de arquivos (extensions/). Inertes se o gerenciador não estiver instalado.
+  - src: @STAGING@/share/nautilus-python/extensions/craftdriver.py
+    dst: /usr/share/nautilus-python/extensions/craftdriver.py
+    file_info:
+      mode: 0644
+  - src: @STAGING@/share/file-manager/actions/craftdriver-menu.desktop
+    dst: /usr/share/file-manager/actions/craftdriver-menu.desktop
+    file_info:
+      mode: 0644
+  - src: @STAGING@/share/file-manager/actions/craftdriver-pin.desktop
+    dst: /usr/share/file-manager/actions/craftdriver-pin.desktop
+    file_info:
+      mode: 0644
+  - src: @STAGING@/share/file-manager/actions/craftdriver-free.desktop
+    dst: /usr/share/file-manager/actions/craftdriver-free.desktop
+    file_info:
+      mode: 0644
+  - src: @STAGING@/share/file-manager/actions/craftdriver-status.desktop
+    dst: /usr/share/file-manager/actions/craftdriver-status.desktop
+    file_info:
+      mode: 0644
+  - src: @STAGING@/share/file-manager/actions/craftdriver-share.desktop
+    dst: /usr/share/file-manager/actions/craftdriver-share.desktop
+    file_info:
+      mode: 0644
+  - src: @STAGING@/share/file-manager/actions/craftdriver-versions.desktop
+    dst: /usr/share/file-manager/actions/craftdriver-versions.desktop
+    file_info:
+      mode: 0644
+  # Thunar não tem uca.xml de sistema que possamos estender: fica o trecho + o script de mescla.
+  - src: @STAGING@/share/craftdriver/thunar/uca.xml
+    dst: /usr/share/craftdriver/thunar/uca.xml
+    file_info:
+      mode: 0644
+  - src: @STAGING@/share/craftdriver/thunar/install-uca.py
+    dst: /usr/share/craftdriver/thunar/install-uca.py
+    file_info:
+      mode: 0755
   - src: @STAGING@/share/icons/hicolor/256x256/apps/craftdriver.png
     dst: /usr/share/icons/hicolor/256x256/apps/craftdriver.png
+    file_info:
+      mode: 0644
+  - src: @STAGING@/share/icons/hicolor/scalable/apps/craftdriver.svg
+    dst: /usr/share/icons/hicolor/scalable/apps/craftdriver.svg
+    file_info:
+      mode: 0644
+  - src: @STAGING@/share/icons/hicolor/symbolic/apps/craftdriver-symbolic.svg
+    dst: /usr/share/icons/hicolor/symbolic/apps/craftdriver-symbolic.svg
+    file_info:
+      mode: 0644
+  - src: @STAGING@/share/metainfo/io.github.kaike_png.craftdriver.metainfo.xml
+    dst: /usr/share/metainfo/io.github.kaike_png.craftdriver.metainfo.xml
     file_info:
       mode: 0644
   - src: @STAGING@/LICENSE
@@ -69,6 +134,10 @@ contents:
       mode: 0644
   - src: @STAGING@/README.md
     dst: /usr/share/doc/craftdriver/README.md
+    file_info:
+      mode: 0644
+  - src: @STAGING@/CHANGELOG.md
+    dst: /usr/share/doc/craftdriver/CHANGELOG.md
     file_info:
       mode: 0644
 

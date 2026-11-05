@@ -4,7 +4,13 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 OUT="${OUT:-$ROOT/dist/test}"; mkdir -p "$OUT"
-DEB=$(cd "$ROOT/dist" && ls craftdriver_*_amd64.deb); RPM=$(cd "$ROOT/dist" && ls craftdriver-*.x86_64.rpm)
+# pacotes da arquitetura desta máquina (o build pode ter gerado x64 e arm64)
+case "$(uname -m)" in
+  x86_64) DEB_ARCH=amd64 RPM_ARCH=x86_64 ;;
+  aarch64) DEB_ARCH=arm64 RPM_ARCH=aarch64 ;;
+  *) echo "run.sh: arquitetura $(uname -m) não suportada" >&2; exit 2 ;;
+esac
+DEB=$(cd "$ROOT/dist" && ls craftdriver_*_"$DEB_ARCH".deb); RPM=$(cd "$ROOT/dist" && ls craftdriver-*."$RPM_ARCH".rpm)
 TOOLS_DEB="xvfb x11-utils imagemagick fonts-dejavu-core fonts-noto-color-emoji"
 TOOLS_RPM="xorg-x11-server-Xvfb xwininfo ImageMagick dejavu-sans-fonts google-noto-color-emoji-fonts"
 run() {
@@ -20,7 +26,8 @@ for d in $want; do case $d in
   debian) run debian debian:12 "export DEBIAN_FRONTEND=noninteractive; apt-get update -qq && apt-get install -y -qq /dist/$DEB $TOOLS_DEB >/dev/null" ;;
   fedora) run fedora fedora:latest "dnf install -y -q /dist/$RPM $TOOLS_RPM >/dev/null" ;;
   # Arch: compila o PKGBUILD do AUR com makepkg (tarball local no lugar do download) e instala com pacman
-  arch) run arch archlinux:latest "pacman -Syu --noconfirm -q base-devel xorg-server-xvfb xorg-xwininfo imagemagick ttf-dejavu noto-fonts-emoji >/dev/null \
+  arch) if [ "$DEB_ARCH" != amd64 ]; then echo "######## arch: pulado (a imagem archlinux só existe para x86_64)"; continue; fi
+        run arch archlinux:latest "pacman -Syu --noconfirm -q base-devel xorg-server-xvfb xorg-xwininfo imagemagick ttf-dejavu noto-fonts-emoji >/dev/null \
           && useradd -m builder && mkdir /b && cp /dist/aur/PKGBUILD /dist/craftdriver-*-linux-x64.tar.gz /b/ && chown -R builder /b \
           && su builder -c 'cd /b && makepkg --nodeps --noconfirm >/dev/null' && pacman -U --noconfirm /b/craftdriver-bin-*.pkg.tar.zst >/dev/null && cp /b/craftdriver-bin-*.pkg.tar.zst /out/" ;;
 esac; done

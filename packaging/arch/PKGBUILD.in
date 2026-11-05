@@ -4,28 +4,45 @@ pkgname=craftdriver-bin
 pkgver=@VERSION@
 pkgrel=1
 pkgdesc="Cliente para OneDrive e SharePoint com arquivos sob demanda (FUSE). Não afiliado à Microsoft."
-arch=('x86_64')
+arch=(@ARCH@)
 url="https://github.com/Kaike-png/craftDriver"
 license=('MIT')
-depends=('glibc' 'libgcc' 'libstdc++' 'fuse3' 'icu' 'fontconfig' 'libx11' 'libice' 'libsm' 'hicolor-icon-theme')
+depends=('glibc' 'libgcc' 'libstdc++' 'fuse3' 'icu' 'fontconfig' 'libx11' 'libice' 'libsm' 'hicolor-icon-theme'
+         'xdg-utils' 'dbus')
 optdepends=('libsecret: guardar os tokens no chaveiro do sistema (KWallet/GNOME Keyring)'
             'dolphin: menu de contexto craftDriver no gerenciador de arquivos'
+            'craftdriver-dolphin: emblemas de status no Dolphin e menu só dentro do ponto de montagem'
+            'python-nautilus: emblemas e menu craftDriver no Nautilus'
+            'attr: getfattr, usado pelas ações do PCManFM/PCManFM-Qt'
+            'python: instalar as ações do Thunar (/usr/share/craftdriver/thunar/install-uca.py)'
+            'libnotify: notify-send, se o serviço de notificações não responder pelo D-Bus'
+            'wl-clipboard: copiar o link de compartilhamento no Wayland'
+            'xclip: copiar o link de compartilhamento no X11'
             'noto-fonts-emoji: ícones de status na janela')
 provides=('craftdriver')
 conflicts=('craftdriver')
-# o binário single-file do .NET não pode ser "stripado"
+# bibliotecas do .NET/Skia já vêm prontas: strip não ganha nada e pode quebrar as assinaturas de tamanho
 options=('!strip' '!debug')
-source=("${url}/releases/download/v${pkgver}/craftdriver-${pkgver}-linux-x64.tar.gz")
-sha256sums=('@SHA256@')
+@SOURCES@
+@SHA256SUMS@
 
 package() {
-  cd "craftdriver-${pkgver}-linux-x64"
-  install -Dm755 craftdriver "${pkgdir}/usr/lib/craftdriver/craftdriver"
+  case "$CARCH" in x86_64) cd "craftdriver-${pkgver}-linux-x64" ;; aarch64) cd "craftdriver-${pkgver}-linux-arm64" ;; esac
+  install -dm755 "${pkgdir}/usr/lib/craftdriver"
+  cp -a lib/. "${pkgdir}/usr/lib/craftdriver/"
   install -dm755 "${pkgdir}/usr/bin"
   ln -s /usr/lib/craftdriver/craftdriver "${pkgdir}/usr/bin/craftdriver"
   install -Dm644 share/applications/craftdriver.desktop "${pkgdir}/usr/share/applications/craftdriver.desktop"
   install -Dm755 share/kio/servicemenus/craftdriver.desktop "${pkgdir}/usr/share/kio/servicemenus/craftdriver.desktop"
+  install -Dm644 share/nautilus-python/extensions/craftdriver.py "${pkgdir}/usr/share/nautilus-python/extensions/craftdriver.py"
+  install -Dm644 -t "${pkgdir}/usr/share/file-manager/actions" share/file-manager/actions/craftdriver-*.desktop
+  install -Dm644 share/craftdriver/thunar/uca.xml "${pkgdir}/usr/share/craftdriver/thunar/uca.xml"
+  install -Dm755 share/craftdriver/thunar/install-uca.py "${pkgdir}/usr/share/craftdriver/thunar/install-uca.py"
   install -Dm644 share/icons/hicolor/256x256/apps/craftdriver.png "${pkgdir}/usr/share/icons/hicolor/256x256/apps/craftdriver.png"
+  install -Dm644 share/icons/hicolor/scalable/apps/craftdriver.svg "${pkgdir}/usr/share/icons/hicolor/scalable/apps/craftdriver.svg"
+  install -Dm644 share/icons/hicolor/symbolic/apps/craftdriver-symbolic.svg "${pkgdir}/usr/share/icons/hicolor/symbolic/apps/craftdriver-symbolic.svg"
+  install -Dm644 share/metainfo/io.github.kaike_png.craftdriver.metainfo.xml "${pkgdir}/usr/share/metainfo/io.github.kaike_png.craftdriver.metainfo.xml"
   install -Dm644 LICENSE "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
   install -Dm644 README.md "${pkgdir}/usr/share/doc/${pkgname}/README.md"
+  install -Dm644 CHANGELOG.md "${pkgdir}/usr/share/doc/${pkgname}/CHANGELOG.md"
 }
