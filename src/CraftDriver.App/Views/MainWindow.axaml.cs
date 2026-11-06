@@ -29,6 +29,17 @@ public partial class MainWindow : Window
         catch (Exception ex) { vm.Host.Activity.Add(CraftDriver.Core.Sync.ActivityKind.Error, "Não foi possível salvar o tamanho da janela: " + ex.Message); }
     }
 
+    /// <summary>
+    /// Diálogos (ShowDialog) exigem dona visível: com a janela escondida na bandeja, um pedido vindo de fora
+    /// ("Entrar novamente" da notificação, confirmação pela bandeja) lançava "Cannot show window with
+    /// non-visible owner" num async void e derrubava o processo. Todo handler que abre diálogo chama isto antes.
+    /// </summary>
+    void EnsureVisibleOwner()
+    {
+        if (!IsVisible) Show();
+        if (WindowState == WindowState.Minimized) WindowState = WindowState.Normal;
+    }
+
     public MainWindow()
     {
         InitializeComponent();
@@ -50,23 +61,27 @@ public partial class MainWindow : Window
             }
             vm.AddAccountRequested += async reauth =>
             {
+                EnsureVisibleOwner();
                 var dlg = new LoginWindow(vm.Host, reauth);
                 await dlg.ShowDialog(this);
                 return dlg.Success;
             };
             vm.AddLibraryRequested += async acc =>
             {
+                EnsureVisibleOwner();
                 var dlg = new AddLibraryWindow(vm.Host, acc);
                 await dlg.ShowDialog(this);
                 if (dlg.Added) vm.LibraryAdded();
             };
             vm.ChooseFoldersRequested += async folders =>
             {
+                EnsureVisibleOwner();
                 await new ChooseFoldersWindow(folders).ShowDialog(this);
                 vm.RefreshDrives();
             };
             vm.PickFolderRequested += async () =>
             {
+                EnsureVisibleOwner();
                 var start = await StorageProvider.TryGetFolderFromPathAsync(vm.Host.Config.MountPoint);
                 var res = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
                 {
@@ -78,13 +93,14 @@ public partial class MainWindow : Window
             };
             vm.ConfirmRequested += async request =>
             {
-                if (!IsVisible) Show(); // pedido vindo da bandeja: o diálogo precisa de uma janela-mãe visível
+                EnsureVisibleOwner();
                 var dlg = new ConfirmWindow(request);
                 await dlg.ShowDialog(this);
                 return dlg.Result;
             };
             vm.PickSettingsFolderRequested += async title =>
             {
+                EnsureVisibleOwner();
                 var res = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions { Title = title, AllowMultiple = false });
                 return res.Count > 0 ? res[0].TryGetLocalPath() : null;
             };

@@ -29,9 +29,6 @@ public sealed class StartupCoordinator<T> where T : class
     /// <summary>Tarefa da fábrica (testes: conferir que terminou/foi abandonada).</summary>
     public Task<T>? FactoryTask { get; private set; }
 
-    /// <summary>Usuário pediu para não esperar o chaveiro.</summary>
-    public bool Skipped => _skip.IsCancellationRequested;
-
     /// <summary>Chamar na thread de UI.</summary>
     public Task<T?> RunAsync(bool showSplash, TimeSpan? splashDelay = null)
     {

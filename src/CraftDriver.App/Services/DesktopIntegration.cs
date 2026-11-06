@@ -100,7 +100,7 @@ public static class DesktopIntegration
         if (mode == AutostartMode.Xdg)
         {
             Directory.CreateDirectory(Path.GetDirectoryName(xdg)!);
-            File.WriteAllText(xdg, Packaged("share/applications/craftdriver.desktop", " --minimized") + "X-GNOME-Autostart-enabled=true\n");
+            File.WriteAllText(xdg, AutostartText());
             return warning;
         }
 
@@ -114,18 +114,44 @@ public static class DesktopIntegration
     }
 
     /// <summary>
+    /// .desktop do autostart: só o [Desktop Entry] do atalho do pacote, sem Actions= (ações num autostart não têm
+    /// função) e com --minimized apenas no Exec principal — antes o sufixo ia também para os Exec das ações.
+    /// </summary>
+    internal static string AutostartText()
+    {
+        var entry = Packaged("share/applications/craftdriver.desktop").Split("\n\n[Desktop Action")[0].TrimEnd('\n');
+        var lines = entry.Split('\n').Where(l => !l.StartsWith("Actions="))
+            .Select(l => l.StartsWith("Exec=") ? l + " --minimized" : l);
+        return string.Join('\n', lines) + "\nX-GNOME-Autostart-enabled=true\n";
+    }
+
+    /// <summary>
     /// Unit do systemd --user. Roda com --headless: um serviço do systemd não tem garantia de sessão
     /// gráfica pronta (Hyprland sem uwsm nem ativa graphical-session.target), então não há janela nem
     /// ícone na bandeja — o status fica no CLI (craftdriver status) e nas notificações.
+    /// Parada: "craftdriver quit" pelo IPC (desmonta e termina os envios em curso) e espera o processo sair; o
+    /// systemd só manda SIGTERM depois do ExecStop ou do TimeoutStopSec (143 = morto por SIGTERM não é falha).
+    /// After/PartOf: quando há graphical-session.target (GNOME, KDE, uwsm), sobe depois dele e para junto no
+    /// logout; PassEnvironment repassa as variáveis que a sessão exportou para o systemd --user (notificações,
+    /// navegador do login, área de transferência).
     /// </summary>
-    internal static string SystemdUnitText() => $"""
+    internal static string SystemdUnitText()
+    {
+        var exec = ExecCommand.Replace("%", "%%");
+        return $"""
         [Unit]
         Description=craftDriver — cliente para OneDrive e SharePoint (sem interface)
         Documentation=https://github.com/Kaike-png/craftDriver
+        After=graphical-session.target
+        PartOf=graphical-session.target
 
         [Service]
         Type=simple
-        ExecStart={ExecCommand.Replace("%", "%%")} --headless
+        ExecStart={exec} --headless
+        ExecStop=-/bin/sh -c '{exec} quit; while kill -0 "$$MAINPID" 2>/dev/null; do sleep 0.5; done'
+        TimeoutStopSec=60
+        SuccessExitStatus=143
+        PassEnvironment=WAYLAND_DISPLAY DISPLAY DBUS_SESSION_BUS_ADDRESS XDG_CURRENT_DESKTOP
         Restart=on-failure
         RestartSec=10
 
@@ -133,6 +159,7 @@ public static class DesktopIntegration
         WantedBy=default.target
 
         """;
+    }
 
     internal static string? FindInPath(string name)
     {
@@ -165,10 +192,10 @@ public static class DesktopIntegration
     /// Arquivo de packaging/share (embutido no binário) com "Exec=craftdriver …" trocado pelo comando deste
     /// executável — o modo usuário não tem /usr/bin/craftdriver. Tudo o mais é idêntico ao do pacote.
     /// </summary>
-    static string Packaged(string resource, string execSuffix = "")
+    static string Packaged(string resource)
     {
         var lines = Resource(resource).Replace("\r", "").TrimEnd('\n').Split('\n')
-            .Select(l => l.StartsWith("Exec=craftdriver") ? "Exec=" + ExecCommand + l["Exec=craftdriver".Length..] + execSuffix : l);
+            .Select(l => l.StartsWith("Exec=craftdriver") ? "Exec=" + ExecCommand + l["Exec=craftdriver".Length..] : l);
         return string.Join('\n', lines) + "\n";
     }
 
@@ -213,20 +240,55 @@ public static class DesktopIntegration
         }
         else InstallUserLauncherAndMenus(done);
 
-        // Nautilus e Nemo: scripts (o pacote não instala, pois ficam na pasta do usuário)
+        InstallFileManagerScripts(done, DataHome, NautilusExtensionActive(DataDirs, LibDirs));
+        return done;
+    }
+
+    /// <summary>$XDG_DATA_HOME e $XDG_DATA_DIRS (padrão /usr/local/share:/usr/share).</summary>
+    static IEnumerable<string> DataDirs =>
+        new[] { DataHome }.Concat((Environment.GetEnvironmentVariable("XDG_DATA_DIRS") is { Length: > 0 } d ? d : "/usr/local/share:/usr/share")
+            .Split(':', StringSplitOptions.RemoveEmptyEntries));
+
+    /// <summary>Onde as distros põem o libnautilus-python.so (Arch, Fedora, Debian/Ubuntu multiarch).</summary>
+    static IEnumerable<string> LibDirs =>
+        ["/usr/lib", "/usr/lib64", "/usr/lib/x86_64-linux-gnu", "/usr/lib/aarch64-linux-gnu", "/usr/local/lib"];
+
+    /// <summary>
+    /// A extensão craftdriver.py do Nautilus está instalada (pacote ou usuário) E o nautilus-python existe
+    /// (API 4.0 ou 3.0) — sem ele o arquivo do pacote fica inerte e os scripts continuam sendo o único menu.
+    /// </summary>
+    internal static bool NautilusExtensionActive(IEnumerable<string> dataDirs, IEnumerable<string> libDirs) =>
+        dataDirs.Any(d => File.Exists(Path.Combine(d, "nautilus-python", "extensions", "craftdriver.py")))
+        && libDirs.Any(l => new[] { "extensions-4", "extensions-3.0" }
+            .Any(e => File.Exists(Path.Combine(l, "nautilus", e, "libnautilus-python.so"))));
+
+    static readonly string[] ScriptNames = ["craftDriver - Sempre manter neste dispositivo", "craftDriver - Liberar espaço"];
+
+    /// <summary>
+    /// Nautilus e Nemo: scripts (o pacote não instala, pois ficam na pasta do usuário). Com a extensão do Nautilus
+    /// ativa, os scripts duplicariam o menu craftDriver dela: não grava e apaga os de instalações anteriores.
+    /// </summary>
+    internal static void InstallFileManagerScripts(List<string> done, string dataHome, bool nautilusExtension)
+    {
         foreach (var (dir, label) in new[]
                  {
-                     (Path.Combine(DataHome, "nautilus", "scripts"), "Nautilus"),
-                     (Path.Combine(DataHome, "nemo", "scripts"), "Nemo"),
+                     (Path.Combine(dataHome, "nautilus", "scripts"), "Nautilus"),
+                     (Path.Combine(dataHome, "nemo", "scripts"), "Nemo"),
                  })
         {
             if (!Directory.Exists(Path.GetDirectoryName(dir)!)) continue;
+            if (label == "Nautilus" && nautilusExtension)
+            {
+                foreach (var name in ScriptNames)
+                    if (File.Exists(Path.Combine(dir, name))) File.Delete(Path.Combine(dir, name));
+                done.Add("Nautilus: menu da extensão craftDriver (sem scripts)");
+                continue;
+            }
             Directory.CreateDirectory(dir);
-            WriteScript(Path.Combine(dir, "craftDriver - Sempre manter neste dispositivo"), "pin");
-            WriteScript(Path.Combine(dir, "craftDriver - Liberar espaço"), "unpin");
+            WriteScript(Path.Combine(dir, ScriptNames[0]), "pin");
+            WriteScript(Path.Combine(dir, ScriptNames[1]), "unpin");
             done.Add($"Scripts do {label}");
         }
-        return done;
     }
 
     internal static void InstallUserLauncherAndMenus(List<string> done)
@@ -283,17 +345,32 @@ public static class DesktopIntegration
         catch { /* melhor esforço */ }
     }
 
-    public static void OpenPath(string pathOrUrl)
+    /// <summary>
+    /// Abre pasta/arquivo/URL sem bloquear quem chama: a ativação D-Bus de um gerenciador de arquivos fechado
+    /// leva segundos (até 10 s de espera), e isto é chamado da thread de UI (botões, bandeja) — a janela congelava
+    /// e os comandos IPC que rodam nela esperavam junto.
+    /// </summary>
+    public static void OpenPath(string pathOrUrl) => _ = Task.Run(() => OpenPathAsync(pathOrUrl));
+
+    public static async Task OpenPathAsync(string pathOrUrl)
     {
         // Pastas: pede ao gerenciador de arquivos via D-Bus (org.freedesktop.FileManager1).
         // xdg-open em ponto de montagem usa o tipo inode/mount-point, que em várias
         // instalações aponta para o terminal (ex.: kitty-open) em vez do Dolphin/Nautilus.
-        if (Directory.Exists(pathOrUrl) && ShowFolder(pathOrUrl)) return;
-        try { Process.Start(new ProcessStartInfo("xdg-open", pathOrUrl) { UseShellExecute = false }); }
+        if (Directory.Exists(pathOrUrl) && await ShowFolderAsync(pathOrUrl)) return;
+        try
+        {
+            var p = Process.Start(new ProcessStartInfo("xdg-open", pathOrUrl) { UseShellExecute = false });
+            if (p != null)
+            {
+                p.EnableRaisingEvents = true; // recolhe o processo ao terminar, sem esperar por ele
+                p.Exited += (_, _) => p.Dispose();
+            }
+        }
         catch { }
     }
 
-    static bool ShowFolder(string dir)
+    static async Task<bool> ShowFolderAsync(string dir)
     {
         var uri = new Uri(Path.GetFullPath(dir)).AbsoluteUri;
         try
@@ -310,7 +387,12 @@ public static class DesktopIntegration
                      })
                 psi.ArgumentList.Add(a);
             using var p = Process.Start(psi);
-            if (p == null || !p.WaitForExit(10_000)) return false;
+            if (p == null) return false;
+            _ = p.StandardOutput.ReadToEndAsync();
+            _ = p.StandardError.ReadToEndAsync();
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            try { await p.WaitForExitAsync(timeout.Token); }
+            catch (OperationCanceledException) { try { p.Kill(); } catch { } return false; }
             return p.ExitCode == 0;
         }
         catch { return false; }
@@ -340,5 +422,23 @@ public static class DesktopIntegration
         if (Environment.GetEnvironmentVariable("CRAFTDRIVER_NO_NOTIFY") == "1") return Task.CompletedTask;
         var icon = NotificationIcon;
         return Task.Run(() => Notifier.Value.NotifyAsync(title, body, icon, actions));
+    }
+
+    /// <summary>
+    /// Como <see cref="Notify"/>, com etiqueta: a próxima com a mesma etiqueta substitui esta na tela (replaces_id)
+    /// e <see cref="CloseNotification"/> a fecha.
+    /// </summary>
+    public static Task NotifyTagged(string tag, string title, string body, params NotificationAction[] actions)
+    {
+        if (Environment.GetEnvironmentVariable("CRAFTDRIVER_NO_NOTIFY") == "1") return Task.CompletedTask;
+        var icon = NotificationIcon;
+        return Task.Run(() => Notifier.Value.NotifyAsync(title, body, icon, actions, tag));
+    }
+
+    /// <summary>Fecha a notificação com a etiqueta, se ainda estiver na tela.</summary>
+    public static Task CloseNotification(string tag)
+    {
+        if (Environment.GetEnvironmentVariable("CRAFTDRIVER_NO_NOTIFY") == "1" || !Notifier.IsValueCreated) return Task.CompletedTask;
+        return Task.Run(() => Notifier.Value.CloseAsync(tag));
     }
 }

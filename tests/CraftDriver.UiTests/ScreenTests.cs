@@ -226,8 +226,8 @@ public class ScreenTests
         Assert.Contains("1989 itens", vm.DeleteAlerts[0].Text);
         var alert = vm.DeleteAlerts[0];
         Assert.Equal(20, alert.Items.Count);
-        Assert.Equal("📁 /Fotos  (31 itens)", alert.Items[0]);
-        Assert.Equal("📄 /solto00.txt", alert.Items[1]);
+        Assert.Equal(new DeletedEntryVm("folder", "/Fotos  (31 itens)"), alert.Items[0]);
+        Assert.Equal(new DeletedEntryVm("file", "/solto00.txt"), alert.Items[1]);
         Assert.Equal("… e mais 6", alert.More);
         vm.DeleteAlerts[0].ConfirmCommand.Execute(null);
         Pump(300);
@@ -290,7 +290,7 @@ public class ScreenTests
         vm.DownloadConcurrency = 2;
         vm.DownloadLimitMBps = 1.5m;
         vm.UploadLimitMBps = 0.25m;
-        vm.SaveSettingsCommand.ExecuteAsync(null).GetAwaiter().GetResult();
+        ShellUi.Wait(vm.SaveSettingsCommand.ExecuteAsync(null));
 
         Assert.Equal(2, host.Config.DownloadConcurrency);
         Assert.Equal(1_500_000, host.Config.DownloadBytesPerSecond);

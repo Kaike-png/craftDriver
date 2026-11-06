@@ -67,7 +67,11 @@ public sealed partial class ConflictVm(MainViewModel main, long id, string path,
     [RelayCommand] void Dismiss() => main.DismissConflict(this);
 }
 
+/// <param name="Icon">Chave de <see cref="Icons"/>.</param>
 public sealed record ActivityVm(string Time, string Icon, string Text, bool IsError);
+
+/// <summary>Item de uma exclusão retida (pasta com o total dentro, ou arquivo).</summary>
+public sealed record DeletedEntryVm(string Icon, string Text);
 
 public sealed partial class AccountVm(MainViewModel main, AccountConfig acc) : ViewModelBase
 {
@@ -115,7 +119,7 @@ public sealed partial class DeleteAlertVm(MainViewModel main, DriveSync drive) :
     [ObservableProperty] public partial string Text { get; set; } = "";
 
     /// <summary>O que será apagado: pastas aparecem uma vez, com o total dentro.</summary>
-    public ObservableCollection<string> Items { get; } = [];
+    public ObservableCollection<DeletedEntryVm> Items { get; } = [];
     [ObservableProperty] public partial string More { get; set; } = "";
     const int Shown = 20;
     long _listedFor = -1;
@@ -129,7 +133,7 @@ public sealed partial class DeleteAlertVm(MainViewModel main, DriveSync drive) :
         var all = Drive.HeldDeletes();
         Items.Clear();
         foreach (var d in all.Take(Shown))
-            Items.Add(d.IsFolder ? $"📁 {d.Path}  ({d.Count} {(d.Count == 1 ? "item" : "itens")})" : $"📄 {d.Path}");
+            Items.Add(d.IsFolder ? new("folder", $"{d.Path}  ({d.Count} {(d.Count == 1 ? "item" : "itens")})") : new("file", d.Path));
         More = all.Count > Shown ? $"… e mais {all.Count - Shown}" : "";
     }
 
@@ -152,7 +156,7 @@ public sealed partial class PinnedVm(MainViewModel main, long lid, string path, 
 {
     public long Lid { get; } = lid;
     public string Path { get; } = path;
-    public string Icon { get; } = isDir ? "📁" : "📄";
+    public string Icon { get; } = isDir ? "folder" : "file";
     [RelayCommand] void Unpin() => main.Unpin(this);
 }
 
@@ -182,7 +186,8 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
 
     [ObservableProperty] public partial string StatusText { get; set; } = "";
     [ObservableProperty] public partial string StatusDetail { get; set; } = "";
-    [ObservableProperty] public partial string StatusIcon { get; set; } = "☁";
+    /// <summary>Chave de <see cref="Icons"/> do estado geral.</summary>
+    [ObservableProperty] public partial string StatusIcon { get; set; } = "cloud";
     [ObservableProperty] public partial string MountText { get; set; } = "";
     [ObservableProperty] public partial bool IsMounted { get; set; }
     [ObservableProperty] public partial string PauseText { get; set; } = "Pausar";
@@ -209,7 +214,36 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
     public event Action? RestartRequested;
     public event Func<string, Task<string?>>? PickSettingsFolderRequested;
 
+    /// <summary>Copia texto (atividade); devolve null ou o motivo da falha. Troque nos testes.</summary>
+    internal Func<string, Task<string?>> CopyText { get; set; }
+    /// <summary>Busca na atividade recente (texto contido, sem diferenciar maiúsculas).</summary>
+    [ObservableProperty] public partial string ActivityFilter { get; set; } = "";
+    [ObservableProperty] public partial bool ActivityErrorsOnly { get; set; }
+
+    /// <summary>
+    /// Por drive, a operação na cabeça da fila que está falhando e esperando nova tentativa. A fila anda só pela
+    /// cabeça: enquanto ela espera, nada atrás dela é enviado — sem isto a tela só dizia "N alterações na fila".
+    /// </summary>
+    public ObservableCollection<string> QueueBlocked { get; } = [];
+    [ObservableProperty] public partial bool HasQueueBlocked { get; set; }
+
+    /// <summary>Liga/desliga o início automático; devolve um aviso para mostrar (troque nos testes).</summary>
+    internal Func<bool, AutostartMode, string?> SetAutostart { get; set; } = DesktopIntegration.SetAutostart;
+
     partial void OnMessageChanged(string value) => MessageIsError = false;
+
+    bool _themeLoaded;
+
+    /// <summary>Tema muda na hora (antes só ao Salvar) e fica gravado.</summary>
+    partial void OnThemeIndexChanged(int value)
+    {
+        if (!_themeLoaded) return; // valor inicial lido da configuração
+        var theme = ThemeService.Values[Math.Clamp(value, 0, ThemeService.Values.Length - 1)];
+        if (Host.Config.Theme == theme) return;
+        Host.Config.Theme = theme;
+        ThemeService.Apply(Host.Config);
+        Host.TrySaveConfig("Aparência");
+    }
 
     public void ShowError(string text)
     {
@@ -264,6 +298,7 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
     public MainViewModel(AppHost host, Func<long>? readCacheBytes = null, Func<DateTimeOffset>? clock = null)
     {
         Host = host;
+        CopyText = t => Host.CopyToClipboard(t);
         _cacheSampler = CacheSamplers.GetValue(host, h => new CacheUsageSampler(
             readCacheBytes ?? h.Engine.Cache.TotalBytes, clock ?? (() => DateTimeOffset.UtcNow)));
         var c = host.Config;
@@ -281,6 +316,7 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
         ClientId = c.ClientId;
         MassDeleteThreshold = c.MassDeleteThreshold;
         ThemeIndex = ThemeService.IndexOf(c.Theme);
+        _themeLoaded = true;
 
         RebuildAccounts();
         RebuildPinned();
@@ -309,13 +345,13 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
         StatusText = AppHost.StatusText(st);
         StatusIcon = st switch
         {
-            EngineStatus.UpToDate => "✔",
-            EngineStatus.Syncing => "⟳",
-            EngineStatus.Paused => "⏸",
-            EngineStatus.Offline => "⚠",
-            EngineStatus.AuthRequired or EngineStatus.Error => "✖",
-            EngineStatus.DeleteConfirmation => "⚠",
-            _ => "☁",
+            EngineStatus.UpToDate => "ok",
+            EngineStatus.Syncing => "sync",
+            EngineStatus.Paused => "pause",
+            EngineStatus.Offline => "offline",
+            EngineStatus.AuthRequired or EngineStatus.Error => "error",
+            EngineStatus.DeleteConfirmation => "warning",
+            _ => "cloud",
         };
         var pending = Host.Db.PendingOps();
         CurrentStatus = st;
@@ -351,7 +387,7 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
                 var id = t.Id;
                 vm = new TransferVm
                 {
-                    Id = t.Id, Name = t.Name, Direction = t.Upload ? "↑" : "↓",
+                    Id = t.Id, Name = t.Name, Direction = t.Upload ? "upload" : "download",
                     CancelAction = () => Host.Activity.CancelTransfer(id),
                 };
                 Transfers.Add(vm);
@@ -368,6 +404,7 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
             RefreshDrives();
             RefreshFailures();
             RefreshConflicts();
+            RefreshQueue();
         }
         Refreshed?.Invoke();
     }
@@ -401,9 +438,36 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
         });
     }
 
+    partial void OnActivityFilterChanged(string value) => RebuildActivity();
+    partial void OnActivityErrorsOnlyChanged(bool value) => RebuildActivity();
+
+    bool ActivityMatches(ActivityEntry a) =>
+        (!ActivityErrorsOnly || a.Kind == ActivityKind.Error) &&
+        (string.IsNullOrWhiteSpace(ActivityFilter) || a.Text.Contains(ActivityFilter.Trim(), StringComparison.CurrentCultureIgnoreCase));
+
+    /// <summary>Filtro mudou: refaz a lista inteira (até 200 linhas).</summary>
+    void RebuildActivity()
+    {
+        if (_disposed) return;
+        _newestActivity = null;
+        Activity.Clear();
+        RefreshActivity();
+    }
+
+    /// <summary>Copia as linhas visíveis (com o filtro aplicado) — para colar num relato de problema.</summary>
+    [RelayCommand]
+    async Task CopyActivity()
+    {
+        var text = string.Join('\n', Activity.Select(a => $"{a.Time}  {(a.IsError ? "ERRO  " : "")}{a.Text}"));
+        if (text.Length == 0) { Message = "Nada para copiar."; return; }
+        var error = await CopyText(text);
+        if (error == null) Message = Activity.Count == 1 ? "1 linha copiada." : $"{Activity.Count} linhas copiadas.";
+        else ShowError("Não foi possível copiar: " + error);
+    }
+
     void RefreshActivity()
     {
-        var entries = Host.Activity.Entries.Take(200).ToList();
+        var entries = Host.Activity.Entries.Where(ActivityMatches).Take(200).ToList();
         var added = _newestActivity == null ? entries.Count
             : entries.FindIndex(a => ReferenceEquals(a, _newestActivity));
         if (added < 0) added = entries.Count;
@@ -414,13 +478,13 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
             var a = entries[i];
             Activity.Insert(0, new ActivityVm(a.Time.ToString("HH:mm:ss"), a.Kind switch
             {
-                ActivityKind.Upload => "↑",
-                ActivityKind.Download => "↓",
-                ActivityKind.Delete => "🗑",
-                ActivityKind.Move => "➜",
-                ActivityKind.Conflict => "⚠",
-                ActivityKind.Error => "✖",
-                _ => "•",
+                ActivityKind.Upload => "upload",
+                ActivityKind.Download => "download",
+                ActivityKind.Delete => "delete",
+                ActivityKind.Move => "move",
+                ActivityKind.Conflict => "warning",
+                ActivityKind.Error => "error",
+                _ => "info",
             }, a.Text, a.Kind == ActivityKind.Error));
         }
         _newestActivity = entries.FirstOrDefault();
@@ -524,6 +588,28 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
         FailuresHeader = HasFailures ? $"Problemas ({Failures.Count})" : "Problemas";
     }
 
+    /// <summary>Atualiza <see cref="QueueBlocked"/>: cabeças de fila que já falharam e estão esperando.</summary>
+    public void RefreshQueue()
+    {
+        var lines = new List<string>();
+        foreach (var h in Host.Db.QueueHeads().Where(h => h.Attempts > 0))
+        {
+            var drive = Host.Config.Drives.FirstOrDefault(d => d.DriveId == h.DriveId)?.DisplayName
+                        ?? Host.Engine.GetDrive(h.DriveId)?.Config.DisplayName ?? h.DriveId;
+            var path = h.Lid != 0 && Host.Db.Get(h.Lid) is { } it && Host.LocalPathOf(it) is { Length: > 0 } p ? p : h.Name ?? "?";
+            var when = h.NextTry > DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+                ? $"próxima tentativa às {DateTimeOffset.FromUnixTimeMilliseconds(h.NextTry).ToLocalTime():HH:mm:ss}"
+                : "tentando de novo agora";
+            lines.Add($"Fila de \"{drive}\" parada em {AppHost.KindLabel(h.Kind)} \"{path}\": {h.Attempts} tentativas" +
+                      (h.LastError != null ? $", último erro: {h.LastError}" : "") + $"; {when}. " +
+                      $"Esperando atrás dela: {h.Behind} {(h.Behind == 1 ? "alteração" : "alterações")}.");
+        }
+        if (lines.SequenceEqual(QueueBlocked)) return;
+        QueueBlocked.Clear();
+        foreach (var l in lines) QueueBlocked.Add(l);
+        HasQueueBlocked = QueueBlocked.Count > 0;
+    }
+
     public void RefreshConflicts()
     {
         var list = Host.Db.Conflicts();
@@ -576,6 +662,7 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
     {
         Accounts.Clear();
         foreach (var a in Host.Config.Accounts) Accounts.Add(new AccountVm(this, a));
+        AddLibraryCommand.NotifyCanExecuteChanged();
         RefreshDrives();
     }
 
@@ -589,10 +676,21 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
 
     // ---------- comandos ----------
 
-    [RelayCommand] void OpenFolder() => DesktopIntegration.OpenPath(Host.Config.MountPoint);
+    [RelayCommand] void OpenFolder() => Host.OpenFolder(Host.Config.MountPoint);
     [RelayCommand] void SyncNow() { Host.Engine.SyncNow(); Message = "Verificando alterações…"; }
-    [RelayCommand] void TogglePause() { Host.Engine.Paused = !Host.Engine.Paused; Host.Config.Save(); Refresh(); }
-    [RelayCommand] void Quit() => QuitRequested?.Invoke();
+    [RelayCommand] void TogglePause() { Host.Engine.Paused = !Host.Engine.Paused; Host.TrySaveConfig("Pausa da sincronização"); Refresh(); }
+
+    /// <summary>Sair (Ctrl+Q, botão): com transferências em andamento, confirma antes — elas são interrompidas.</summary>
+    [RelayCommand]
+    async Task Quit()
+    {
+        var transfers = Host.Activity.Transfers.Count;
+        if (transfers > 0 && !await ConfirmAsync(new ConfirmRequest("Sair do craftDriver?",
+                $"{(transfers == 1 ? "Há 1 transferência" : $"Há {transfers} transferências")} em andamento. Elas são interrompidas e " +
+                "continuam na próxima vez que o craftDriver abrir; até lá, a pasta sincronizada fica indisponível.", "Sair")))
+            return;
+        QuitRequested?.Invoke();
+    }
     [RelayCommand] void OpenLog() => DesktopIntegration.OpenPath(AppPaths.LogFile);
 
     [RelayCommand]
@@ -606,11 +704,18 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
         }
     }
 
-    /// <summary>"Entrar novamente" da notificação de sessão expirada (chega numa thread do pool).</summary>
-    void OnReauthRequested(AccountConfig acc) => Avalonia.Threading.Dispatcher.UIThread.Post(async () =>
+    /// <summary>
+    /// "Entrar novamente" da notificação de sessão expirada (chega numa thread do pool). O RequestShow só posta o
+    /// ShowWindow (que cria a janela, se o app iniciou minimizado, e liga o AddAccountRequested): o login vai num
+    /// job seguinte, de prioridade menor, para rodar depois dele.
+    /// </summary>
+    void OnReauthRequested(AccountConfig acc) => Avalonia.Threading.Dispatcher.UIThread.Post(() =>
     {
         Host.RequestShow();
-        if (Accounts.FirstOrDefault(a => a.Account.Id == acc.Id) is { } vm) await ReauthenticateAsync(vm);
+        Avalonia.Threading.Dispatcher.UIThread.Post(async () =>
+        {
+            if (!_disposed && Accounts.FirstOrDefault(a => a.Account.Id == acc.Id) is { } vm) await ReauthenticateAsync(vm);
+        }, Avalonia.Threading.DispatcherPriority.Background);
     });
 
     public async Task ReauthenticateAsync(AccountVm vm)
@@ -652,7 +757,10 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
         ChooseFoldersRequested?.Invoke(new ChooseFoldersViewModel(Host.Engine, driveId));
     }
 
-    [RelayCommand]
+    /// <summary>Bibliotecas do SharePoint só existem em conta corporativa/escolar.</summary>
+    bool CanAddLibrary() => Host.Config.Accounts.Any(a => !a.IsPersonal);
+
+    [RelayCommand(CanExecute = nameof(CanAddLibrary))]
     void AddLibrary() => RequestAddLibrary(Host.Config.Accounts.FirstOrDefault(a => !a.IsPersonal));
 
     public void LibraryAdded()
@@ -705,7 +813,8 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
     [RelayCommand]
     async Task FreeAll()
     {
-        var ready = Host.Engine.Drives.Where(d => d.Ready).ToList();
+        // inclui as sub-drives de "Compartilhados comigo"/atalhos (antes ficavam com o cache cheio)
+        var ready = Host.Engine.Drives.Concat(Host.Engine.SharedDrives).Where(d => d.Ready).ToList();
         var cached = ready.Sum(d => Host.Db.Counts(d.DriveId).cached);
         if (cached == 0)
         {
@@ -767,22 +876,38 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
         if (cacheChanged) c.CacheDir = Path.GetFullPath(cacheDir); // só vale ao reiniciar: o motor segura o cache atual
         c.Theme = ThemeService.Values[Math.Clamp(ThemeIndex, 0, ThemeService.Values.Length - 1)];
         ThemeService.Apply(c);
-        if (DesktopIntegration.SetAutostart(StartWithSystem, UseSystemdAutostart ? AutostartMode.Systemd : AutostartMode.Xdg) is { } autostartNote)
-            Message = autostartNote;
+        // systemctl --user (até 3 × 15 s) fora da thread de UI
+        bool startWithSystem = StartWithSystem, systemd = UseSystemdAutostart;
+        var autostartNote = await Task.Run(() => SetAutostart(startWithSystem, systemd ? AutostartMode.Systemd : AutostartMode.Xdg));
+        string? mountProblem = null;
         if (remount)
         {
-            await Host.UnmountAsync();
-            c.MountPoint = MountPoint;
-            Host.Mount();
+            // pasta ocupada (EBUSY): a montagem continua na antiga; gravar a nova faria a tela e a configuração mentirem
+            if (await Host.UnmountAsync())
+            {
+                c.MountPoint = MountPoint;
+                Host.Mount();
+            }
+            else
+            {
+                mountProblem = $"A pasta sincronizada continua em {c.MountPoint}: {AppHost.BusyMountText}.";
+                MountPoint = c.MountPoint;
+            }
         }
-        c.Save();
+        var saved = Host.TrySaveConfig("Configurações");
         Host.Engine.NotifyPinChanged();
         if (clientChanged || cacheChanged) RestartNeeded = true;
         var notes = new List<string>();
         if (clientChanged) notes.Add("o novo Client ID vale ao reiniciar (depois, entre novamente nas contas)");
         if (cacheChanged) notes.Add($"o cache passa para {c.CacheDir} ao reiniciar; os arquivos baixados são baixados de novo quando forem abertos, e a pasta antiga pode ser apagada");
-        Message = notes.Count == 0 ? "Configurações salvas."
+        var text = !saved ? "As configurações valem só até fechar o craftDriver: não foram gravadas no disco. " +
+                            (c.ReadOnly ? c.LoadWarning : "Veja o log (aba Visão geral).")
+            : notes.Count == 0 ? "Configurações salvas."
             : "Configurações salvas — " + string.Join("; ", notes) + ". Use \"Reiniciar agora\".";
+        if (mountProblem != null) text = mountProblem + " " + text;
+        if (autostartNote != null) text += " " + autostartNote; // aviso do início automático não pode sumir
+        if (!saved || mountProblem != null) ShowError(text);
+        else Message = text;
     }
 
     static readonly string[] SystemDirs = ["/", "/bin", "/boot", "/dev", "/etc", "/home", "/lib", "/lib64", "/media", "/mnt",
@@ -858,11 +983,12 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
         s.Split([',', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Distinct().ToList();
 
     [RelayCommand]
-    void InstallIntegration()
+    async Task InstallIntegration()
     {
         try
         {
-            var done = DesktopIntegration.InstallAll();
+            // update-desktop-database e afins esperam processos externos: fora da thread de UI
+            var done = await Task.Run(DesktopIntegration.InstallAll);
             Message = "Instalado: " + string.Join("; ", done) + ".";
         }
         catch (Exception ex) { ShowError("Falha ao instalar a integração: " + ex.Message); }
@@ -871,7 +997,12 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
     [RelayCommand]
     async Task Remount()
     {
-        await Host.UnmountAsync();
+        if (!await Host.UnmountAsync())
+        {
+            ShowError($"Não foi possível remontar {Host.Config.MountPoint}: {AppHost.BusyMountText}.");
+            Refresh();
+            return;
+        }
         Host.Mount();
         Refresh();
     }

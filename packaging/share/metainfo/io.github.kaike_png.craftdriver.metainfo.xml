@@ -74,7 +74,77 @@
   <content_rating type="oars-1.1" />
 
   <releases>
-    <release version="0.2.0" date="2026-11-05" />
-    <release version="0.1.4" date="2026-11-04" />
+    <release version="0.2.0" date="2026-11-05">
+      <description>
+        <ul>
+          <li>Arquivos grandes abrem na hora: só a parte lida é baixada (leitura por faixas); o resto vem em segundo plano e o arquivo só entra no cache depois de conferido.</li>
+          <li>Compartilhados comigo (pasta ao lado de cada conta) e atalhos ("Adicionar a Meus arquivos") aparecem e podem ser editados quando há permissão.</li>
+          <li>Link de compartilhamento, Versões anteriores e Lixeira pelo menu de contexto, pela bandeja e por craftdriver share|versions|trash.</li>
+          <li>Sincronização seletiva: "Escolher pastas…" por conta e craftdriver exclude|include.</li>
+          <li>Limites de banda e downloads simultâneos nas Configurações, aplicados sem reiniciar.</li>
+          <li>Velocidade, tempo restante e Cancelar nas transferências; aba Conflitos.</li>
+          <li>Notificações da área de trabalho (sessão expirada, conflitos, exclusão em massa) e lista do que foi apagado no aviso de exclusão em massa.</li>
+          <li>Emblemas de status e menu no Dolphin (pacote craftdriver-dolphin), Nautilus, Thunar e PCManFM; fixar/liberar também pelo atributo user.onedrive.pinned.</li>
+          <li>Interface: confirmação antes de desvincular conta, parar de sincronizar, liberar espaço e trocar a pasta; mensagens de erro destacadas; tema claro/escuro manual; atalhos de teclado (F5, Ctrl+, Ctrl+S, Ctrl+Q) e Esc nos diálogos; nomes para leitor de tela; a janela lembra tamanho e posição.</li>
+          <li>Início: a janela aparece na hora, com "Abrindo o chaveiro do sistema…" e a opção de continuar sem ele.</li>
+          <li>Erros de login em português, com "Tentar de novo".</li>
+          <li>Pasta do cache editável e "Reiniciar agora" quando uma configuração só vale depois de reiniciar.</li>
+          <li>Cada envio de arquivo pequeno criava duas versões no OneDrive (conteúdo + data); agora cria uma.</li>
+          <li>ARM (arm64): dados de arquivo gravados no lugar errado para o kernel; e com libfuse 3.14 (Ubuntu 24.04, Debian 12) a abertura de arquivo lia além da estrutura da libfuse.</li>
+          <li>Abrir ou truncar um arquivo enquanto o limite do cache o liberava podia dar erro de E/S.</li>
+          <li>Uma instância de teste (CRAFTDRIVER_HOME) não usa mais os tokens do chaveiro da instalação normal.</li>
+          <li>Perda de dados: escrita durante envio, renomear/apagar com envio pendente, truncar, hash divergente e outros casos (ver PENDENCIAS.md, seção 1).</li>
+          <li>O sistema de arquivos não trava mais enquanto um arquivo baixa (FUSE de baixo nível, sem bloquear o laço); Ctrl+C interrompe um download em andamento.</li>
+          <li>Números de inode estáveis entre montagens; cópia dentro da montagem por copy_file_range.</li>
+          <li>Fechar a janela sem bandeja no painel não deixa o app invisível.</li>
+          <li>config.json gravado com permissão 0600 e protegido contra versões mais novas do formato.</li>
+          <li>O app deixa de ser um executável único: vai como pasta em /usr/lib/craftdriver. Não extrai mais 14 MB em ~/.net/ a cada versão e funciona com $HOME só leitura.</li>
+          <li>Publicado com trimming: instalado ocupa ~52 MB (antes 102 MB); download ~21 MB (antes ~43 MB).</li>
+          <li>Dependências que faltavam: xdg-utils e dbus-send (obrigatórias); notify-send e wl-copy/xclip/xsel (recomendadas).</li>
+          <li>packaging/build.sh gera também arm64 (ARCHES="x64 arm64"), testado no CI num executor ARM.</li>
+        </ul>
+      </description>
+    </release>
+    <release version="0.1.4" date="2026-11-04">
+      <description>
+        <ul>
+          <li>Salvar planilhas e documentos deixava arquivos temporários na Lixeira do OneDrive.</li>
+        </ul>
+      </description>
+    </release>
+    <release version="0.1.3" date="2026-11-04">
+      <description>
+        <ul>
+          <li>Logo após entrar na sessão, uma conta podia aparecer como "Entre novamente" por cerca de 30 s, enquanto o KWallet terminava de abrir. Agora o craftDriver tenta ler o chaveiro de novo por alguns segundos antes de pedir login.</li>
+          <li>Abrir o craftDriver pelo menu enquanto uma instância --headless está rodando não fica mais sem resposta: aparece um aviso explicando como encerrá-la.</li>
+          <li>craftdriver --minimized com o app já aberto não traz a janela para a frente (autostart duplicado).</li>
+        </ul>
+      </description>
+    </release>
+    <release version="0.1.2" date="2026-11-04">
+      <description>
+        <ul>
+          <li>As contas pediam login de novo depois de reiniciar em sessões fora do Plasma/GNOME (Hyprland, Sway, i3…). - Na inicialização, o craftDriver aciona o serviço do chaveiro se ele não estiver rodando. No KWallet 6 o serviço ksecretd não sobe sozinho fora do Plasma. - Se você já entrou nas contas, o app espera o chaveiro, por até 60 s, em vez de passar a usar um arquivo de tokens vazio. Antes, isso fazia todas as contas pedirem login. - Se o chaveiro não responder, a mensagem diz isso, em vez de "Entre novamente".</li>
+        </ul>
+      </description>
+    </release>
+    <release version="0.1.1" date="2026-11-04">
+      <description>
+        <ul>
+          <li>Pacotes .deb, .rpm e Arch (craftdriver-bin, PKGBUILD do AUR), testados em contêineres limpos de Ubuntu 24.04, Debian 12, Fedora e Arch. Todos trazem o .NET embutido; atalho no menu, ícone e menu de contexto do Dolphin vêm instalados.</li>
+          <li>craftdriver --version.</li>
+          <li>Instalado por pacote, Instalar atalho… não duplica atalho e menu do Dolphin que já vieram do sistema.</li>
+          <li>O tarball passa a incluir atalho, ícone e menu do Dolphin em share/.</li>
+          <li>CI: testes a cada push; pacotes gerados, testados e anexados à release a cada tag.</li>
+        </ul>
+      </description>
+    </release>
+    <release version="0.1.0" date="2026-11-04">
+      <description>
+        <ul>
+          <li>Primeira versão: contas pessoais, corporativas e bibliotecas do SharePoint montadas em ~/OneDrive via FUSE, com arquivos sob demanda, fixação ("Sempre manter neste dispositivo"), bandeja e menu do Dolphin.</li>
+        </ul>
+      </description>
+    </release>
   </releases>
 </component>

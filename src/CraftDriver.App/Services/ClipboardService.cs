@@ -54,8 +54,16 @@ public static class ClipboardService
         {
             using var p = Process.Start(psi);
             if (p == null) return null;
-            await p.StandardInput.WriteAsync(stdin);
-            p.StandardInput.Close();
+            try
+            {
+                await p.StandardInput.WriteAsync(stdin);
+                p.StandardInput.Close();
+            }
+            catch (IOException)
+            {
+                // EPIPE: o comando saiu sem ler (ex.: wl-copy sem compositor); o código de saída diz o resto
+                try { p.StandardInput.Dispose(); } catch (IOException) { } // o descarte tentaria escrever de novo
+            }
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
             try { await p.WaitForExitAsync(timeout.Token); }
             catch (OperationCanceledException) { try { p.Kill(); } catch { } return -1; }

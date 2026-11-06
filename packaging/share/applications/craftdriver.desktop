@@ -11,7 +11,7 @@ Terminal=false
 Categories=Network;FileTransfer;
 Keywords=OneDrive;SharePoint;Microsoft;cloud;nuvem;sync;
 StartupWMClass=CraftDriver.App
-Actions=open-folder;sync;pause;
+Actions=open-folder;sync;pause;resume;
 
 [Desktop Action open-folder]
 Name=Abrir pasta
@@ -30,3 +30,9 @@ Name=Pausar sincronização
 Name[en]=Pause syncing
 Icon=media-playback-pause
 Exec=craftdriver pause --notify
+
+[Desktop Action resume]
+Name=Retomar sincronização
+Name[en]=Resume syncing
+Icon=media-playback-start
+Exec=craftdriver resume --notify

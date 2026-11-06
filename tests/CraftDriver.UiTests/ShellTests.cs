@@ -43,6 +43,13 @@ static class ShellUi
         }
     }
 
+    /// <summary>Espera uma Task na thread de UI rodando os jobs (o comando pode continuar nela depois de um await).</summary>
+    public static void Wait(Task t, int ms = 15000)
+    {
+        PumpUntil(() => t.IsCompleted, "comando assíncrono", ms);
+        t.GetAwaiter().GetResult();
+    }
+
     public static void Save(Window w, string name)
     {
         Directory.CreateDirectory(Out);

@@ -74,11 +74,13 @@ sealed class PrivateBus : IDisposable
 /// <summary>Servidor org.freedesktop.Notifications falso: grava as chamadas Notify e emite os sinais.</summary>
 sealed class FakeNotificationServer : IPathMethodHandler, IDisposable
 {
-    public sealed record Call(uint Id, string App, string Icon, string Summary, string Body, string[] Actions, Dictionary<string, string> Hints, int Timeout);
+    public sealed record Call(uint Id, string App, string Icon, string Summary, string Body, string[] Actions, Dictionary<string, string> Hints, int Timeout, uint ReplacesId = 0);
 
     readonly DBusConnection _conn;
     uint _next = 41;
     public ConcurrentQueue<Call> Calls { get; } = new();
+    /// <summary>Ids pedidos em CloseNotification.</summary>
+    public ConcurrentQueue<uint> Closed { get; } = new();
     public string Path => "/org/freedesktop/Notifications";
     public bool HandlesChildPaths => false;
 
@@ -103,17 +105,25 @@ sealed class FakeNotificationServer : IPathMethodHandler, IDisposable
             {
                 var r = ctx.Request.GetBodyReader();
                 var app = r.ReadString();
-                r.ReadUInt32();
+                var replaces = r.ReadUInt32();
                 var icon = r.ReadString();
                 var summary = r.ReadString();
                 var body = r.ReadString();
                 var actions = r.ReadArrayOfString();
                 var hints = r.ReadDictionaryOfStringToVariantValue().ToDictionary(kv => kv.Key, kv => kv.Value.GetString());
                 var timeout = r.ReadInt32();
-                var id = Interlocked.Increment(ref _next);
-                Calls.Enqueue(new Call(id, app, icon, summary, body, actions, hints, timeout));
+                // como os servidores reais: substituir devolve o mesmo id
+                var id = replaces != 0 ? replaces : Interlocked.Increment(ref _next);
+                Calls.Enqueue(new Call(id, app, icon, summary, body, actions, hints, timeout, replaces));
                 using var w = ctx.CreateReplyWriter("u");
                 w.WriteUInt32(id);
+                ctx.Reply(w.CreateMessage());
+                break;
+            }
+            case "CloseNotification":
+            {
+                Closed.Enqueue(ctx.Request.GetBodyReader().ReadUInt32());
+                using var w = ctx.CreateReplyWriter(null);
                 ctx.Reply(w.CreateMessage());
                 break;
             }
@@ -203,6 +213,33 @@ public class DBusNotificationTests
         server.EmitActionInvoked(id.Value, NotificationAction.Default); // depois de fechada: nada roda
         await Task.Delay(200, TestContext.Current.CancellationToken);
         Assert.Equal(0, opened);
+    }
+
+    /// <summary>15.12: "sessão expirada" com etiqueta — a 2ª substitui a 1ª (replaces_id) e fechar chama CloseNotification e solta os botões.</summary>
+    [Fact]
+    public async Task Notificacao_com_etiqueta_substitui_a_anterior_e_pode_ser_fechada()
+    {
+        using var bus = new PrivateBus();
+        using var server = await FakeNotificationServer.StartAsync(bus.Address);
+        using var notifier = new DesktopNotifier(bus.Address, notifySend: "/nonexistent/notify-send");
+        NotificationAction[] relogin = [new("relogin", "Entrar novamente", () => { })];
+
+        var first = await notifier.NotifyAsync("sessão expirada", "u@exemplo.com", "craftdriver", relogin, tag: "sessao-a1");
+        var second = await notifier.NotifyAsync("sessão expirada", "u@exemplo.com", "craftdriver", relogin, tag: "sessao-a1");
+        var other = await notifier.NotifyAsync("sessão expirada", "outra@exemplo.com", "craftdriver", relogin, tag: "sessao-a2");
+        var calls = server.Calls.ToArray();
+        Assert.Equal(0u, calls[0].ReplacesId);
+        Assert.Equal(first, calls[1].ReplacesId);
+        Assert.Equal(0u, calls[2].ReplacesId);
+        Assert.Equal(first, second);
+        Assert.NotEqual(first, other);
+        Assert.Equal(2, notifier.PendingCallbacks);
+
+        await notifier.CloseAsync("sessao-a1");
+        Assert.Equal([first!.Value], server.Closed.ToArray());
+        Assert.Equal(1, notifier.PendingCallbacks);
+        await notifier.CloseAsync("sessao-a1"); // já fechada: nada
+        Assert.Single(server.Closed);
     }
 
     [Fact]
@@ -425,6 +462,22 @@ public class HostNotificationTests
     }
 
     [Fact]
+    public void Intervalo_de_conflitos_nao_e_estatico_mutavel()
+    {
+        var property = typeof(AppHost).GetProperty("ConflictNoticeInterval", System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+        Assert.False(property.SetMethod!.IsStatic, "o intervalo de notificações de uma instância/teste afeta as outras");
+    }
+
+    /// <summary>§13.14: as drives de uma conta compartilham o "throttled até T"; contas diferentes não.</summary>
+    [Fact]
+    public void ClientFor_compartilha_o_throttling_entre_drives_da_mesma_conta()
+    {
+        var (host, _) = NewHost();
+        Assert.Same(host.ClientFor("a1").Throttle, host.ClientFor("a1").Throttle);
+        Assert.NotSame(host.ClientFor("a1").Throttle, host.ClientFor("a2").Throttle);
+    }
+
+    [Fact]
     public void Conflito_notifica_no_maximo_uma_vez_por_intervalo()
     {
         var (host, sent) = NewHost();
@@ -439,15 +492,15 @@ public class HostNotificationTests
         n.Actions.Single(a => a.Id == "show").OnInvoke();
         Assert.Equal(1, shown);
 
-        var interval = AppHost.ConflictNoticeInterval;
-        AppHost.ConflictNoticeInterval = TimeSpan.Zero;
+        var interval = host.ConflictNoticeInterval;
+        host.ConflictNoticeInterval = TimeSpan.Zero;
         try
         {
             Thread.Sleep(5);
             host.OnConflict(c with { Id = 3 });
             Assert.Equal(2, sent.Count);
         }
-        finally { AppHost.ConflictNoticeInterval = interval; }
+        finally { host.ConflictNoticeInterval = interval; }
     }
 
     [AvaloniaFact]

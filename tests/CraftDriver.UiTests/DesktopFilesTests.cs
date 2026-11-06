@@ -53,6 +53,62 @@ public class DesktopFilesTests
     }
 
     [Fact]
+    public void Scripts_do_nautilus_so_quando_a_extensao_nao_esta_ativa()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "craftdriver-scripts-" + Guid.NewGuid().ToString("N")[..6]);
+        try
+        {
+            Directory.CreateDirectory(Path.Combine(dir, "nautilus"));
+            Directory.CreateDirectory(Path.Combine(dir, "nemo"));
+            string Script(string fm) => Path.Combine(dir, fm, "scripts", "craftDriver - Liberar espaço");
+
+            var done = new List<string>();
+            DesktopIntegration.InstallFileManagerScripts(done, dir, nautilusExtension: false);
+            Assert.True(File.Exists(Script("nautilus")));
+            Assert.True(File.Exists(Script("nemo")));
+            Assert.Equal(["Scripts do Nautilus", "Scripts do Nemo"], done);
+
+            // com a extensão (menu craftDriver próprio) os scripts duplicariam o menu: não grava e apaga os antigos
+            done.Clear();
+            DesktopIntegration.InstallFileManagerScripts(done, dir, nautilusExtension: true);
+            Assert.False(File.Exists(Script("nautilus")));
+            Assert.False(File.Exists(Path.Combine(dir, "nautilus", "scripts", "craftDriver - Sempre manter neste dispositivo")));
+            Assert.True(File.Exists(Script("nemo")), "o Nemo não usa a extensão do Nautilus");
+            Assert.Equal(["Nautilus: menu da extensão craftDriver (sem scripts)", "Scripts do Nemo"], done);
+        }
+        finally { try { Directory.Delete(dir, true); } catch { } }
+    }
+
+    [Fact]
+    public void Extensao_do_nautilus_ativa_exige_o_arquivo_e_o_nautilus_python()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "craftdriver-nx-" + Guid.NewGuid().ToString("N")[..6]);
+        try
+        {
+            var (user, system, lib) = (Path.Combine(dir, "user"), Path.Combine(dir, "usr-share"), Path.Combine(dir, "usr-lib"));
+            bool Active() => DesktopIntegration.NautilusExtensionActive([user, system], [lib]);
+            Assert.False(Active());
+            var py = Path.Combine(system, "nautilus-python", "extensions", "craftdriver.py");
+            Directory.CreateDirectory(Path.GetDirectoryName(py)!);
+            File.WriteAllText(py, "");
+            Assert.False(Active()); // pacote instalou a extensão, mas sem python3-nautilus ela não carrega
+            var so = Path.Combine(lib, "nautilus", "extensions-4", "libnautilus-python.so");
+            Directory.CreateDirectory(Path.GetDirectoryName(so)!);
+            File.WriteAllText(so, "");
+            Assert.True(Active());
+            File.Delete(py);
+            var userPy = Path.Combine(user, "nautilus-python", "extensions", "craftdriver.py");
+            Directory.CreateDirectory(Path.GetDirectoryName(userPy)!);
+            File.WriteAllText(userPy, "");
+            Assert.True(Active());
+            // Nautilus 42 (Ubuntu 22.04): nautilus-python na API 3.0
+            Directory.Move(Path.Combine(lib, "nautilus", "extensions-4"), Path.Combine(lib, "nautilus", "extensions-3.0"));
+            Assert.True(Active());
+        }
+        finally { try { Directory.Delete(dir, true); } catch { } }
+    }
+
+    [Fact]
     public void Inicio_automatico_usa_o_atalho_do_pacote_minimizado()
     {
         var autostart = WithXdg(_ =>
@@ -60,7 +116,14 @@ public class DesktopFilesTests
             DesktopIntegration.SetAutostart(true);
             return File.ReadAllText(DesktopIntegration.AutostartFile);
         });
-        Assert.Equal(Expected(Packaged("applications/craftdriver.desktop"), " --minimized") + "\nX-GNOME-Autostart-enabled=true",
-            Norm(autostart));
+        // só o [Desktop Entry] do pacote, sem a linha Actions= (num autostart ações não têm função) e com
+        // --minimized apenas no Exec principal
+        var entry = Packaged("applications/craftdriver.desktop").Replace("\r", "").Split("\n\n[Desktop Action")[0];
+        entry = string.Join('\n', entry.Split('\n').Where(l => !l.StartsWith("Actions=")));
+        Assert.Equal(Expected(entry, " --minimized") + "\nX-GNOME-Autostart-enabled=true", Norm(autostart));
+        var execs = Norm(autostart).Split('\n').Where(l => l.StartsWith("Exec=")).ToList();
+        Assert.Equal([$"Exec={DesktopIntegration.ExecCommand} --minimized"], execs);
+        Assert.DoesNotContain("[Desktop Action", autostart);
+        Assert.DoesNotContain("Actions=", autostart);
     }
 }

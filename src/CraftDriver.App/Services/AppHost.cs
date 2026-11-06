@@ -28,7 +28,14 @@ public sealed class AppHost
     internal Func<DriveConfig, IGraphApi>? GraphFactory { get; set; }
 
     public string? MountError { get; private set; }
-    public bool Mounted => FuseHost.IsMounted;
+    public bool Mounted => IsMountedProbe();
+
+    // costuras da montagem (testes: montagem ocupada / que falha depois de começar, sem FUSE de verdade)
+    internal Func<VirtualFs, string, Task> MountFunc { get; set; } = (fs, mp) => FuseHost.MountAsync(fs, mp);
+    internal Func<bool> IsMountedProbe { get; set; } = () => FuseHost.IsMounted;
+    internal Action UnmountFunc { get; set; } = FuseHost.Unmount;
+    /// <summary>Quanto esperar o FUSE desmontar (com EBUSY o fusermount falha e a montagem continua).</summary>
+    internal TimeSpan UnmountTimeout { get; set; } = TimeSpan.FromSeconds(10);
     public event Action? ShowRequested;
     public event Action? QuitRequested;
 
@@ -40,13 +47,38 @@ public sealed class AppHost
     public event Action<AccountConfig>? ReauthRequested;
 
     /// <summary>Envia notificações da área de trabalho (troque nos testes para capturar).</summary>
-    public Action<string, string, NotificationAction[]> Notify { get; set; } = (t, b, a) => DesktopIntegration.Notify(t, b, a);
+    public Action<string, string, NotificationAction[]> Notify
+    {
+        get => _notify;
+        set { _notify = value; _notifyReplaced = true; }
+    }
+    Action<string, string, NotificationAction[]> _notify = (t, b, a) => DesktopIntegration.Notify(t, b, a);
+    bool _notifyReplaced;
+
+    /// <summary>
+    /// Notificação com etiqueta: a seguinte com a mesma etiqueta substitui a anterior (replaces_id) e
+    /// <see cref="CloseNotification"/> a fecha (ex.: "sessão expirada" some ao entrar de novo). Com
+    /// <see cref="Notify"/> trocado (testes), vai por ele.
+    /// </summary>
+    public Action<string, string, string, NotificationAction[]> NotifyTagged { get; set; }
+
+    /// <summary>Fecha a notificação com a etiqueta (se ainda estiver na tela). Troque nos testes.</summary>
+    public Action<string> CloseNotification { get; set; }
+
+    /// <summary>Ambiente da sessão gráfica desta instância (área de transferência). Troque nos testes.</summary>
+    internal Func<string, string?> ClipboardEnv { get; set; } = Environment.GetEnvironmentVariable;
 
     readonly SessionExpiryTracker _sessions = new();
     Timer? _sessionTimer;
 
     AppHost(AppConfig cfg, AuthService auth)
     {
+        NotifyTagged = (tag, t, b, a) =>
+        {
+            if (_notifyReplaced) Notify(t, b, a);
+            else DesktopIntegration.NotifyTagged(tag, t, b, a);
+        };
+        CloseNotification = tag => { if (!_notifyReplaced) DesktopIntegration.CloseNotification(tag); };
         Config = cfg;
         Auth = auth;
         Activity = new ActivityLog(AppPaths.LogFile);
@@ -70,7 +102,7 @@ public sealed class AppHost
 
     long _lastConflictNotice;
     /// <summary>Intervalo mínimo entre notificações de conflito: numa rajada, o resto fica só na aba Conflitos.</summary>
-    internal static TimeSpan ConflictNoticeInterval { get; set; } = TimeSpan.FromSeconds(30);
+    internal TimeSpan ConflictNoticeInterval { get; set; } = TimeSpan.FromSeconds(30);
 
     /// <summary>Chamado na thread do motor (às vezes com o lock do banco): só agenda a notificação.</summary>
     internal void OnConflict(ConflictRecord c)
@@ -117,22 +149,27 @@ public sealed class AppHost
     /// <summary>Notifica uma vez por conta cada vez que ela passa a pedir login (não a cada ciclo de sincronização).</summary>
     internal void CheckSessions(IEnumerable<(string AccountId, bool AuthRequired)> drives)
     {
-        foreach (var id in _sessions.Update(drives))
+        var fresh = _sessions.Update(drives, out var recovered);
+        foreach (var id in recovered) CloseNotification(SessionTag(id)); // voltou a sincronizar: tira o aviso da tela
+        foreach (var id in fresh)
         {
             var acc = Config.Accounts.FirstOrDefault(a => a.Id == id);
             if (acc == null) continue;
             if (ReauthRequested == null)
             {
-                Notify("craftDriver — sessão expirada",
+                NotifyTagged(SessionTag(id), "craftDriver — sessão expirada",
                     $"A sessão de {acc.Username} expirou e a sincronização dessa conta está parada. Entre novamente com \"craftdriver login\".", []);
                 continue;
             }
             void Reauth() => ReauthRequested?.Invoke(acc);
-            Notify("craftDriver — sessão expirada",
+            NotifyTagged(SessionTag(id), "craftDriver — sessão expirada",
                 $"A sessão de {acc.Username} expirou e a sincronização dessa conta está parada até você entrar novamente.",
                 [new(NotificationAction.Default, "Entrar novamente", Reauth), new("relogin", "Entrar novamente", Reauth)]);
         }
     }
+
+    /// <summary>Etiqueta da notificação "sessão expirada" de uma conta (substituída/fechada, não empilhada).</summary>
+    internal static string SessionTag(string accountId) => "sessao-" + accountId;
 
     public static Task<AppHost> CreateAsync() => CreateAsync(null, null, CancellationToken.None);
 
@@ -148,10 +185,17 @@ public sealed class AppHost
         return new AppHost(cfg, auth);
     }
 
-    public GraphClient ClientFor(string accountId) =>
-        new((force, ct) => Auth.GetTokenAsync(accountId, force, ct));
+    /// <summary>Throttling (429/503) por conta: as drives da mesma conta respeitam juntas o Retry-After.</summary>
+    readonly System.Collections.Concurrent.ConcurrentDictionary<string, GraphThrottle> _throttles = new();
 
-    public void Start()
+    public GraphClient ClientFor(string accountId) =>
+        new((force, ct) => Auth.GetTokenAsync(accountId, force, ct), throttle: _throttles.GetOrAdd(accountId, _ => new GraphThrottle()));
+
+    /// <param name="existingIpc">
+    /// Servidor aberto pelo Program antes do AppHost existir (respondendo "ainda iniciando"): é assumido em vez de
+    /// criar outro — recriar apagaria e trocaria o socket que a 2ª execução já pode ter achado.
+    /// </param>
+    public void Start(IpcServer? existingIpc = null)
     {
         foreach (var note in Auth.StartupNotes)
             Activity.Add(Auth.KeyringUnavailable ? ActivityKind.Error : ActivityKind.Info, note);
@@ -159,7 +203,7 @@ public sealed class AppHost
         {
             Activity.Add(ActivityKind.Error, warning);
             // arquivo inválido: grava já os padrões (o original ficou salvo) para não repetir o aviso a cada início
-            Config.Save();
+            if (!Config.ReadOnly) TrySaveConfig("Configuração padrão");
         }
         Activity.Add(ActivityKind.Info, $"Iniciado. Tokens em: {Auth.CacheStorage}");
         Engine.Start();
@@ -169,6 +213,12 @@ public sealed class AppHost
             try { RunOnMain(CheckSessions).ContinueWith(t => _ = t.Exception, TaskContinuationOptions.OnlyOnFaulted); }
             catch { /* melhor esforço */ }
         }, null, TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(5));
+        if (existingIpc != null)
+        {
+            existingIpc.Handler = HandleIpcAsync;
+            _ipc = existingIpc;
+            return;
+        }
         try
         {
             _ipc = new IpcServer(AppPaths.SocketPath, HandleIpcAsync);
@@ -184,10 +234,21 @@ public sealed class AppHost
         if (Mounted) return;
         try
         {
-            _mountTask = FuseHost.MountAsync(Fs, Config.MountPoint);
+            var mountPoint = Config.MountPoint;
+            var task = MountFunc(Fs, mountPoint);
+            _mountTask = task;
             MountError = null;
-            Activity.Add(ActivityKind.Info, $"Montado em {Config.MountPoint}");
-            _mountTask.ContinueWith(_ => Activity.Add(ActivityKind.Info, "Ponto de montagem desconectado"));
+            Activity.Add(ActivityKind.Info, $"Montado em {mountPoint}");
+            task.ContinueWith(t =>
+            {
+                if (t.IsFaulted)
+                {
+                    // o loop do FUSE caiu com erro: "Não montado" precisa dizer o porquê
+                    MountError = t.Exception!.GetBaseException().Message;
+                    Activity.Add(ActivityKind.Error, $"A montagem em {mountPoint} caiu: {MountError}");
+                }
+                else Activity.Add(ActivityKind.Info, "Ponto de montagem desconectado");
+            }, TaskScheduler.Default);
         }
         catch (Exception ex)
         {
@@ -196,21 +257,62 @@ public sealed class AppHost
         }
     }
 
-    public async Task UnmountAsync()
+    /// <summary>Desmonta; devolve false se a montagem continua (pasta em uso).</summary>
+    public async Task<bool> UnmountAsync()
     {
-        if (!Mounted) return;
-        FuseHost.Unmount();
-        if (_mountTask != null) await Task.WhenAny(_mountTask, Task.Delay(10_000));
+        if (!Mounted) return true;
+        var mountPoint = Config.MountPoint;
+        UnmountFunc();
+        var deadline = Environment.TickCount64 + (long)UnmountTimeout.TotalMilliseconds;
+        if (_mountTask != null) await Task.WhenAny(_mountTask, Task.Delay(UnmountTimeout));
+        // sem a task (ou ela terminou mas o kernel ainda não soltou): confere o estado real até o prazo
+        while (Mounted && Environment.TickCount64 < deadline) await Task.Delay(50);
+        Fs.CommitOpenWrites(); // fuse_session_exit não garante release dos fds abertos; antes de Engine.Stop no shutdown
         if (Fs.OpenHandles > 0) Activity.Add(ActivityKind.Info, "Havia arquivos abertos durante a desmontagem");
+        if (!Mounted) return true;
+        Activity.Add(ActivityKind.Error, $"Não foi possível desmontar {mountPoint}: {BusyMountText}");
+        return false;
     }
 
+    /// <summary>Motivo mostrado quando o fusermount -u recusa (EBUSY).</summary>
+    public const string BusyMountText =
+        "a pasta está em uso (um programa com arquivo aberto ou um terminal dentro dela). Feche-os e tente de novo";
+
+    /// <summary>
+    /// Grava a configuração e avisa (log de atividades, como erro) quando não gravou: somente leitura (config de
+    /// versão mais nova) ou erro de disco. Devolve se gravou.
+    /// </summary>
+    public bool TrySaveConfig(string what)
+    {
+        try
+        {
+            if (Config.Save()) return true;
+            Activity.Add(ActivityKind.Error, $"{what}: não foi gravado no disco — {Config.LoadWarning}");
+        }
+        catch (Exception ex)
+        {
+            Activity.Add(ActivityKind.Error, $"{what}: não foi possível gravar a configuração ({ex.Message}).");
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// Encerra tudo; cada passo isolado: um falhar (ex.: disco cheio ao gravar a configuração) não impede os
+    /// outros (desmontar, parar o motor, apagar o socket). Nunca lança; erros vão para o log.
+    /// </summary>
     public async Task ShutdownAsync()
     {
-        if (_sessionTimer != null) await _sessionTimer.DisposeAsync();
-        try { await UnmountAsync(); } catch { }
-        Engine.Stop();
-        _ipc?.Dispose();
-        Config.Save();
+        async Task Step(string what, Func<Task> step)
+        {
+            try { await step(); }
+            catch (Exception ex) { Activity.Add(ActivityKind.Error, $"Ao encerrar ({what}): {ex.Message}"); }
+        }
+        await Step("timer", async () => { if (_sessionTimer != null) await _sessionTimer.DisposeAsync(); });
+        await Step("desmontar", UnmountAsync);
+        await Step("motor", () => { Engine.Stop(); return Task.CompletedTask; });
+        await Step("IPC", () => { _ipc?.Dispose(); return Task.CompletedTask; });
+        if (!Config.ReadOnly) TrySaveConfig("Configuração ao encerrar"); // somente leitura: já avisado ao iniciar
+        Activity.Log("INFO", "Encerrado.");
     }
 
     // ---------- contas ----------
@@ -236,15 +338,19 @@ public sealed class AppHost
     /// Grava na configuração em memória (a desta instância é a que vale enquanto ela roda) uma conta
     /// cujos tokens já estão no cache, e liga a drive dela. Chamado após o login pela janela e pelo
     /// comando IPC "add-account" que o <c>craftdriver login</c> envia.
+    /// Devolve false quando a conta funciona nesta execução mas não foi gravada (configuração somente leitura
+    /// ou erro de disco): o erro já está no log de atividades.
     /// </summary>
-    public void RegisterAccount(AccountConfig acc, string driveId, string? driveWebUrl)
+    public bool RegisterAccount(AccountConfig acc, string driveId, string? driveWebUrl)
     {
         Config.UpsertAccount(acc, driveId, driveWebUrl);
-        Config.Save();
+        var saved = TrySaveConfig($"Conta {acc.Username} conectada só nesta execução");
         Engine.ReloadDrives();
         Engine.SyncNow(); // drives que estavam pedindo login voltam a tentar
         Activity.Add(ActivityKind.Info, $"Conta adicionada: {acc.Username}");
+        CloseNotification(SessionTag(acc.Id)); // "sessão expirada" dessa conta não vale mais
         AccountsChanged?.Invoke();
+        return saved;
     }
 
     /// <summary>Contas/drives mudaram fora da janela (ex.: <c>craftdriver login</c> no terminal).</summary>
@@ -266,7 +372,8 @@ public sealed class AppHost
         foreach (var d in Config.Drives.Where(d => d.AccountId == accountId).ToList())
             RemoveDrive(d.DriveId, save: false);
         Config.Accounts.RemoveAll(a => a.Id == accountId);
-        Config.Save();
+        TrySaveConfig("Remoção da conta");
+        CloseNotification(SessionTag(accountId));
         await Auth.SignOutAsync(accountId);
     }
 
@@ -283,7 +390,7 @@ public sealed class AppHost
             Kind = "documentLibrary", SiteName = site.DisplayName, WebUrl = drive.WebUrl ?? site.WebUrl,
         };
         Config.Drives.Add(dc);
-        Config.Save();
+        TrySaveConfig($"Biblioteca {dc.DisplayName}");
         Engine.ReloadDrives();
         Activity.Add(ActivityKind.Info, $"Biblioteca adicionada: {dc.DisplayName}");
         return dc;
@@ -295,7 +402,7 @@ public sealed class AppHost
         if (pending > 0) Activity.Add(ActivityKind.Info, $"{pending} alterações não enviadas foram descartadas");
         Engine.ForgetDrive(driveId);
         Config.Drives.RemoveAll(d => d.DriveId == driveId);
-        if (save) Config.Save();
+        if (save) TrySaveConfig("Remoção da pasta");
     }
 
     public void SetDriveEnabled(string driveId, bool enabled)
@@ -303,7 +410,7 @@ public sealed class AppHost
         var d = Config.Drives.FirstOrDefault(x => x.DriveId == driveId);
         if (d == null) return;
         d.Enabled = enabled;
-        Config.Save();
+        TrySaveConfig(enabled ? "Ativação da pasta" : "Desativação da pasta");
         Engine.ReloadDrives();
     }
 
@@ -378,8 +485,11 @@ public sealed class AppHost
                 if (!await Auth.HasAccountAsync(acc.Id))
                     return new(false, $"A conta {acc.Username} entrou, mas o craftDriver em execução não encontrou os tokens dela " +
                                       $"({Auth.CacheStorage}). Reinicie o craftDriver.");
-                await RunOnMain(() => RegisterAccount(acc, add.DriveId, add.DriveWebUrl));
-                return new(true, $"Conta conectada: {acc.Username} ({(acc.IsPersonal ? "pessoal" : "corporativa/escolar")})");
+                var saved = true;
+                await RunOnMain(() => saved = RegisterAccount(acc, add.DriveId, add.DriveWebUrl));
+                var connected = $"Conta conectada: {acc.Username} ({(acc.IsPersonal ? "pessoal" : "corporativa/escolar")})";
+                return saved ? new(true, connected)
+                    : new(false, connected + $", mas NÃO foi salva na configuração (vale só até fechar o craftDriver): {Config.LoadWarning ?? "veja o log"}");
             }
             case "show":
                 // instância --headless não tem janela (nenhum assinante no evento)
@@ -431,6 +541,7 @@ public sealed class AppHost
             case "exclude":
             case "include":
             {
+                if (req.Args.Length == 0) return new(false, $"Informe as pastas: craftdriver {req.Cmd} <pastas…>");
                 // incluir aceita o caminho de uma pasta já excluída (escondida da montagem)
                 var lines = new List<string>();
                 var ok = true;
@@ -445,6 +556,8 @@ public sealed class AppHost
                 }
                 return new(ok, string.Join('\n', lines));
             }
+            case "pin" or "unpin" or "free" when req.Args.Length == 0:
+                return new(false, $"Informe os arquivos ou pastas: craftdriver {req.Cmd} <caminhos…>");
             case "status":
             case "pin":
             case "unpin":
@@ -503,9 +616,6 @@ public sealed class AppHost
     /// <summary>Pedido de abrir a janela "Lixeira". Sem assinante (--headless), o IPC responde em texto.</summary>
     public event Action? TrashRequested;
 
-    public void RequestVersions(long lid) => VersionsRequested?.Invoke(lid);
-    public void RequestTrash() => TrashRequested?.Invoke();
-
     static string[] Paths(string[] args) => args.Where(a => !a.StartsWith("--")).ToArray();
     static string? Flag(string[] args, string name) =>
         args.FirstOrDefault(a => a.StartsWith(name + "="))?[(name.Length + 1)..];
@@ -526,6 +636,8 @@ public sealed class AppHost
     {
         var edit = args.Contains("--edit");
         var notify = args.Contains("--notify");
+        // sem sessão gráfica (serviço do systemd) a cópia fica para o CLI, que roda na sessão do usuário
+        var cliCopies = args.Contains(CliShare.CliCopiesFlag) && ClipboardService.Plan(ClipboardEnv).Count == 0;
         var paths = Paths(args);
         if (paths.Length == 0) return new(false, "Informe o arquivo ou a pasta: craftdriver share [--edit] <caminho>");
         var lines = new List<string>();
@@ -545,6 +657,8 @@ public sealed class AppHost
             catch (ItemActionException e) { errors.Add($"{p}: {e.Message}"); }
         }
         lines.AddRange(errors);
+        if (cliCopies)
+            return new(links.Count == paths.Length, string.Join('\n', lines), links.Count > 0 ? links.Select(l => l.Link.Url).ToArray() : null);
         string? clipError = null;
         if (links.Count > 0)
         {

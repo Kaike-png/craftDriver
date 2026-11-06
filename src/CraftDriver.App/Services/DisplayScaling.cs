@@ -54,6 +54,20 @@ public static class DisplayScaling
             $"Escala dos monitores do Hyprland aplicada (force_zero_scaling ativo): AVALONIA_SCREEN_SCALE_FACTORS={factors}");
     }
 
+    /// <summary>Variáveis que esta execução definiu (não vieram do ambiente do usuário).</summary>
+    public static IReadOnlyCollection<string> AppliedVariables => Applied.Keys.ToList();
+    static readonly System.Collections.Concurrent.ConcurrentDictionary<string, bool> Applied = new();
+
+    /// <summary>Define no processo as variáveis da decisão e lembra quais foram (ver <see cref="AppliedVariables"/>).</summary>
+    internal static void SetVariables(ScalingDecision d)
+    {
+        foreach (var (k, v) in d.Set)
+        {
+            Environment.SetEnvironmentVariable(k, v);
+            Applied[k] = true;
+        }
+    }
+
     /// <summary>Consulta o Hyprland (se for ele), decide e define as variáveis no processo. Nunca lança.</summary>
     public static ScalingDecision Apply()
     {
@@ -67,7 +81,7 @@ public static class DisplayScaling
                 forceZero = ParseBoolOption(HyprRequest(sock, "j/getoption xwayland:force_zero_scaling"));
             }
             var d = Decide(Environment.GetEnvironmentVariable, monitors, forceZero);
-            foreach (var (k, v) in d.Set) Environment.SetEnvironmentVariable(k, v);
+            SetVariables(d);
             return d;
         }
         catch (Exception ex)

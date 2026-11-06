@@ -16,6 +16,18 @@ namespace CraftDriver.App;
 public partial class App : Application
 {
     public static AppHost Host { get; set; } = null!;
+
+    /// <summary>O host, ou null enquanto ele não existe (espera do chaveiro).</summary>
+    public static AppHost? HostOrNull => Host;
+
+    /// <summary>Servidor IPC aberto pelo Program antes do Avalonia ("ainda iniciando"); o AppHost o assume.</summary>
+    public static CraftDriver.Core.Ipc.IpcServer? EarlyIpc { get; set; }
+
+    /// <summary>IPC "show" durante a inicialização: mostra a janela de espera (ou a principal, se já houver).</summary>
+    public static void RequestStartupShow() => Dispatcher.UIThread.Post(() => (Current as App)?.OnTrayClicked());
+
+    /// <summary>IPC "quit" durante a inicialização: o mesmo "Sair" da janela de espera.</summary>
+    public static void RequestStartupQuit() => Dispatcher.UIThread.Post(() => (Current as App)?.QuitFromSignal());
     public static bool StartMinimized { get; set; }
 
     /// <summary>Configuração lida pelo Program antes do Avalonia (tema e decisões do início).</summary>
@@ -50,12 +62,29 @@ public partial class App : Application
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
             _desktop = desktop;
+            CrashGuard.Install(() => HostOrNull?.Activity, ShowUnexpectedError);
+            // SIGTERM/SIGINT/SIGHUP: o mesmo "Sair" da bandeja (desmonta, grava posição/configuração, apaga o socket)
+            Program.OnShutdownSignal = () => Dispatcher.UIThread.Post(QuitFromSignal);
             var cfg = Host?.Config ?? StartupConfig ?? AppConfig.Load();
             ThemeService.Apply(cfg);
             if (Host != null) InitWithHost(showWindow: StartupPlan.ShowWindowAtStart(StartMinimized, cfg.Accounts.Count, true));
             else _ = StartAsync(desktop, cfg);
         }
         base.OnFrameworkInitializationCompleted();
+    }
+
+    /// <summary>Erro inesperado na interface (CrashGuard): mensagem na barra da janela; sem janela, notificação.</summary>
+    void ShowUnexpectedError(string text)
+    {
+        if (_vm != null && _window is { IsVisible: true }) _vm.ShowError(text);
+        else HostOrNull?.Notify("craftDriver — erro", text, []);
+    }
+
+    void QuitFromSignal()
+    {
+        if (_startup != null) _startup.Quit(); // ainda esperando o chaveiro: StartAsync encerra
+        else if (_vm != null) Quit();
+        else _desktop?.Shutdown();
     }
 
     /// <summary>
@@ -99,7 +128,7 @@ public partial class App : Application
             _vm = new MainViewModel(Host);
             // comandos IPC que mexem na configuração rodam na thread de UI (antes do Start, que abre o socket)
             Host.RunOnMain = a => Dispatcher.UIThread.InvokeAsync(a).GetTask();
-            Host.Start();
+            Host.Start(EarlyIpc);
             Host.ShowRequested += OnShowRequested;
             Host.QuitRequested += OnQuitRequested;
             Host.VersionsRequested += OnVersionsRequested;
@@ -158,7 +187,7 @@ public partial class App : Application
         var open = new NativeMenuItem("Abrir craftDriver");
         open.Click += (_, _) => ShowWindow();
         var folder = new NativeMenuItem("Abrir pasta");
-        folder.Click += (_, _) => DesktopIntegration.OpenPath(Host.Config.MountPoint);
+        folder.Click += (_, _) => Host.OpenFolder(Host.Config.MountPoint);
         var sync = new NativeMenuItem("Sincronizar agora");
         sync.Click += (_, _) => Host.Engine.SyncNow();
         var trash = new NativeMenuItem("Lixeira…");
@@ -283,12 +312,16 @@ public partial class App : Application
     {
         if (_quitting) return;
         _quitting = true;
-        StopUpdates();
-        if (_tray != null) _tray.IsVisible = false;
-        _window?.Close();
-        foreach (var w in _versionWindows.Values.ToList()) w.Close();
-        _trashWindow?.Close();
-        await Host.ShutdownAsync();
-        _desktop?.Shutdown();
+        try
+        {
+            StopUpdates();
+            if (_tray != null) _tray.IsVisible = false;
+            _window?.Close();
+            foreach (var w in _versionWindows.Values.ToList()) w.Close();
+            _trashWindow?.Close();
+            await Host.ShutdownAsync();
+        }
+        catch (Exception ex) { CrashGuard.Report(ex, "Sair"); }
+        finally { _desktop?.Shutdown(); } // sair sempre sai, mesmo com um passo do encerramento falhando
     }
 }

@@ -33,6 +33,8 @@ public sealed class DesktopNotifier : IDisposable
     readonly string _desktopEntry;
     readonly SemaphoreSlim _gate = new(1, 1);
     readonly ConcurrentDictionary<uint, IReadOnlyList<NotificationAction>> _callbacks = new();
+    /// <summary>Etiqueta → id da última notificação mostrada com ela (substituir/fechar).</summary>
+    readonly ConcurrentDictionary<string, uint> _tags = new();
     DBusConnection? _conn;
     readonly List<IDisposable> _watches = [];
     bool _disposed;
@@ -69,7 +71,7 @@ public sealed class DesktopNotifier : IDisposable
     /// Mostra a notificação. Devolve o id do servidor quando foi pelo D-Bus, ou null quando usou o
     /// notify-send (ou nada funcionou — aí escreve no console). Nunca lança.
     /// </summary>
-    public async Task<uint?> NotifyAsync(string title, string body, string icon, IReadOnlyList<NotificationAction> actions)
+    public async Task<uint?> NotifyAsync(string title, string body, string icon, IReadOnlyList<NotificationAction> actions, string? tag = null)
     {
         if (_address != null && !_disposed)
         {
@@ -79,7 +81,15 @@ public sealed class DesktopNotifier : IDisposable
                 try
                 {
                     var conn = await ConnectionAsync().ConfigureAwait(false);
-                    return await SendAsync(conn, title, body, icon, actions).WaitAsync(CallTimeout).ConfigureAwait(false);
+                    var replaces = tag != null && _tags.TryGetValue(tag, out var old) ? old : 0u;
+                    var id = await SendAsync(conn, title, body, icon, actions, replaces).WaitAsync(CallTimeout).ConfigureAwait(false);
+                    if (tag != null)
+                    {
+                        // o servidor costuma devolver o mesmo id ao substituir; se não, os botões da antiga saem
+                        if (replaces != 0 && replaces != id) _callbacks.TryRemove(replaces, out _);
+                        _tags[tag] = id;
+                    }
+                    return id;
                 }
                 catch (DBusErrorReplyException ex)
                 {
@@ -115,7 +125,7 @@ public sealed class DesktopNotifier : IDisposable
                     n => { if (n.HasValue) OnActionInvoked(n.Value.Id, n.Value.Key); }, ObserverFlags.None, false, null).ConfigureAwait(false));
                 _watches.Add(await conn.WatchSignalAsync(null!, ObjPath, Iface, "NotificationClosed",
                     static (m, _) => m.GetBodyReader().ReadUInt32(),
-                    n => { if (n.HasValue) _callbacks.TryRemove(n.Value, out _); }, ObserverFlags.None, false, null).ConfigureAwait(false));
+                    n => { if (n.HasValue) Forget(n.Value); }, ObserverFlags.None, false, null).ConfigureAwait(false));
             }
             catch
             {
@@ -129,14 +139,14 @@ public sealed class DesktopNotifier : IDisposable
         finally { _gate.Release(); }
     }
 
-    Task<uint> SendAsync(DBusConnection conn, string title, string body, string icon, IReadOnlyList<NotificationAction> actions)
+    Task<uint> SendAsync(DBusConnection conn, string title, string body, string icon, IReadOnlyList<NotificationAction> actions, uint replacesId)
     {
         MessageBuffer msg;
         using (var w = conn.GetMessageWriter())
         {
             w.WriteMethodCallHeader(Service, ObjPath, Iface, "Notify", "susssasa{sv}i", MessageFlags.None);
             w.WriteString(_appName);
-            w.WriteUInt32(0); // replaces_id
+            w.WriteUInt32(replacesId); // 0 = nova
             w.WriteString(icon);
             w.WriteString(title);
             w.WriteString(body);
@@ -161,8 +171,38 @@ public sealed class DesktopNotifier : IDisposable
         {
             var id = m.GetBodyReader().ReadUInt32();
             if (actions.Count > 0) _callbacks[id] = actions;
+            else _callbacks.TryRemove(id, out var _); // substituiu uma com botões por outra sem
             return id;
         }, null);
+    }
+
+    /// <summary>Fechada (pelo usuário, expirou ou por nós): solta os botões e a etiqueta.</summary>
+    void Forget(uint id)
+    {
+        _callbacks.TryRemove(id, out _);
+        foreach (var (tag, tid) in _tags)
+            if (tid == id) _tags.TryRemove(new KeyValuePair<string, uint>(tag, tid));
+    }
+
+    /// <summary>Fecha a notificação mostrada com a etiqueta (CloseNotification) e esquece os botões dela. Nunca lança.</summary>
+    public async Task CloseAsync(string tag)
+    {
+        if (!_tags.TryRemove(tag, out var id)) return;
+        _callbacks.TryRemove(id, out _);
+        var conn = _conn;
+        if (conn == null || _disposed) return;
+        try
+        {
+            MessageBuffer msg;
+            using (var w = conn.GetMessageWriter())
+            {
+                w.WriteMethodCallHeader(Service, ObjPath, Iface, "CloseNotification", "u", MessageFlags.None);
+                w.WriteUInt32(id);
+                msg = w.CreateMessage();
+            }
+            await conn.CallMethodAsync(msg).WaitAsync(CallTimeout).ConfigureAwait(false);
+        }
+        catch (Exception ex) { Log?.Invoke($"Não foi possível fechar a notificação ({ex.GetType().Name}: {ex.Message})"); }
     }
 
     void OnActionInvoked(uint id, string key)
@@ -203,6 +243,7 @@ public sealed class DesktopNotifier : IDisposable
             _conn?.Dispose();
             _conn = null;
             _callbacks.Clear();
+            _tags.Clear(); // ids do servidor anterior não valem para o novo
         }
         finally { _gate.Release(); }
     }

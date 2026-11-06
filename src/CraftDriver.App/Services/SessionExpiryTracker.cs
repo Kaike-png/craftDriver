@@ -11,7 +11,10 @@ public sealed class SessionExpiryTracker
     readonly Lock _lock = new();
 
     /// <summary>Estado atual de cada drive; devolve as contas que acabaram de passar a pedir login.</summary>
-    public IReadOnlyList<string> Update(IEnumerable<(string AccountId, bool AuthRequired)> drives)
+    public IReadOnlyList<string> Update(IEnumerable<(string AccountId, bool AuthRequired)> drives) => Update(drives, out _);
+
+    /// <param name="recovered">Contas que estavam avisadas e não pedem mais login (ou sumiram): fechar o aviso.</param>
+    public IReadOnlyList<string> Update(IEnumerable<(string AccountId, bool AuthRequired)> drives, out IReadOnlyList<string> recovered)
     {
         var expired = drives.GroupBy(d => d.AccountId)
             .Where(g => g.Any(d => d.AuthRequired))
@@ -19,6 +22,7 @@ public sealed class SessionExpiryTracker
             .ToHashSet();
         lock (_lock)
         {
+            recovered = _notified.Where(id => !expired.Contains(id)).ToList();
             _notified.IntersectWith(expired);
             var fresh = expired.Where(_notified.Add).ToList();
             return fresh;

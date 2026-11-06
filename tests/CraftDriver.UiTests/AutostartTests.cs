@@ -56,6 +56,14 @@ public class AutostartTests
             Assert.Contains("\nExecStart=" + DesktopIntegration.ExecCommand + " --headless\n", unit);
             Assert.Contains("\nRestart=on-failure\n", unit);
             Assert.Contains("\nWantedBy=default.target\n", unit);
+            // §19.7: encerra pelo IPC (envios em curso terminam) e espera o processo sair; 143 = SIGTERM não é falha
+            Assert.Contains("\nExecStop=-/bin/sh -c '" + DesktopIntegration.ExecCommand + " quit; while kill -0 \"$$MAINPID\" 2>/dev/null; do sleep 0.5; done'\n", unit);
+            Assert.Contains("\nSuccessExitStatus=143\n", unit);
+            Assert.Contains("\nTimeoutStopSec=", unit);
+            // sessão gráfica: ordem, parada junto com ela e o ambiente para notificações/navegador do login
+            Assert.Contains("\nAfter=graphical-session.target\n", unit);
+            Assert.Contains("\nPartOf=graphical-session.target\n", unit);
+            Assert.Contains("\nPassEnvironment=WAYLAND_DISPLAY DISPLAY DBUS_SESSION_BUS_ADDRESS XDG_CURRENT_DESKTOP\n", unit);
             Assert.Equal(["daemon-reload", "enable craftdriver.service"], calls);
             Assert.False(File.Exists(Path.Combine(cfg, "autostart", "craftdriver.desktop")), "iniciaria duas vezes");
 
@@ -135,10 +143,12 @@ public class AutostartTests
     }
 
     [Fact]
-    public void Desktop_tem_as_acoes_abrir_pasta_sincronizar_e_pausar()
+    public void Desktop_tem_as_acoes_abrir_pasta_sincronizar_pausar_e_retomar()
     {
         var desktop = File.ReadAllText(Path.Combine(Repo(), "packaging", "share", "applications", "craftdriver.desktop"));
-        Assert.Contains("\nActions=open-folder;sync;pause;\n", desktop);
+        Assert.Contains("\nActions=open-folder;sync;pause;resume;\n", desktop);
+        Assert.Contains("[Desktop Action resume]\nName=Retomar sincronização\n", desktop);
+        Assert.Contains("\nExec=craftdriver resume --notify\n", desktop);
         Assert.Contains("[Desktop Action open-folder]\nName=Abrir pasta\n", desktop);
         Assert.Contains("\nExec=craftdriver open\n", desktop);
         Assert.Contains("\nExec=craftdriver sync --notify\n", desktop);

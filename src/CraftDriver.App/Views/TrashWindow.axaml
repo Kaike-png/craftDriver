@@ -31,8 +31,8 @@
                 <ListBox.ItemTemplate>
                     <DataTemplate x:DataType="vm:TrashRowVm">
                         <Grid ColumnDefinitions="*,170,130,150">
-                            <TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis" />
-                            <TextBlock Grid.Column="1" Text="{Binding Drive}" TextTrimming="CharacterEllipsis" />
+                            <TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding Name}" />
+                            <TextBlock Grid.Column="1" Text="{Binding Drive}" TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding Drive}" />
                             <TextBlock Grid.Column="2" Text="{Binding When}" />
                             <TextBlock Grid.Column="3" Classes="muted" Text="{Binding How}" />
                         </Grid>

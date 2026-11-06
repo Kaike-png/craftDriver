@@ -9,7 +9,8 @@
         <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8">
             <Button x:Name="CancelButton" Content="Cancelar" IsCancel="True" />
             <Button x:Name="MinimizeButton" Content="Minimizar" />
-            <Button x:Name="QuitButton" Classes="accent" Content="Encerrar o craftDriver" IsDefault="True" />
+            <!-- sem IsDefault: Enter não encerra (e desmonta) por engano — mesma regra da ConfirmWindow para ação destrutiva -->
+            <Button x:Name="QuitButton" Classes="accent" Content="Encerrar o craftDriver" />
         </StackPanel>
     </StackPanel>
 </Window>
