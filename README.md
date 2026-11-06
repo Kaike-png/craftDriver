@@ -56,6 +56,23 @@ Os pacotes são gerados e testados (Ubuntu 24.04, Debian 12, Fedora e Arch, em c
 `ARCHES="x64 arm64" packaging/build.sh` gera também os pacotes ARM; detalhes e medições em
 [`docs/empacotamento.md`](docs/empacotamento.md).
 
+## Atualizações
+
+O craftDriver procura versão nova no GitHub 2 minutos depois de abrir e uma vez por dia. Quando há, aparece um aviso
+na **Visão geral** (com o resumo das novidades), uma notificação e o item "Atualizar para X" na bandeja.
+
+- **Atualizar agora** baixa o pacote certo para o jeito como o craftDriver foi instalado (pacman, .deb, .rpm ou
+  `install-user.sh`, x64/arm64), confere o SHA256 contra o `SHA256SUMS` da release e instala: pacotes do sistema pedem
+  a senha de administrador (pkexec) com o app aberto e depois oferecem **Reiniciar agora**; a instalação do usuário não
+  pede senha, fecha e reabre o app sozinha.
+- Sem pacote para a sua instalação (ex.: Arch em ARM, `dotnet run`, pacote de terceiros) ou sem `pkexec`, o aviso
+  mostra o link e o comando para rodar no terminal.
+- **Ignorar esta versão** esconde o aviso até sair uma mais nova. **Configurações ▸ Atualizações** desliga a
+  verificação automática e tem **Procurar agora**; `CRAFTDRIVER_NO_UPDATE_CHECK=1` desliga a automática no ambiente.
+- No terminal: `craftdriver update --check` (0 = atualizado, 10 = há versão nova, 1 = erro) e `craftdriver update`.
+
+Desenho completo em [`docs/atualizacoes.md`](docs/atualizacoes.md).
+
 ## Extensões de gerenciador de arquivos
 
 Ficam em [`extensions/`](extensions). Todas leem o atributo `user.onedrive.status` que o FUSE expõe, então
@@ -106,6 +123,8 @@ craftdriver deletes [confirm|restore]   # exclusão em massa aguardando confirma
 craftdriver share [--edit] <arquivos>   # link de compartilhamento (copiado para a área de transferência)
 craftdriver versions <arquivo> [--list | --restore=ID | --copy=ID]   # versões anteriores
 craftdriver trash [restore N | open]    # excluídos recentes / restaurar da Lixeira
+craftdriver update --check     # procura versão nova (0 = atualizado, 10 = há versão nova, 1 = erro)
+craftdriver update             # atualiza (pela janela do app aberto, ou aqui no terminal)
 craftdriver sync | pause | resume | quit
 ```
 
