@@ -7,7 +7,7 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
     <NoWarn>$(NoWarn);CA1416</NoWarn>
-    <Version>0.2.0</Version>
+    <Version>0.3.0</Version>
     <!-- O pacote é publicado com trimming (packaging/build.sh): qualquer uso que o trimmer não consiga analisar
          (JSON por reflexão etc.) quebra o build em vez de virar falha em produção. -->
     <EnableTrimAnalyzer>true</EnableTrimAnalyzer>

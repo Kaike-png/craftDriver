@@ -6,6 +6,19 @@ acrescentada automaticamente.
 
 ## [Não lançado]
 
+## [0.3.0] - 2026-11-06
+
+### Novidades
+- **Atualizações**: o craftDriver avisa quando sai uma versão nova (aviso na Visão geral com o resumo das novidades,
+  notificação e item na bandeja) e **Atualizar agora** baixa o pacote certo para a sua instalação (pacman, .deb, .rpm
+  ou `install-user.sh`), confere o SHA256 e instala — com a senha de administrador para pacotes do sistema, sem senha
+  na instalação do usuário. "Ignorar esta versão", opção nas Configurações e `craftdriver update [--check]`.
+- **Envios em paralelo** (3 por padrão), sem deixar a sincronização da nuvem esperando um envio grande.
+- Pastas grandes listam mais rápido; menos idas ao chaveiro do sistema.
+- Atividade com busca, filtro de erros e copiar; tema aplicado na hora; ícones vetoriais (sem depender de fonte emoji).
+- Plugin do Dolphin também em .deb/.rpm (Debian 13, Ubuntu 25.04, Fedora 41); Nautilus 42 (Ubuntu 22.04) suportado.
+- O tarball traz um instalador em modo usuário (sem precisar do SDK do .NET).
+
 ### Correções
 - **Pacotes .deb**: faltavam `libssl3` e `ca-certificates` — num Debian 12 ou Ubuntu 24.04 mínimo o login falhava.
 - **Edições que nunca subiam**: arquivo ainda aberto para escrita ao encerrar (ou numa queda) e escritas feitas depois
@@ -50,13 +63,6 @@ acrescentada automaticamente.
 ### Mudanças de comportamento
 - Uma 2ª instância `--headless` sai com código 3 (antes 0); duas configurações com a mesma pasta não montam juntas.
 - O serviço systemd usa `graphical-session.target` quando a sessão o oferece (GNOME/KDE/uwsm).
-
-### Novidades
-- **Envios em paralelo** (3 por padrão), sem deixar a sincronização da nuvem esperando um envio grande.
-- Pastas grandes listam mais rápido; menos idas ao chaveiro do sistema.
-- Atividade com busca, filtro de erros e copiar; tema aplicado na hora; ícones vetoriais (sem depender de fonte emoji).
-- Plugin do Dolphin também em .deb/.rpm (Debian 13, Ubuntu 25.04, Fedora 41); Nautilus 42 (Ubuntu 22.04) suportado.
-- O tarball traz um instalador em modo usuário (sem precisar do SDK do .NET).
 
 ## [0.2.0] - 2026-11-05
 
@@ -164,7 +170,8 @@ Configuração e contas são mantidas.
 - Primeira versão: contas pessoais, corporativas e bibliotecas do SharePoint montadas em `~/OneDrive` via FUSE, com
   arquivos sob demanda, fixação ("Sempre manter neste dispositivo"), bandeja e menu do Dolphin.
 
-[Não lançado]: https://github.com/Kaike-png/craftDriver/compare/v0.2.0...HEAD
+[Não lançado]: https://github.com/Kaike-png/craftDriver/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/Kaike-png/craftDriver/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/Kaike-png/craftDriver/compare/v0.1.4...v0.2.0
 [0.1.4]: https://github.com/Kaike-png/craftDriver/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/Kaike-png/craftDriver/compare/v0.1.2...v0.1.3

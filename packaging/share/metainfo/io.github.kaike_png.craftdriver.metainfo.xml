@@ -74,6 +74,21 @@
   <content_rating type="oars-1.1" />
 
   <releases>
+    <release version="0.3.0" date="2026-11-06">
+      <description>
+        <ul>
+          <li>Atualizações: aviso de versão nova (Visão geral, notificação e bandeja) e "Atualizar agora", que baixa o pacote certo (pacman, .deb, .rpm ou install-user.sh), confere o SHA256 e instala; craftdriver update [--check].</li>
+          <li>Envios em paralelo (3 por padrão), sem deixar a sincronização da nuvem esperando um envio grande.</li>
+          <li>Perda de dados: arquivo apagado e recriado durante o envio não some mais; exclusão recusada pela nuvem não duplica o nome.</li>
+          <li>Erro de servidor perene num item vai para Problemas após 50 tentativas; o painel da fila mostra o que está parado e por quê.</li>
+          <li>rm -rf, pastas grandes e cópias grandes fazem bem menos consultas; corrigida uma corrida rara que deixava uma operação do sistema de arquivos sem resposta.</li>
+          <li>Desligar/religar ou remover uma biblioteca com envio em andamento não envia duas vezes; limites de banda valem na hora.</li>
+          <li>App: "Reiniciar agora" cancelado não reabre sozinho; disco cheio mostra o erro real; "Sair" da bandeja confirma com transferências; craftdriver quit espera o app terminar.</li>
+          <li>Pasta atrás de link simbólico funciona no app, CLI, Nautilus e Dolphin; Dolphin mostra emblemas em pastas vistas antes da montagem.</li>
+          <li>Pacotes .deb com libssl3 e ca-certificates; plugin do Dolphin em .deb/.rpm; instalador em modo usuário no tarball.</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.2.0" date="2026-11-05">
       <description>
         <ul>
