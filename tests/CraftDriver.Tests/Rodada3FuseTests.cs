@@ -233,9 +233,13 @@ public class Rodada3FuseTests(ITestOutputHelper output)
                 output.WriteLine($"  {g.Count(),6}  {g.Key.ReplaceLineEndings(" ")}");
         });
         var porArquivo = (cte + sel + outros - transacao) / (double)n;
+        var escritas = (outros - transacao) / (double)n;
         output.WriteLine($"[24.4] rm -rf {n} arquivos: {ms} ms; CTE={cte} SELECT={sel} outros={outros} (BEGIN/COMMIT={transacao}) → {porArquivo:F1} statements/arquivo");
-        Assert.True(cte <= 1 && porArquivo <= 8,
-            $"rm -rf {n} arquivos ({ms} ms): {cte} CTE recursivas (alvo ≤ 1), {sel} SELECT, {outros} outros (BEGIN/COMMIT={transacao}) = {porArquivo:F1} statements/arquivo (alvo ≤ 8)");
+        // Quantos lookups o kernel faz por arquivo varia com a versão (aqui, 7.x: ~1 SELECT de item por arquivo; runners do
+        // CI, 6.8: ~3,8): o orçamento de SELECT é folgado; o que a correção garante é a CTE e as escritas por unlink.
+        Assert.True(cte <= 1 && escritas <= 5 && sel / (double)n <= 6,
+            $"rm -rf {n} arquivos ({ms} ms): {cte} CTE recursivas (alvo ≤ 1), {sel} SELECT (alvo ≤ 6/arquivo), {outros} outros " +
+            $"(BEGIN/COMMIT={transacao}; escritas {escritas:F1}/arquivo, alvo ≤ 5) = {porArquivo:F1} statements/arquivo");
     }
 
     /// <summary>

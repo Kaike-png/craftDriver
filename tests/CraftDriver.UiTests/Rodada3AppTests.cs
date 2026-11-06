@@ -182,7 +182,15 @@ public partial class Rodada3AppTests
             { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
             _p = Process.Start(psi)!;
             var line = _p.StandardOutput.ReadLine();
-            if (line != "pronto") throw new Exception("unshare falhou: " + line + _p.StandardError.ReadToEnd());
+            if (line != "pronto")
+            {
+                var err = _p.StandardError.ReadToEnd(); // o unshare já saiu (ReadLine devolveu null)
+                // Ubuntu 24.04 (runners do CI): AppArmor restringe namespaces de usuário sem privilégio
+                // (kernel.apparmor_restrict_unprivileged_userns=1) — o CI desliga; fora dele, pula.
+                Assert.SkipWhen(err.Contains("uid_map") || err.Contains("Operation not permitted"),
+                    "namespaces de usuário sem privilégio indisponíveis: " + err.Trim());
+                throw new Exception("unshare falhou: " + line + err);
+            }
         }
 
         public void Dispose()

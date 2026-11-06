@@ -275,7 +275,7 @@ public partial class Rodada3AppTests
         psi.Environment["CRAFTDRIVER_QUIT_TIMEOUT"] = "1";
         var sw = Stopwatch.StartNew();
         var (code, text) = await RunCliAsync(psi);
-        Assert.Equal(1, code);
+        Assert.True(code == 1, $"quit saiu {code}: {text}");
         Assert.Contains("ainda não terminou", text);
         Assert.True(sw.Elapsed >= TimeSpan.FromSeconds(1), "não esperou o prazo: " + sw.Elapsed);
     }

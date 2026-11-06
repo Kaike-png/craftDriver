@@ -94,6 +94,9 @@ jobs:
           # arquitetura (no executor ARM é a única verificação real do layout aarch64)
           sudo apt-get install -y -qq fuse3 libfuse3-3 libfuse3-dev gcc attr
           sudo chmod 666 /dev/fuse
+          # Rodada3AppTests (§25.2) monta tmpfs cheio/somente leitura em `unshare -rm`: o AppArmor do Ubuntu 24.04
+          # bloqueia namespaces de usuário sem privilégio por padrão (o teste pula se continuar bloqueado)
+          sudo sysctl -q kernel.apparmor_restrict_unprivileged_userns=0 || true
           grep -q '^user_allow_other' /etc/fuse.conf || echo user_allow_other | sudo tee -a /etc/fuse.conf
       - name: Testes das extensões (Nautilus com gi falso, Thunar, PCManFM)
         run: for d in nautilus thunar pcmanfm; do python3 -m unittest discover -s "extensions/$d/tests" -v; done
