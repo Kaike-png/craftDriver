@@ -10,6 +10,7 @@ import os
 import stat
 import sys
 import tempfile
+import threading
 import time
 import types
 import unittest
@@ -99,13 +100,15 @@ class _GLib:
 completed = []
 
 
-def _install_fake_gi():
+def _install_fake_gi(nautilus_versions=("4.0", "3.0")):
     gi = types.ModuleType("gi")
     gi.required = {}
 
     def require_version(name, version):
         if name == "Gtk":
             raise ValueError("sem GTK no stub")  # força o caminho "sem tema": 1º candidato
+        if name == "Nautilus" and version not in nautilus_versions:
+            raise ValueError(f"Namespace Nautilus not available for version {version}")
         gi.required[name] = version
 
     gi.require_version = require_version
@@ -132,8 +135,12 @@ def _install_fake_gi():
 class FakeFileInfo:
     def __init__(self, path=None, uri=None):
         self.uri = uri or ("file://" + quote(path))
+        self.path = path
         self.emblems = []
         self.invalidated = 0
+
+    def is_directory(self):
+        return bool(self.path) and os.path.isdir(self.path)
 
     def get_uri(self):
         return self.uri
@@ -145,9 +152,9 @@ class FakeFileInfo:
         self.invalidated += 1
 
 
-def _load_extension():
-    gi = _install_fake_gi()
-    spec = importlib.util.spec_from_file_location("craftdriver_nautilus", EXTENSION)
+def _load_extension(nautilus_versions=("4.0", "3.0"), name="craftdriver_nautilus"):
+    gi = _install_fake_gi(nautilus_versions)
+    spec = importlib.util.spec_from_file_location(name, EXTENSION)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return gi, module
@@ -168,9 +175,40 @@ def _xattr_supported(directory):
         probe.unlink()
 
 
+def _write_mounts(path, *mount_points, other=()):
+    """Tabela de montagens falsa no formato de /proc/self/mounts (espaço vira \\040)."""
+    lines = ["/dev/sda1 / ext4 rw 0 0"]
+    lines += [f"craftdriver {m.replace(' ', chr(92) + '040')} fuse.onedrive rw,nosuid,nodev 0 0" for m in mount_points]
+    lines += [f"outrofs {m.replace(' ', chr(92) + '040')} fuse.sshfs rw 0 0" for m in other]
+    Path(path).write_text("\n".join(lines) + "\n")
+
+
 class StatusTable(unittest.TestCase):
     def test_requires_nautilus_4(self):
         self.assertEqual(GI.required.get("Nautilus"), "4.0")
+        self.assertEqual(CD.NAUTILUS_API, "4.0")
+
+    def test_falls_back_to_nautilus_3_api(self):
+        # Nautilus 42 (Ubuntu 22.04): só existe a API 3.0; antes o require_version("4.0") derrubava a extensão
+        gi, module = _load_extension(nautilus_versions=("3.0",), name="craftdriver_nautilus_3")
+        try:
+            self.assertEqual(gi.required.get("Nautilus"), "3.0")
+            self.assertEqual(module.NAUTILUS_API, "3.0")
+            self.assertTrue(hasattr(module, "CraftDriverExtension"))
+        finally:
+            _install_fake_gi()  # devolve o stub 4.0 para os outros testes
+
+    def test_mount_table(self):
+        with tempfile.TemporaryDirectory() as d:
+            table = Path(d) / "mounts"
+            _write_mounts(table, "/home/u/One Drive", "/mnt/cd", other=("/home/u/remoto",))
+            mounts = CD.craftdriver_mounts(str(table))
+            self.assertEqual(mounts, ["/home/u/One Drive", "/mnt/cd"])
+            self.assertTrue(CD.inside_mount("/home/u/One Drive", mounts))
+            self.assertTrue(CD.inside_mount("/home/u/One Drive/a/b.txt", mounts))
+            self.assertFalse(CD.inside_mount("/home/u/One Drive2/x", mounts))
+            self.assertFalse(CD.inside_mount("/home/u/remoto/x", mounts))
+            self.assertEqual(CD.craftdriver_mounts(str(Path(d) / "nao-existe")), [])
 
     def test_first_candidate_without_theme(self):
         self.assertEqual(CD.emblem_for("OnlineOnly"), "folder-cloud")
@@ -202,9 +240,16 @@ class WithFiles(unittest.TestCase):
     def setUp(self):
         base = os.environ.get("CRAFTDRIVER_TEST_DIR") or None
         self.tmp = tempfile.TemporaryDirectory(prefix="craftdriver-nautilus-", dir=base)
-        self.dir = Path(self.tmp.name)
+        self.root = Path(self.tmp.name)
+        # self.dir faz o papel do ponto de montagem do craftDriver (na tabela de montagens falsa); fora/ não
+        self.dir = self.root / "mnt"
+        self.dir.mkdir()
+        (self.root / "fora").mkdir()
         if not _xattr_supported(self.dir):
             self.skipTest("FS sem user xattrs")
+        self.mounts = self.root / "mounts"
+        _write_mounts(self.mounts, str(self.dir))
+        self._old_mounts, CD.MOUNTS_FILE = CD.MOUNTS_FILE, str(self.mounts)
         self.files = {}
         for status in ("OnlineOnly", "Available", "AlwaysAvailable", "Syncing", "LocalOnly"):
             self.files[status] = self._make(f"{status} ç.txt", status)
@@ -213,13 +258,25 @@ class WithFiles(unittest.TestCase):
         os.setxattr(folder, CD.STATUS_XATTR, b"Folder")
         self.files["Folder"] = str(folder)
         self.outside = self._make("fora.txt", None)
+        # tem o xattr, mas fora de qualquer montagem do craftDriver: não deve ser lido nem ganhar menu
+        self.foreign = str(self.root / "fora" / "com-xattr.txt")
+        Path(self.foreign).write_text("x")
+        os.setxattr(self.foreign, CD.STATUS_XATTR, b"OnlineOnly")
         _GLib.idle.clear()
         _GLib.timeouts.clear()
         completed.clear()
         self.ext = CD.CraftDriverExtension()
 
     def tearDown(self):
+        CD.MOUNTS_FILE = self._old_mounts
         self.tmp.cleanup()
+
+    def _pump(self):
+        """Espera a thread de leitura postar no loop principal falso e roda o que ela postou."""
+        deadline = time.time() + 5
+        while not _GLib.idle and time.time() < deadline:
+            time.sleep(0.01)
+        return _GLib.run_idle()
 
     def _make(self, name, status):
         p = self.dir / name
@@ -257,6 +314,20 @@ class WithFiles(unittest.TestCase):
         remote = FakeFileInfo(uri="sftp://host/x")
         self.assertEqual(self.ext.update_file_info_full("p", object(), "c", remote), _OperationResult.COMPLETE)
 
+    def test_outside_mount_completes_without_reading(self):
+        reads = []
+        original = CD.read_status
+        CD.read_status = lambda path: reads.append(path) or original(path)
+        try:
+            info = FakeFileInfo(self.foreign)
+            self.assertEqual(self.ext.update_file_info_full("p", object(), "c", info), _OperationResult.COMPLETE)
+            self.assertTrue(self.ext._queue.empty(), "item fora da montagem foi para a fila de leitura")
+            time.sleep(0.05)
+            self.assertEqual(reads, [])
+            self.assertEqual(info.emblems, [])
+        finally:
+            CD.read_status = original
+
     def test_cancelled_update_does_not_touch_file(self):
         info = FakeFileInfo(self.files["Available"])
         handle = object()
@@ -277,19 +348,43 @@ class WithFiles(unittest.TestCase):
         info = self._update(self.files["Syncing"])
         self.assertEqual(len(_GLib.timeouts), 1)
         _GLib.fire_timeouts()  # ainda sincronizando: continua agendado, não invalida
+        self._pump()
         self.assertEqual(info.invalidated, 0)
         self.assertEqual(len(_GLib.timeouts), 1)
         os.setxattr(self.files["Syncing"], CD.STATUS_XATTR, b"AlwaysAvailable")
         _GLib.fire_timeouts()
+        self._pump()
         self.assertEqual(info.invalidated, 1)
+        _GLib.fire_timeouts()
         self.assertEqual(_GLib.timeouts, [])  # nada mais sincronizando: parou o timer
 
-    def _menu(self, *paths):
+    def test_poll_and_menu_never_read_xattr_on_the_main_loop(self):
+        main = threading.get_ident()
+        on_main = []
+        original = CD.read_status
+        CD.read_status = lambda path: (on_main.append(path) if threading.get_ident() == main else None) or original(path)
+        try:
+            info = self._update(self.files["Syncing"])
+            os.setxattr(self.files["Syncing"], CD.STATUS_XATTR, b"Available")
+            _GLib.fire_timeouts()  # o timer roda no loop principal
+            self._pump()
+            self.assertEqual(info.invalidated, 1)
+            self._menu(self.files["OnlineOnly"], self.files["Folder"])
+            self.assertEqual(on_main, [], "getxattr na thread da interface")
+        finally:
+            CD.read_status = original
+
+    def _menu(self, *paths, seen=True):
+        # o Nautilus pede os emblemas (update_file_info_full) antes de o usuário clicar com o direito
+        if seen:
+            for p in paths:
+                if CD.inside_mount(p, [str(self.dir)]):
+                    self._update(p)
         return self.ext.get_file_items([FakeFileInfo(p) for p in paths])
 
     def test_menu_only_for_craftdriver_items(self):
-        self.assertEqual(self._menu(self.outside), [])
-        self.assertEqual(self._menu(self.files["OnlineOnly"], self.outside), [])
+        self.assertEqual(self._menu(self.foreign), [])
+        self.assertEqual(self._menu(self.files["OnlineOnly"], self.foreign), [])
         self.assertEqual(self.ext.get_file_items([FakeFileInfo(uri="sftp://h/x")]), [])
         self.assertEqual(self.ext.get_file_items([]), [])
         items = self._menu(self.files["OnlineOnly"], self.files["Folder"])
@@ -300,6 +395,12 @@ class WithFiles(unittest.TestCase):
                                   "Copiar link de compartilhamento", "Versões anteriores…"])
         # Assinatura antiga (window, files) também funciona.
         self.assertEqual(len(self.ext.get_file_items("janela", [FakeFileInfo(self.files["Available"])])), 1)
+
+    def test_menu_before_status_is_known(self):
+        # item na montagem cujo status ainda não foi lido: menu com tudo habilitado (versões só para arquivo)
+        sub = lambda *p: {i.get_property("name"): i.get_property("sensitive") for i in self._menu(*p, seen=False)[0].submenu.items}
+        self.assertEqual(set(sub(self.files["AlwaysAvailable"]).values()), {True})
+        self.assertFalse(sub(self.files["Folder"])["CraftDriver::versions"])
 
     def test_menu_sensitivity(self):
         sub = lambda *p: {i.get_property("name"): i.get_property("sensitive") for i in self._menu(*p)[0].submenu.items}
@@ -324,6 +425,8 @@ class WithFiles(unittest.TestCase):
                 log.unlink(missing_ok=True)
                 single = key == "versions"
                 files = [FakeFileInfo(self.files["OnlineOnly"])] + ([] if single else [FakeFileInfo(self.files["AlwaysAvailable"])])
+                for f in files:
+                    self._update(f.path)
                 menu = self.ext.get_file_items(files)[0]
                 item = next(i for i in menu.submenu.items if i.get_property("name") == "CraftDriver::" + key)
                 item.emit("activate")

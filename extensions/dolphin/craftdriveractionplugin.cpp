@@ -1,5 +1,9 @@
-// Menu "craftDriver" no Dolphin, mostrado só quando TODOS os itens selecionados são do craftDriver
-// (têm o xattr user.onedrive.status) — funciona com qualquer ponto de montagem.
+// Menu "craftDriver" no Dolphin, mostrado só quando TODOS os itens selecionados estão numa montagem do
+// craftDriver (fsname=craftdriver na tabela de montagens) — funciona com qualquer ponto de montagem.
+//
+// actions() roda na thread da interface: não lê xattr (um getxattr num FUSE lento travaria o Dolphin a cada
+// clique com o direito). O status para habilitar "Sempre manter"/"Liberar espaço" vem do cache do plugin de
+// emblemas (que lê numa thread própria); sem ele, tudo fica habilitado e o CLI responde.
 #include "craftdriverstatus.h"
 
 #include <KAbstractFileItemActionPlugin>
@@ -10,6 +14,7 @@
 #include <QAction>
 #include <QCoreApplication>
 #include <QDir>
+#include <QElapsedTimer>
 #include <QIcon>
 #include <QMenu>
 #include <QProcess>
@@ -33,16 +38,24 @@ public:
         if (items.isEmpty()) {
             return {};
         }
+        const QStringList mounts = craftdriverMounts();
+        QObject *overlay = qApp ? qApp->property("craftdriverOverlayPlugin").value<QObject *>() : nullptr;
         QStringList paths;
         QStringList statuses;
+        bool singleFile = items.size() == 1;
         for (const KFileItem &item : items) {
             const QString path = item.localPath();
-            if (path.isEmpty()) {
-                return {};
-            }
-            const QString status = CraftDriver::readStatus(path);
-            if (status.isEmpty()) {
+            if (path.isEmpty() || !CraftDriver::insideMount(QDir::cleanPath(path), mounts)) {
                 return {}; // algum item fora do craftDriver: sem menu
+            }
+            // status já lido pelo plugin de emblemas (vazio = desconhecido)
+            QString status;
+            if (overlay) {
+                QMetaObject::invokeMethod(overlay, "cachedStatus", Qt::DirectConnection, Q_RETURN_ARG(QString, status),
+                                          Q_ARG(QString, QDir::cleanPath(path)));
+            }
+            if (status == QLatin1String("Folder") || (status.isEmpty() && item.isDir())) {
+                singleFile = false;
             }
             paths << path;
             statuses << status;
@@ -79,7 +92,6 @@ public:
         menu->addSeparator();
         add(QStringLiteral("craftdriver_share"), QStringLiteral("Copiar link de compartilhamento"), QStringLiteral("insert-link"), QStringLiteral("share"), true);
         // Versões: um arquivo só (pastas não têm versões); abre a janela do app, sem notificação de sucesso
-        const bool singleFile = paths.size() == 1 && statuses.first() != QLatin1String("Folder");
         add(QStringLiteral("craftdriver_versions"), QStringLiteral("Versões anteriores…"), QStringLiteral("document-open-recent"), QStringLiteral("versions"), singleFile, false);
 
         menu->menuAction()->setObjectName(QStringLiteral("craftdriver_menu"));
@@ -87,6 +99,19 @@ public:
     }
 
 private:
+    // Tabela de montagens relida no máximo a cada 2 s (vários menus seguidos não releem o procfs).
+    QStringList craftdriverMounts()
+    {
+        if (!m_mountsAge.isValid() || m_mountsAge.elapsed() > 2000) {
+            m_mounts = CraftDriver::craftdriverMounts();
+            m_mountsAge.start();
+        }
+        return m_mounts;
+    }
+
+    QStringList m_mounts;
+    QElapsedTimer m_mountsAge;
+
     // Binário do CLI: $CRAFTDRIVER_BIN (testes), PATH, ou ~/.local/bin (instalação em modo usuário).
     static QString craftdriverBinary()
     {

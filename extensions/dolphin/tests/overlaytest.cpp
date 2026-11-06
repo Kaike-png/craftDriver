@@ -50,6 +50,7 @@ private Q_SLOTS:
         // Intervalos curtos para o teste (antes do plugin ser instanciado).
         qputenv("CRAFTDRIVER_OVERLAY_SYNCING_MS", "200");
         qputenv("CRAFTDRIVER_OVERLAY_REFRESH_MS", "60000");
+        qputenv("CRAFTDRIVER_OVERLAY_ACTIVE_MS", "3000");
         QIcon::setThemeName(QStringLiteral("breeze"));
 
         m_tmp = TestUtil::makeDir();
@@ -106,6 +107,28 @@ private Q_SLOTS:
         QCOMPARE(err, ENODATA);
         QCOMPARE(CraftDriver::readStatus(m_dir.filePath(QStringLiteral("nao-existe")), &err), QString());
         QCOMPARE(err, ENOENT);
+    }
+
+    // Tabela de montagens: só fsname=craftdriver em fuse.*, com os escapes octais do /proc/mounts.
+    void mountTable()
+    {
+        const QString table = m_tmp->filePath(QStringLiteral("mounts"));
+        QFile f(table);
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("/dev/sda1 / ext4 rw 0 0\n"
+                "craftdriver /home/u/One\\040Drive fuse.onedrive rw,nosuid 0 0\n"
+                "outrofs /home/u/remoto fuse.sshfs rw 0 0\n"
+                "craftdriver /mnt/cd/ fuse.onedrive rw 0 0\n");
+        f.close();
+        qputenv("CRAFTDRIVER_MOUNTS_FILE", QFile::encodeName(table));
+        const QStringList mounts = CraftDriver::craftdriverMounts();
+        qunsetenv("CRAFTDRIVER_MOUNTS_FILE");
+        QCOMPARE(mounts, (QStringList{QStringLiteral("/home/u/One Drive"), QStringLiteral("/mnt/cd/")}));
+        QVERIFY(CraftDriver::insideMount(QStringLiteral("/home/u/One Drive"), mounts));
+        QVERIFY(CraftDriver::insideMount(QStringLiteral("/home/u/One Drive/a/b.txt"), mounts));
+        QVERIFY(CraftDriver::insideMount(QStringLiteral("/mnt/cd/x"), mounts));
+        QVERIFY(!CraftDriver::insideMount(QStringLiteral("/home/u/One Drive2/x"), mounts));
+        QVERIFY(!CraftDriver::insideMount(QStringLiteral("/home/u/remoto/x"), mounts));
     }
 
     // Mesmo caminho do KFileItemModelRolesUpdater do Dolphin 26.08.
@@ -186,8 +209,42 @@ private Q_SLOTS:
     {
         QSignalSpy spy(m_plugin, &KOverlayIconPlugin::overlaysChanged);
         const QString f = m_files.value(QStringLiteral("Available")); // em releitura rápida (teste anterior)
+        m_plugin->getOverlays(QUrl::fromLocalFile(f)); // o Dolphin mostrando o item
         QVERIFY(QFile::remove(f));
         QCOMPARE(waitFor(spy, QUrl::fromLocalFile(f), 3000), QStringList());
+    }
+
+    // Entradas que o Dolphin não pede há mais de CRAFTDRIVER_OVERLAY_ACTIVE_MS (3 s aqui) não são relidas,
+    // nem em releitura rápida ou "Syncing"; voltam a ser quando o Dolphin pede de novo.
+    void staleEntriesAreNotReread()
+    {
+        QSignalSpy spy(m_plugin, &KOverlayIconPlugin::overlaysChanged);
+        const QUrl u = url(QStringLiteral("LocalOnly"));
+        QCOMPARE(m_plugin->getOverlays(u), QStringList{QStringLiteral("emblem-unavailable")});
+        QObject *hook = qApp->property("craftdriverOverlayPlugin").value<QObject *>();
+        QVERIFY(QMetaObject::invokeMethod(hook, "refreshPaths", Qt::QueuedConnection, Q_ARG(QStringList, QStringList{u.toLocalFile()})));
+        QTest::qWait(3500); // passa da janela de uso sem o Dolphin pedir o item
+        spy.clear();
+        QVERIFY(TestUtil::setStatus(u.toLocalFile(), QStringLiteral("OnlineOnly")));
+        QCOMPARE(waitFor(spy, u, 1000), QStringList{QStringLiteral("<timeout>")});
+        // o Dolphin mostra o item de novo: ainda em releitura rápida, a mudança chega
+        QCOMPARE(m_plugin->getOverlays(u), QStringList{QStringLiteral("emblem-unavailable")});
+        QCOMPARE(waitFor(spy, u, 1500), QStringList{QStringLiteral("folder-cloud")});
+        // "Syncing" fora de vista também para de ser relido
+        const QUrl s = url(QStringLiteral("Syncing"));
+        QVERIFY(TestUtil::setStatus(s.toLocalFile(), QStringLiteral("Syncing")));
+        QVERIFY(QMetaObject::invokeMethod(hook, "refreshPaths", Qt::QueuedConnection, Q_ARG(QStringList, QStringList{s.toLocalFile()})));
+        QCOMPARE(waitFor(spy, s, 1500), QStringList{QStringLiteral("vcs-update-required")});
+        QTest::qWait(3500);
+        spy.clear();
+        QVERIFY(TestUtil::setStatus(s.toLocalFile(), QStringLiteral("Available")));
+        QCOMPARE(waitFor(spy, s, 800), QStringList{QStringLiteral("<timeout>")});
+        m_plugin->getOverlays(s);
+        QCOMPARE(waitFor(spy, s, 1500), QStringList{QStringLiteral("emblem-default-symbolic")});
+        // cachedStatus (usado pelo plugin de ações) devolve o último lido, sem ler
+        QString st;
+        QVERIFY(QMetaObject::invokeMethod(hook, "cachedStatus", Qt::DirectConnection, Q_RETURN_ARG(QString, st), Q_ARG(QString, s.toLocalFile())));
+        QCOMPARE(st, QStringLiteral("Available"));
     }
 };
 

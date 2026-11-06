@@ -5,7 +5,10 @@
 // devolve o que está em cache (ou nada) e, quando o valor chega/muda, emitimos overlaysChanged().
 //
 // Não há notificação de mudança de status vinda do FUSE, então itens já vistos são relidos
-// periodicamente (os "Syncing" com mais frequência). O plugin de ações chama refreshPaths() depois
+// periodicamente (os "Syncing" com mais frequência) — mas só os que o Dolphin pediu recentemente
+// (CRAFTDRIVER_OVERLAY_ACTIVE_MS, padrão 2 min): antes todo o cache (até 4000 entradas) era relido a cada
+// 10 s enquanto o Dolphin vivesse, ≈ 400 getxattr/s mesmo com as pastas fora de vista. O Dolphin chama
+// getOverlays() de novo a cada overlaysChanged e ao mostrar a pasta, o que renova a entrada. O plugin de ações chama refreshPaths() depois
 // de rodar o CLI para o emblema mudar logo (via propriedade do qApp, sem dependência de link).
 #include "craftdriverstatus.h"
 
@@ -61,6 +64,7 @@ public:
         , m_syncingMs(envInt("CRAFTDRIVER_OVERLAY_SYNCING_MS", 2000))
         , m_idleMs(envInt("CRAFTDRIVER_OVERLAY_REFRESH_MS", 10000))
         , m_maxEntries(envInt("CRAFTDRIVER_OVERLAY_MAX_ENTRIES", 4000))
+        , m_activeMs(envInt("CRAFTDRIVER_OVERLAY_ACTIVE_MS", 120000))
     {
         m_thread.setObjectName(QStringLiteral("craftdriver-overlay"));
         m_worker = new CraftDriverStatusWorker;
@@ -112,6 +116,14 @@ public:
         return overlaysFor(it->status);
     }
 
+    // Último status lido (vazio = desconhecido ou fora do craftDriver), sem ler nada. Usado pelo plugin de ações
+    // (QMetaObject::invokeMethod, mesma thread) para habilitar as ações sem getxattr na thread da interface.
+    Q_INVOKABLE QString cachedStatus(const QString &path) const
+    {
+        const auto it = m_cache.constFind(QDir::cleanPath(path));
+        return it == m_cache.cend() ? QString() : it->status;
+    }
+
 public Q_SLOTS:
     // Releitura imediata (e acelerada por ~30 s) dos caminhos e de tudo em cache abaixo deles.
     // Chamado pelo plugin de ações via QMetaObject::invokeMethod depois de fixar/liberar.
@@ -124,6 +136,7 @@ public Q_SLOTS:
                 const QString clean = QDir::cleanPath(p);
                 if (it.key() == clean || it.key().startsWith(clean + QLatin1Char('/'))) {
                     it->fastUntil = until;
+                    it->lastUsed = QDateTime::currentMSecsSinceEpoch(); // o usuário acabou de agir nesses itens
                     if (!it->pending) {
                         it->pending = true;
                         now << it.key();
@@ -167,7 +180,11 @@ private Q_SLOTS:
             if (e.pending || e.status.isEmpty()) {
                 continue; // fora do craftDriver: não relê
             }
-            const bool fast = e.status == QLatin1String("Syncing") || e.fastUntil > now;
+            const bool syncing = e.status == QLatin1String("Syncing");
+            if (now - e.lastUsed > m_activeMs) {
+                continue; // fora de vista há muito tempo: relê quando o Dolphin pedir de novo
+            }
+            const bool fast = syncing || e.fastUntil > now;
             if (now - e.lastChecked >= (fast ? m_syncingMs : m_idleMs)) {
                 e.pending = true;
                 due << it.key();
@@ -223,6 +240,7 @@ private:
     const int m_syncingMs;
     const int m_idleMs;
     const int m_maxEntries;
+    const int m_activeMs;
 };
 
 #include "craftdriveroverlayplugin.moc"

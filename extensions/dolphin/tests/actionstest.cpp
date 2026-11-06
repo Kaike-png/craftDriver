@@ -6,6 +6,8 @@
 
 #include <KAbstractFileItemActionPlugin>
 #include <KFileItemActions>
+#include <KOverlayIconPlugin>
+#include <QPluginLoader>
 #include <KFileItemListProperties>
 #include <KPluginFactory>
 #include <KPluginMetaData>
@@ -21,7 +23,8 @@ class ActionsTest : public QObject
     std::unique_ptr<QTemporaryDir> m_tmp;
     QDir m_dir;
     KAbstractFileItemActionPlugin *m_plugin = nullptr;
-    QString m_online, m_pinned, m_avail, m_folder, m_outside;
+    QString m_online, m_pinned, m_avail, m_folder, m_outside, m_bare, m_foreign;
+    KOverlayIconPlugin *m_overlay = nullptr;
 
     QList<QAction *> actionsFor(const QStringList &paths)
     {
@@ -70,7 +73,14 @@ private Q_SLOTS:
     {
         m_tmp = TestUtil::makeDir();
         QVERIFY(m_tmp->isValid());
-        m_dir = QDir(m_tmp->path());
+        // mnt/ faz o papel da montagem do craftDriver (tabela de montagens falsa); fora/ não
+        QVERIFY(QDir(m_tmp->path()).mkpath(QStringLiteral("mnt")) && QDir(m_tmp->path()).mkpath(QStringLiteral("fora")));
+        m_dir = QDir(m_tmp->filePath(QStringLiteral("mnt")));
+        QFile table(m_tmp->filePath(QStringLiteral("mounts")));
+        QVERIFY(table.open(QIODevice::WriteOnly));
+        table.write("craftdriver " + QFile::encodeName(m_dir.path()).replace(" ", "\\040") + " fuse.onedrive rw 0 0\n");
+        table.close();
+        qputenv("CRAFTDRIVER_MOUNTS_FILE", QFile::encodeName(table.fileName()));
         m_online = TestUtil::touch(m_dir, QStringLiteral("online.txt"));
         if (!TestUtil::setStatus(m_online, QStringLiteral("OnlineOnly"))) {
             QSKIP("o sistema de arquivos de $CRAFTDRIVER_TEST_DIR/$TMPDIR não aceita user xattrs");
@@ -82,7 +92,12 @@ private Q_SLOTS:
         QVERIFY(m_dir.mkdir(QStringLiteral("pasta")));
         m_folder = m_dir.filePath(QStringLiteral("pasta"));
         QVERIFY(TestUtil::setStatus(m_folder, QStringLiteral("Folder")));
-        m_outside = TestUtil::touch(m_dir, QStringLiteral("fora.txt"));
+        m_outside = TestUtil::touch(QDir(m_tmp->filePath(QStringLiteral("fora"))), QStringLiteral("fora.txt"));
+        // na montagem, sem xattr (o plugin não lê xattr: decide pela tabela de montagens)
+        m_bare = TestUtil::touch(m_dir, QStringLiteral("sem-xattr.txt"));
+        // fora da montagem, com o xattr: sem menu
+        m_foreign = TestUtil::touch(QDir(m_tmp->filePath(QStringLiteral("fora"))), QStringLiteral("com-xattr.txt"));
+        QVERIFY(TestUtil::setStatus(m_foreign, QStringLiteral("OnlineOnly")));
     }
 
     void metadataAndLoad()
@@ -107,7 +122,8 @@ private Q_SLOTS:
         QVERIFY(m_plugin);
         QCOMPARE(actionsFor({m_outside}).size(), 0);
         QCOMPARE(actionsFor({m_online, m_outside}).size(), 0); // seleção mista: nada
-        QCOMPARE(actionsFor({m_dir.filePath(QStringLiteral("nao-existe"))}).size(), 0);
+        QCOMPARE(actionsFor({m_foreign}).size(), 0); // tem o xattr, mas não está numa montagem do craftDriver
+        QCOMPARE(actionsFor({m_bare}).size(), 1); // na montagem: menu sem ler xattr
 
         const auto acts = actionsFor({m_online});
         QCOMPARE(acts.size(), 1);
@@ -119,6 +135,40 @@ private Q_SLOTS:
 
         QCOMPARE(actionsFor({m_folder}).size(), 1);
         QCOMPARE(actionsFor({m_online, m_pinned, m_avail, m_folder}).size(), 1);
+    }
+
+    // Sem o plugin de emblemas (status desconhecido): tudo habilitado, versões só para um arquivo.
+    void unknownStatusEnablesAll()
+    {
+        QVERIFY(m_plugin);
+        QVERIFY(!qApp->property("craftdriverOverlayPlugin").value<QObject *>());
+        const auto acts = actionsFor({m_pinned});
+        QVERIFY(find(acts, QStringLiteral("craftdriver_pin"))->isEnabled());
+        QVERIFY(find(acts, QStringLiteral("craftdriver_free"))->isEnabled());
+        QVERIFY(find(acts, QStringLiteral("craftdriver_versions"))->isEnabled());
+        QVERIFY(!find(actionsFor({m_folder}), QStringLiteral("craftdriver_versions"))->isEnabled());
+    }
+
+    // O Dolphin carrega o plugin de emblemas e mostra os itens antes do clique: o status vem do cache dele.
+    void loadOverlayAndSeeItems()
+    {
+        const auto plugins = KPluginMetaData::findPlugins(QStringLiteral("kf6/overlayicon"), {}, KPluginMetaData::AllowEmptyMetaData);
+        QString file;
+        for (const KPluginMetaData &md : plugins) {
+            if (md.pluginId() == QLatin1String("craftdriveroverlayplugin")) {
+                file = md.fileName();
+            }
+        }
+        QVERIFY(!file.isEmpty());
+        QPluginLoader loader(file);
+        m_overlay = qobject_cast<KOverlayIconPlugin *>(loader.instance());
+        QVERIFY2(m_overlay, qPrintable(loader.errorString()));
+        for (const QString &p : {m_online, m_pinned, m_avail}) {
+            m_overlay->getOverlays(QUrl::fromLocalFile(p));
+            QTRY_VERIFY_WITH_TIMEOUT(!m_overlay->getOverlays(QUrl::fromLocalFile(p)).isEmpty(), 3000);
+        }
+        m_overlay->getOverlays(QUrl::fromLocalFile(m_folder));
+        QTest::qWait(300);
     }
 
     void enabledState()

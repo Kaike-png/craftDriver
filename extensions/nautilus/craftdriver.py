@@ -1,8 +1,10 @@
-# craftDriver — extensão do Nautilus (nautilus-python, API 4.0 / Nautilus 43+).
+# craftDriver — extensão do Nautilus (nautilus-python, API 4.0 / Nautilus 43+; API 3.0 / Nautilus 42 como reserva).
 #
 # - Emblemas de status a partir do xattr user.onedrive.status que o FUSE do craftDriver expõe.
 # - Submenu "craftDriver" (Sempre manter / Liberar espaço / Status / Copiar link / Versões) só quando TODOS os itens
-#   selecionados têm esse xattr, ou seja, estão dentro do ponto de montagem (qualquer que seja ele).
+#   selecionados estão dentro de uma montagem do craftDriver (fsname=craftdriver na tabela de montagens).
+# - Nenhum getxattr roda no loop principal do GLib (um FUSE lento travaria o Nautilus inteiro): leituras numa thread
+#   própria; o menu usa o status já lido para os emblemas. Itens fora das montagens nem chegam à thread.
 #
 # Instalação (usuário):  ~/.local/share/nautilus-python/extensions/craftdriver.py
 # Instalação (sistema):  /usr/share/nautilus-python/extensions/craftdriver.py
@@ -13,17 +15,31 @@
 
 import os
 import queue
+import re
 import shutil
 import subprocess
 import threading
+import time
 from urllib.parse import unquote, urlparse
 
 import gi
 
-gi.require_version("Nautilus", "4.0")
+# Nautilus 43+ (GTK 4) traz a API 4.0; o Nautilus 42 (Ubuntu 22.04) só a 3.0, com as mesmas chamadas que usamos.
+try:
+    gi.require_version("Nautilus", "4.0")
+    NAUTILUS_API = "4.0"
+except ValueError:
+    gi.require_version("Nautilus", "3.0")
+    NAUTILUS_API = "3.0"
 from gi.repository import GLib, GObject, Nautilus  # noqa: E402
 
 STATUS_XATTR = "user.onedrive.status"
+
+# Montagens do craftDriver: FuseHost monta com -o fsname=craftdriver (1º campo de /proc/self/mounts).
+MOUNTS_FILE = "/proc/self/mounts"
+FSNAME = "craftdriver"
+MOUNTS_TTL_S = 2.0
+STATUS_CACHE_MAX = 20000
 
 # Ícones candidatos por status, em ordem de preferência; usa o primeiro que existe no tema
 # (Breeze/Papirus têm os primeiros; o Adwaita 4x só tem os "-symbolic" genéricos).
@@ -70,17 +86,50 @@ def local_path(file_info):
     return unquote(parsed.path)
 
 
-def _icon_exists_default():
-    """Função name -> bool que consulta o tema de ícones do GTK 4 (None se não der para consultar)."""
-    try:
-        gi.require_version("Gtk", "4.0")
-        from gi.repository import Gdk, Gtk
+def _unescape_mount(field):
+    """/proc/mounts escreve espaço, tab, \\n e \\ como \\ooo (octal)."""
+    return re.sub(r"\\([0-7]{3})", lambda m: chr(int(m.group(1), 8)), field)
 
-        display = Gdk.Display.get_default()
-        if display is None:
-            return None
-        theme = Gtk.IconTheme.get_for_display(display)
-        return theme.has_icon
+
+def craftdriver_mounts(mounts_file=None):
+    """Pontos de montagem do craftDriver (fsname=craftdriver) na tabela de montagens deste processo."""
+    try:
+        with open(mounts_file or MOUNTS_FILE, encoding="utf-8", errors="surrogateescape") as f:
+            lines = f.read().splitlines()
+    except OSError:
+        return []
+    mounts = []
+    for line in lines:
+        parts = line.split()
+        if len(parts) >= 3 and parts[0] == FSNAME and parts[2].startswith("fuse"):
+            mounts.append(_unescape_mount(parts[1]))
+    return mounts
+
+
+def inside_mount(path, mounts):
+    """O caminho é um ponto de montagem do craftDriver ou fica dentro de um."""
+    for mount in mounts:
+        root = mount.rstrip("/") or "/"
+        if path == root or path.startswith(root.rstrip("/") + "/"):
+            return True
+    return False
+
+
+def _icon_exists_default():
+    """Função name -> bool que consulta o tema de ícones do GTK (None se não der para consultar)."""
+    try:
+        if NAUTILUS_API == "4.0":
+            gi.require_version("Gtk", "4.0")
+            from gi.repository import Gdk, Gtk
+
+            display = Gdk.Display.get_default()
+            if display is None:
+                return None
+            return Gtk.IconTheme.get_for_display(display).has_icon
+        gi.require_version("Gtk", "3.0")
+        from gi.repository import Gtk
+
+        return Gtk.IconTheme.get_default().has_icon
     except Exception:  # noqa: BLE001 — sem GTK (testes) ou versão diferente: usa o 1º candidato
         return None
 
@@ -112,21 +161,11 @@ def craftdriver_binary():
     return local if os.access(local, os.X_OK) else None
 
 
-def selection_paths(files):
-    """(caminhos, status) se todos os itens são do craftDriver; senão None (sem menu)."""
-    paths, statuses = [], []
-    for f in files:
-        path = local_path(f)
-        if path is None:
-            return None
-        status = read_status(path)
-        if status is None:
-            return None
-        paths.append(path)
-        statuses.append(status)
-    if not paths:
-        return None
-    return paths, statuses
+def _is_directory(file_info):
+    try:
+        return bool(file_info.is_directory())
+    except Exception:  # noqa: BLE001
+        return False
 
 
 class CraftDriverExtension(GObject.GObject, Nautilus.InfoProvider, Nautilus.MenuProvider):
@@ -137,6 +176,10 @@ class CraftDriverExtension(GObject.GObject, Nautilus.InfoProvider, Nautilus.Menu
         # Itens "Syncing" vistos: relidos a cada SYNCING_POLL_MS até mudarem (o FUSE não avisa).
         self._syncing = {}  # caminho -> Nautilus.FileInfo
         self._poll_id = 0
+        self._polling = False  # releitura dos "Syncing" em curso na thread
+        self._status = {}  # caminho -> último status lido (o menu usa isto; não lê xattr na thread da interface)
+        self._mounts = []
+        self._mounts_at = None
         self._handles = {}  # handle -> Event (cancelamento)
         self._queue = queue.Queue()
         self._worker = None
@@ -149,15 +192,23 @@ class CraftDriverExtension(GObject.GObject, Nautilus.InfoProvider, Nautilus.Menu
             self._icon_checked = True
         return emblem_for(status, self._icon_exists)
 
+    def _craftdriver_mounts(self):
+        now = time.monotonic()
+        if self._mounts_at is None or now - self._mounts_at > MOUNTS_TTL_S:
+            self._mounts = craftdriver_mounts()
+            self._mounts_at = now
+        return self._mounts
+
     def update_file_info_full(self, provider, handle, closure, file_info):
         path = local_path(file_info)
-        if path is None:
+        # Fora das montagens do craftDriver não há o que ler (antes toda pasta de todo disco ia para a fila).
+        if path is None or not inside_mount(path, self._craftdriver_mounts()):
             return Nautilus.OperationResult.COMPLETE
         # getxattr num FUSE passa pelo processo do craftDriver: lê numa thread única (fila), fora da
         # thread da interface, e completa a operação no loop principal.
         cancelled = threading.Event()
         self._handles[handle] = cancelled
-        self._queue.put((provider, handle, closure, file_info, path, cancelled))
+        self._queue.put(("info", provider, handle, closure, file_info, path, cancelled))
         self._ensure_worker()
         return Nautilus.OperationResult.IN_PROGRESS
 
@@ -168,7 +219,12 @@ class CraftDriverExtension(GObject.GObject, Nautilus.InfoProvider, Nautilus.Menu
 
     def _work(self):
         while True:
-            provider, handle, closure, file_info, path, cancelled = self._queue.get()
+            job = self._queue.get()
+            if job[0] == "poll":
+                results = [(path, read_status(path)) for path in job[1]]
+                GLib.idle_add(self._finish_poll, results)
+                continue
+            _, provider, handle, closure, file_info, path, cancelled = job
             status = None if cancelled.is_set() else read_status(path)
             GLib.idle_add(self._finish, provider, handle, closure, file_info, path, status, cancelled)
 
@@ -186,6 +242,9 @@ class CraftDriverExtension(GObject.GObject, Nautilus.InfoProvider, Nautilus.Menu
             event.set()
 
     def apply_status(self, file_info, path, status):
+        if len(self._status) >= STATUS_CACHE_MAX:
+            self._status.clear()
+        self._status[path] = status
         emblem = self._emblem(status)
         if emblem:
             file_info.add_emblem(emblem)
@@ -200,24 +259,43 @@ class CraftDriverExtension(GObject.GObject, Nautilus.InfoProvider, Nautilus.Menu
             self._poll_id = GLib.timeout_add(SYNCING_POLL_MS, self._poll_syncing)
 
     def _poll_syncing(self):
-        for path, file_info in list(self._syncing.items()):
-            if read_status(path) != "Syncing":
-                del self._syncing[path]
-                file_info.invalidate_extension_info()  # o Nautilus chama update_file_info de novo
-        if not self._syncing:
+        # Roda no loop principal: só pede a releitura à thread (um getxattr aqui travaria o Nautilus).
+        if not self._syncing and not self._polling:
             self._poll_id = 0
             return False
+        if not self._polling and self._syncing:
+            self._polling = True
+            self._queue.put(("poll", list(self._syncing)))
+            self._ensure_worker()
         return True
+
+    def _finish_poll(self, results):
+        self._polling = False
+        for path, status in results:
+            if status == "Syncing":
+                continue
+            file_info = self._syncing.pop(path, None)
+            if file_info is not None:
+                self._status[path] = status
+                file_info.invalidate_extension_info()  # o Nautilus chama update_file_info de novo
+        return False  # GLib.idle_add: não repetir
 
     # ---------- menu ----------
 
     def get_file_items(self, *args):
         # Nautilus 4.0 passa (files); versões antigas do nautilus-python passavam (window, files).
         files = args[-1]
-        selection = selection_paths(files)
-        if selection is None:
+        if not files:
             return []
-        paths, statuses = selection
+        mounts = self._craftdriver_mounts()
+        paths, statuses = [], []
+        for f in files:
+            path = local_path(f)
+            if path is None or not inside_mount(path, mounts):
+                return []  # algum item fora do craftDriver: sem menu
+            paths.append(path)
+            # status dos emblemas (já lido na thread); None = ainda não lido: tudo habilitado
+            statuses.append(self._status.get(path))
 
         top = Nautilus.MenuItem(name="CraftDriver::menu", label="craftDriver", tip="", icon="craftdriver")
         submenu = Nautilus.Menu()
@@ -226,7 +304,7 @@ class CraftDriverExtension(GObject.GObject, Nautilus.InfoProvider, Nautilus.Menu
         all_online = all(s == "OnlineOnly" for s in statuses)
         for key, label, command in ACTIONS:
             item = Nautilus.MenuItem(name="CraftDriver::" + key, label=label, tip="", icon="")
-            single_file = len(paths) == 1 and statuses[0] != "Folder"
+            single_file = len(paths) == 1 and statuses[0] != "Folder" and not (statuses[0] is None and _is_directory(files[0]))
             if (key == "pin" and all_pinned) or (key == "free" and all_online) or (key == "versions" and not single_file):
                 item.set_property("sensitive", False)
             item.connect("activate", self._run, command, paths, list(files))

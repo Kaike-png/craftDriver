@@ -1,6 +1,7 @@
 #include "craftdriverstatus.h"
 
 #include <QFile>
+#include <QRegularExpression>
 
 #include <cerrno>
 #include <sys/xattr.h>
@@ -24,6 +25,49 @@ QString readStatus(const QString &localPath, int *err)
     QString value = QString::fromUtf8(buf, n);
     value.remove(QChar(0));
     return value.trimmed();
+}
+
+QStringList craftdriverMounts()
+{
+    QString file = qEnvironmentVariable("CRAFTDRIVER_MOUNTS_FILE");
+    if (file.isEmpty()) {
+        file = QStringLiteral("/proc/self/mounts");
+    }
+    QFile f(file);
+    if (!f.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        return {};
+    }
+    // /proc/mounts escreve espaço, tab, \n e \ como \ooo (octal)
+    static const QRegularExpression octal(QStringLiteral("\\\\([0-7]{3})"));
+    QStringList mounts;
+    const QList<QByteArray> lines = f.readAll().split('\n');
+    for (const QByteArray &line : lines) {
+        const QList<QByteArray> parts = line.split(' ');
+        if (parts.size() < 3 || parts.at(0) != "craftdriver" || !parts.at(2).startsWith("fuse")) {
+            continue;
+        }
+        QString mp = QFile::decodeName(parts.at(1));
+        QRegularExpressionMatch m;
+        while ((m = octal.match(mp)).hasMatch()) {
+            mp.replace(m.capturedStart(), m.capturedLength(), QChar(m.captured(1).toInt(nullptr, 8)));
+        }
+        mounts << mp;
+    }
+    return mounts;
+}
+
+bool insideMount(const QString &localPath, const QStringList &mounts)
+{
+    for (const QString &mount : mounts) {
+        QString root = mount;
+        while (root.size() > 1 && root.endsWith(QLatin1Char('/'))) {
+            root.chop(1);
+        }
+        if (localPath == root || localPath.startsWith(root == QLatin1String("/") ? root : root + QLatin1Char('/'))) {
+            return true;
+        }
+    }
+    return false;
 }
 
 QString emblemFor(const QString &status)
