@@ -27,8 +27,22 @@ public sealed class GraphClient : IGraphApi
     readonly HttpClient _http;
     readonly ConcurrentDictionary<string, TransferBandwidth> _uploadBandwidth = new();
 
+    /// <summary>
+    /// Muda o limite de envio da drive. Altera o objeto existente (não troca por outro): o pedaço em voo (até 10 MiB)
+    /// segura a referência ao limitador, e o novo limite vale já na próxima fatia de 16 KiB dele.
+    /// </summary>
     public void ConfigureUploadBandwidth(string driveId, long bytesPerSecond) =>
-        _uploadBandwidth[driveId] = new TransferBandwidth(bytesPerSecond);
+        _uploadBandwidth.AddOrUpdate(driveId, _ => new TransferBandwidth(bytesPerSecond), (_, existing) =>
+        {
+            existing.BytesPerSecond = bytesPerSecond;
+            return existing;
+        });
+
+    /// <summary>
+    /// Sem resposta nem progresso por este tempo, o pedido é abortado (e repetido, se idempotente). Num envio com limite
+    /// de banda conta só o tempo usando a rede (o tempo dormindo no limitador não conta). Por instância (testes reduzem).
+    /// </summary>
+    public TimeSpan NetworkTimeout { get; init; } = TimeSpan.FromMinutes(10);
 
     HttpContent UploadContent(string driveId, byte[] bytes, int count) =>
         _uploadBandwidth.TryGetValue(driveId, out var bandwidth) && bandwidth.Enabled
@@ -57,15 +71,25 @@ public sealed class GraphClient : IGraphApi
         bool throwOnError = true, bool idempotent = true)
     {
         var refreshed = false;
-        var forceTokenRefresh = false;
+        string? rejectedToken = null; // token recusado (401): a repetição pede renovação forçada dele
         for (var attempt = 0; ; attempt++)
         {
             await Throttle.WaitAsync(ct); // 429/503 recente em qualquer drive da conta
             using var req = make();
             if (auth)
             {
-                req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", await _token(forceTokenRefresh, ct));
-                forceTokenRefresh = false; // só a repetição após o 401 renova à força; retries de 503 reutilizam o token
+                string token;
+                if (rejectedToken == null) token = await _token(false, ct);
+                else
+                {
+                    // o cache só renova se o token atual da conta ainda for o recusado (401 simultâneos renovam 1 vez)
+                    var previous = Auth.AccessTokenCache.RejectedToken.Value;
+                    Auth.AccessTokenCache.RejectedToken.Value = rejectedToken;
+                    try { token = await _token(true, ct); }
+                    finally { Auth.AccessTokenCache.RejectedToken.Value = previous; }
+                    rejectedToken = null; // só a repetição após o 401 renova à força; retries de 503 reutilizam o token
+                }
+                req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
             }
 
             HttpResponseMessage resp;
@@ -74,10 +98,16 @@ public sealed class GraphClient : IGraphApi
                 using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
                 if (completion == HttpCompletionOption.ResponseContentRead)
                 {
-                    // O tempo deliberadamente gasto no rate limit não consome os 10 min de rede.
-                    var milliseconds = 600_000 + (req.Content is BandwidthContent paced ? paced.PacingSeconds * 1000 : 0);
-                    if (milliseconds < uint.MaxValue - 1) timeout.CancelAfter(TimeSpan.FromMilliseconds(milliseconds));
-                    // Limites extremos (>49 dias por pedido) ficam só com o cancelamento do chamador.
+                    if (req.Content is BandwidthContent paced)
+                    {
+                        // Envio com limite de banda: timeout de INATIVIDADE (10 min sem entregar bytes nem receber a
+                        // resposta), não um prazo total calculado com o limite do início — o limite pode baixar no
+                        // meio do pedaço, e um prazo fixo estouraria e repetiria o pedaço em laço. O tempo dormindo no
+                        // limitador não conta.
+                        paced.Watchdog = timeout;
+                        paced.IdleTimeout = NetworkTimeout;
+                    }
+                    timeout.CancelAfter(NetworkTimeout);
                 }
                 resp = await _http.SendAsync(req, completion, timeout.Token);
             }
@@ -94,21 +124,25 @@ public sealed class GraphClient : IGraphApi
             if (status == 401 && auth && !refreshed)
             {
                 refreshed = true;
-                forceTokenRefresh = true;
+                rejectedToken = req.Headers.Authorization?.Parameter ?? "";
                 resp.Dispose();
                 continue;
             }
-            if ((status is 429 or 503 or 502 or 504 or 500) && attempt < 5 && (idempotent || status == 429))
+            if (status is 429 or 503 or 502 or 504 or 500)
             {
                 var wait = resp.Headers.RetryAfter?.Delta
                            ?? (resp.Headers.RetryAfter?.Date is { } d ? d - DateTimeOffset.UtcNow : (TimeSpan?)null)
                            ?? TimeSpan.FromSeconds(Math.Min(60, 2 << attempt));
                 if (wait < TimeSpan.Zero) wait = TimeSpan.FromSeconds(1);
-                resp.Dispose();
-                // throttling vale para a conta inteira: os outros pedidos também esperam (no início do laço)
+                // throttling vale para a conta inteira, inclusive quando ESTE pedido não vai repetir (não idempotente,
+                // tentativas esgotadas): os outros pedidos da conta esperam o último Retry-After (no início do laço)
                 if (status is 429 or 503) Throttle.Block(wait);
-                else await Task.Delay(wait, ct);
-                continue;
+                if (attempt < 5 && (idempotent || status == 429))
+                {
+                    resp.Dispose();
+                    if (status is not (429 or 503)) await Task.Delay(wait < GraphThrottle.MaxSingleDelay ? wait : GraphThrottle.MaxSingleDelay, ct);
+                    continue;
+                }
             }
             if (!throwOnError) return resp; // 404/416 do download/sessão são tratados pelo chamador, depois de 401/throttling
             throw await ToException(resp);
@@ -196,9 +230,8 @@ public sealed class GraphClient : IGraphApi
 
     public async Task<DeltaPage> GetDeltaAsync(string driveId, string? link, CancellationToken ct)
     {
-        // Inclui todas as propriedades lidas por RemoteItem.FromJson; links retornados são opacos.
-        const string fields = "id,name,parentReference,folder,root,deleted,package,remoteItem,size,eTag,cTag,file,fileSystemInfo,createdDateTime,lastModifiedDateTime";
-        var url = link ?? $"{Base}/drives/{Esc(driveId)}/root/delta?$select={fields}";
+        // ItemFields inclui todas as propriedades lidas por RemoteItem.FromJson; links retornados são opacos.
+        var url = link ?? $"{Base}/drives/{Esc(driveId)}/root/delta?$select={ItemFields}";
         using var doc = await GetJsonAsync(url, ct);
         var items = new List<RemoteItem>();
         if (doc.RootElement.TryGetProperty("value", out var arr))
@@ -529,6 +562,10 @@ public sealed class GraphClient : IGraphApi
             // HIPÓTESE: o SharePoint aceita conflictBehavior no PATCH como o OneDrive (documentado só para o OneDrive)
             ["@microsoft.graph.conflictBehavior"] = replace ? "replace" : "fail",
         };
+        // Sem If-Match de propósito (§23.7): o eTag de uma pasta muda a cada alteração dos filhos, então mover/renomear
+        // pasta com If-Match daria 412 sem conflito real. O 412 nunca ocorre aqui; um Move recusado de vez (400/403)
+        // deixa a origem renomeada só localmente e vai para Problemas (o destino que ele substituiria já pode estar na
+        // Lixeira, sem menção em Problemas) — aceito e documentado.
         using var doc = await SendJsonAsync(HttpMethod.Patch, ItemUrl(driveId, itemId), body, ct);
         return RemoteItem.FromJson(doc.RootElement);
     }
@@ -624,15 +661,6 @@ public sealed class GraphClient : IGraphApi
         {
             return false; // sem acesso à lista de permissões: trata como somente leitura
         }
-    }
-
-    /// <summary>Alguma permissão com papel de escrita (para quem não é dono vêm só as que valem para ele).</summary>
-    internal static bool ParseCanWrite(JsonElement root)
-    {
-        if (!root.TryGetProperty("value", out var arr) || arr.ValueKind != JsonValueKind.Array) return false;
-        foreach (var p in arr.EnumerateArray())
-            if (PermissionCanWrite(p)) return true;
-        return false;
     }
 
     /// <summary>

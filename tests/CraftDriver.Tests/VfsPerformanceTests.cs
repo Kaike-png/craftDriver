@@ -53,7 +53,8 @@ public class VfsPerformanceTests
             itens.Add(it);
         }
         foreach (var it in itens) Assert.NotNull(h.Fs.Resolve(h.P(it.Name)));
-        h.Db.Delete(itens[^1].Lid);
+        // apagar não invalida mais o cache (§24.5: o acerto revalida o lid); inserir ainda troca a geração
+        h.Db.Insert(new Item { DriveId = FakeGraph.DriveId, ParentLid = h.Drive.RootLid, Name = "novo" });
         Assert.NotNull(h.Fs.Resolve(h.P("f0")));
         foreach (var campo in new[] { "_resolved", "_posicoesCaminhos" })
         {

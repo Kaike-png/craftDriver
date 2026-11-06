@@ -76,7 +76,7 @@ public sealed class SyncEngine : IDisposable
 
     public void Start()
     {
-        try { Cache.CleanStale(Db.UploadSnapshots(), lid => Db.Get(lid)?.DriveId); }
+        try { Cache.CleanStale(Db.UploadSnapshots(), Db.Get); }
         catch (Exception ex) { Activity.Debug("Limpeza de temporários: " + ex.Message); }
         // o envio só entra na fila no release do fd: escrita com o arquivo ainda aberto quando o app encerrou (desmontagem
         // sem release) ou caiu deixa o item "sincronizando" para sempre — e o delta passaria a ignorar as versões remotas dele
@@ -85,6 +85,7 @@ public sealed class SyncEngine : IDisposable
             Db.Enqueue(driveId, OpKind.Upload, lid);
             Activity.Debug($"Alteração não enviada do encerramento anterior (lid {lid}): envio reenfileirado");
         }
+        ResetRunningOpsOnce();
         ReloadDrives();
         _maintenance ??= Task.Run(MaintenanceLoop);
     }
@@ -96,7 +97,7 @@ public sealed class SyncEngine : IDisposable
         foreach (var (id, ds) in _drives)
             if (!wanted.ContainsKey(id))
             {
-                ds.Stop();
+                StopDrive(id, ds);
                 _drives.TryRemove(id, out _);
             }
         foreach (var (id, dc) in wanted)
@@ -108,7 +109,7 @@ public sealed class SyncEngine : IDisposable
             }
             var ds = new DriveSync(this, dc, _graphFactory(dc));
             _drives[id] = ds;
-            ds.Start(_cts.Token);
+            StartDrive(id, ds); // depois que os laços da instância anterior desta drive terminarem (§23.4)
         }
         ReconcileShared();
     }
@@ -116,7 +117,18 @@ public sealed class SyncEngine : IDisposable
     /// <summary>Remove dados locais de uma drive (ao remover biblioteca/conta).</summary>
     public void ForgetDrive(string driveId)
     {
-        if (_drives.TryRemove(driveId, out var ds)) ds.Stop();
+        if (_drives.TryRemove(driveId, out var ds)) StopDrive(driveId, ds);
+        DeleteForgottenDrive(driveId);
+        ReconcileShared();
+        // Não espera aqui (quem chama pode estar com Db.Lock, que um trabalhador da drive aguarda): o que os laços
+        // antigos ainda gravarem até parar (ex.: commit de envio tardio enfileirando a exclusão do item que sumiu —
+        // que apagaria o arquivo na nuvem se a biblioteca fosse adicionada de novo) é apagado de novo quando terminarem.
+        // Uma nova instância da mesma drive só começa depois disso (StartDrive espera a mesma cadeia).
+        AfterDriveStopped(driveId, () => DeleteForgottenDrive(driveId));
+    }
+
+    void DeleteForgottenDrive(string driveId)
+    {
         foreach (var sr in Db.SharedRoots(driveId)) Cache.DeleteDrive(sr.Key);
         Db.DeleteDriveData(driveId);
         Cache.DeleteDrive(driveId);
@@ -126,7 +138,6 @@ public sealed class SyncEngine : IDisposable
             foreach (var sr in Db.SharedRoots(driveId)) RemoveSharedRootRows(sr);
             Db.DeleteDriveRows(ContainerKey(driveId));
         });
-        ReconcileShared();
     }
 
     public void SyncNow()
@@ -407,7 +418,8 @@ public sealed class SyncEngine : IDisposable
         {
             if (!s.Release()) return;
             if (_streams.TryGetValue(s.Lid, out var cur) && cur == s) _streams.Remove(s.Lid);
-            if (Db.Get(s.Lid) == null) s.DeleteFiles(); // apagado enquanto aberto: os blocos não servem mais
+            // apagado enquanto aberto, ou versão nova na nuvem (sessão desligada): os blocos não servem mais
+            if (s.Detached || Db.Get(s.Lid) is not { } atual || atual.CTag != s.CTag) s.DeleteFiles();
         }
     }
 
@@ -541,7 +553,7 @@ public sealed class SyncEngine : IDisposable
     public void EnforceCacheLimit()
     {
         // órfãos primeiro: não podem fazer o LRU despejar itens válidos para abrir espaço que eles ocupam
-        Cache.DeleteOrphanPartials(lid => Db.Get(lid)?.DriveId);
+        Cache.DeleteOrphanPartials(Db.Get);
         Cache.DeleteOrphanUploads(Db.UploadSnapshots);
         if (Config.CacheLimitMB <= 0) return;
         var limit = Config.CacheLimitMB * 1024 * 1024;
@@ -655,12 +667,19 @@ public sealed class SyncEngine : IDisposable
             foreach (var (key, ds) in _shared)
             {
                 if (rows.TryGetValue(key, out var row) && _drives.ContainsKey(row.HostDriveId)) continue;
-                ds.Stop();
+                StopDrive(key, ds);
                 _shared.TryRemove(key, out _);
                 if (!rows.ContainsKey(key))
                 {
                     Db.DeleteDriveData(key); // o que a varredura possa ter gravado depois da remoção
                     Cache.DeleteDrive(key);
+                    // e o que os laços ainda gravarem até pararem, se a raiz não voltou nesse meio tempo
+                    AfterDriveStopped(key, () =>
+                    {
+                        if (Db.SharedRoots().Any(r => r.Key == key)) return;
+                        Db.DeleteDriveData(key);
+                        Cache.DeleteDrive(key);
+                    });
                 }
             }
             foreach (var row in rows.Values)
@@ -678,9 +697,61 @@ public sealed class SyncEngine : IDisposable
                 };
                 var ds = new DriveSync(this, dc, host.Api, row);
                 _shared[row.Key] = ds;
-                ds.Start(_cts.Token);
+                StartDrive(row.Key, ds);
             }
         }
+    }
+
+    // ---------- ciclo de vida das instâncias de DriveSync (§23.4) ----------
+
+    /// <summary>
+    /// Por drive (ou sub-drive): término dos laços das instâncias paradas + limpezas encadeadas depois delas. Uma
+    /// instância nova da mesma drive só começa quando isto termina — senão ela reivindicava ops que o trabalhador
+    /// antigo ainda executava (envio duplicado) ou gravava sobre dados que a remoção ainda ia apagar.
+    /// </summary>
+    readonly ConcurrentDictionary<string, Task> _stopping = new();
+    int _runningOpsReset;
+
+    /// <summary>
+    /// Ops "running" de um encerramento anterior (queda do processo) voltam a pendentes — só no início do motor: ao
+    /// religar uma drive, os trabalhadores antigos ainda podem estar com elas (são devolvidas por eles ao parar).
+    /// </summary>
+    void ResetRunningOpsOnce()
+    {
+        if (Interlocked.Exchange(ref _runningOpsReset, 1) != 0) return;
+        foreach (var id in Config.Drives.Select(d => d.DriveId).Concat(Db.SharedRoots().Select(r => r.Key)).Distinct())
+            Db.ResetRunningOps(id);
+    }
+
+    /// <summary>Para a instância (sem esperar) e registra o término dos laços dela na cadeia da drive.</summary>
+    void StopDrive(string key, DriveSync ds)
+    {
+        var stopped = ds.Stop();
+        _stopping.AddOrUpdate(key, stopped, (_, prev) => prev.IsCompleted ? stopped : Task.WhenAll(prev, stopped));
+    }
+
+    /// <summary>Executa <paramref name="action"/> quando os laços parados da drive terminarem (na hora, se não há nenhum).</summary>
+    void AfterDriveStopped(string key, Action action)
+    {
+        Task Chain(Task prev) => prev.ContinueWith(_ =>
+        {
+            try { action(); }
+            catch (Exception ex) { Activity.Debug($"Limpeza depois de parar a drive {key}: {ex.Message}"); }
+        }, CancellationToken.None, TaskContinuationOptions.None, TaskScheduler.Default);
+        _stopping.AddOrUpdate(key, _ => Chain(Task.CompletedTask), (_, prev) => Chain(prev));
+    }
+
+    /// <summary>Liga a instância já registrada; se uma anterior da mesma drive ainda está parando, liga depois dela.</summary>
+    void StartDrive(string key, DriveSync ds)
+    {
+        if (!_stopping.TryGetValue(key, out var prev) || prev.IsCompleted)
+        {
+            ds.Start(_cts.Token);
+            return;
+        }
+        Activity.Debug($"[{ds.Config.DisplayName}] esperando a instância anterior terminar antes de religar");
+        // Start é ignorado se esta instância for parada antes (desligada de novo, motor encerrado)
+        prev.ContinueWith(_ => ds.Start(_cts.Token), CancellationToken.None, TaskContinuationOptions.None, TaskScheduler.Default);
     }
 
     public void Dispose() => Stop();
@@ -737,6 +808,8 @@ public sealed class DriveSync
     public TimeSpan MassDeleteWindow { get => _e.Config.MassDeleteWindow; set => _e.Config.MassDeleteWindow = value; }
 
     readonly object _deleteLock = new();
+    long _retencaoGravada = -1;
+    bool _gravacaoRetencaoAgendada;
     readonly Queue<(DateTime at, int n)> _recentDeletes = new();
     long _lastLocalDelete;
 
@@ -797,14 +870,27 @@ public sealed class DriveSync
         }
     }
 
+    readonly object _lifecycle = new();
+    bool _stopRequested;
+    Task _loops = Task.CompletedTask;
+
+    /// <summary>
+    /// Liga os três laços (uma vez só; ignorado depois de <see cref="Stop"/>). Ops "running" de queda anterior são
+    /// devolvidas no início do motor (<see cref="SyncEngine.Start"/>), não aqui: ao religar, os trabalhadores da
+    /// instância anterior ainda podiam estar com elas.
+    /// </summary>
     internal void Start(CancellationToken parent)
     {
-        Db.ResetRunningOps(DriveId); // retomada depois de queda do processo (sessões/snapshots ficam)
-        _cts = CancellationTokenSource.CreateLinkedTokenSource(parent);
-        var ct = _cts.Token;
-        _ = Task.Run(() => RunLoop(DeltaLoop, ct));
-        _ = Task.Run(() => RunLoop(OpsLoop, ct));
-        _ = Task.Run(() => RunLoop(PinLoop, ct));
+        lock (_lifecycle)
+        {
+            if (_stopRequested || _cts != null || parent.IsCancellationRequested) return;
+            _cts = CancellationTokenSource.CreateLinkedTokenSource(parent);
+            var ct = _cts.Token;
+            _loops = Task.WhenAll(
+                Task.Run(() => RunLoop(DeltaLoop, ct)),
+                Task.Run(() => RunLoop(OpsLoop, ct)),
+                Task.Run(() => RunLoop(PinLoop, ct)));
+        }
     }
 
     async Task RunLoop(Func<CancellationToken, Task> loop, CancellationToken ct)
@@ -822,7 +908,23 @@ public sealed class DriveSync
         }
     }
 
-    internal void Stop() => _cts?.Cancel();
+    /// <summary>
+    /// Cancela os laços e devolve a tarefa que termina quando os três (e os trabalhadores da fila) acabarem. Não
+    /// espera: quem chama pode estar com Db.Lock, que um trabalhador aguarda (eventos do motor disparam sob ele).
+    /// </summary>
+    internal Task Stop()
+    {
+        CancellationTokenSource? cts;
+        Task loops;
+        lock (_lifecycle)
+        {
+            _stopRequested = true;
+            cts = _cts;
+            loops = _loops;
+        }
+        cts?.Cancel(); // fora do lock: continuações canceladas podem rodar aqui mesmo
+        return loops;
+    }
 
     public long DownloadBytesPerSecond => _downloadBandwidth.BytesPerSecond;
 
@@ -856,7 +958,7 @@ public sealed class DriveSync
             else
             {
                 var threshold = _e.Config.MassDeleteThreshold;
-                var total = _recentDeletes.Sum(x => x.n);
+                var total = threshold > 0 ? _recentDeletes.Sum(x => x.n) : 0;
                 if (threshold > 0 && total >= threshold)
                 {
                     DeleteHold = true;
@@ -864,13 +966,40 @@ public sealed class DriveSync
                     raise = true;
                 }
             }
-            if (DeleteHold) Db.SetDeleteHold(DriveId, true, HeldDeleteCount);
+            if (DeleteHold) GravarRetencao(agora: raise);
         }
         if (raise)
         {
             Log.Add(ActivityKind.Conflict, $"[{Config.DisplayName}] {HeldDeleteCount} itens foram apagados. As exclusões na nuvem estão retidas até você confirmar.");
             _e.RaiseMassDelete(this);
         }
+    }
+
+    /// <summary>
+    /// Persiste a retenção (sob _deleteLock). Ao entrar em retenção grava na hora; depois o total só muda na memória
+    /// e é gravado no máximo uma vez por segundo — um rm -rf com retenção ativa fazia um UPDATE drives por arquivo.
+    /// </summary>
+    void GravarRetencao(bool agora)
+    {
+        if (agora)
+        {
+            Db.SetDeleteHold(DriveId, true, HeldDeleteCount);
+            _retencaoGravada = HeldDeleteCount;
+            return;
+        }
+        if (_retencaoGravada == HeldDeleteCount || _gravacaoRetencaoAgendada) return;
+        _gravacaoRetencaoAgendada = true;
+        _ = Task.Delay(1000).ContinueWith(_ =>
+        {
+            lock (_deleteLock)
+            {
+                _gravacaoRetencaoAgendada = false;
+                // confirmada/restaurada nesse meio-tempo: quem desfez a retenção já gravou (false, 0)
+                if (DeleteHold && _retencaoGravada != HeldDeleteCount)
+                    try { GravarRetencao(agora: true); }
+                    catch (Exception ex) when (ex is ObjectDisposedException or InvalidOperationException or Microsoft.Data.Sqlite.SqliteException) { } // banco já fechado (encerrando)
+            }
+        }, TaskScheduler.Default);
     }
 
     /// <summary>Item da lista "o que vai ser apagado" (caminho dentro da drive).</summary>
@@ -973,12 +1102,13 @@ public sealed class DriveSync
         {
             var deletes = Db.DeleteOps(DriveId);
             var items = new Dictionary<string, RemoteItem>();
+            var gone = new HashSet<string>(); // já excluídos na nuvem (outro dispositivo): vão para a Lixeira, não voltam
             async Task Fetch(string id, HashSet<string> chain)
             {
                 if (id == (Shared?.RemoteItemId ?? Db.Get(RootLid)?.ItemId) || items.ContainsKey(id)) return;
                 if (!chain.Add(id)) throw new InvalidOperationException("Ciclo nos ancestrais da exclusão a restaurar.");
                 var r = await Api.GetItemAsync(ApiDriveId, id, ct);
-                if (r == null) return; // já excluído por outro dispositivo: não há o que restaurar localmente
+                if (r == null) { gone.Add(id); return; } // já excluído por outro dispositivo: não há o que restaurar localmente
                 items[id] = r;
                 if (r.ParentId != null && Db.GetByRemote(DriveId, r.ParentId) == null)
                     await Fetch(r.ParentId, chain);
@@ -996,10 +1126,16 @@ public sealed class DriveSync
                     {
                         var next = new List<RemoteItem>();
                         foreach (var r in pending)
-                            if (!ApplyRemote(r)) next.Add(r);
+                            if (!ApplyRemote(r, restoring: true)) next.Add(r);
                         if (next.Count == pending.Count) throw new InvalidOperationException("Pasta pai não encontrada ao restaurar exclusões.");
                         pending = next;
                     }
+                    // a exclusão foi feita (em outro dispositivo): fica restaurável na Lixeira como as daqui (§23.15);
+                    // filhos de pasta já excluída vão junto com ela
+                    if (Shared == null)
+                        foreach (var (id, parentRemote, name, isDir) in deletes)
+                            if (id != null && gone.Contains(id) && (parentRemote == null || !gone.Contains(parentRemote)))
+                                Db.AddTrash(DriveId, id, name ?? id, isDir);
                     Db.RemoveDeleteOps(DriveId);
                     Db.SetDeleteHold(DriveId, false, 0);
                 });
@@ -1007,7 +1143,9 @@ public sealed class DriveSync
                 HeldDeleteCount = 0;
                 _recentDeletes.Clear();
             }
-            Log.Add(ActivityKind.Info, $"[{Config.DisplayName}] {deletes.Count} exclusão(ões) cancelada(s); itens restaurados a partir da nuvem");
+            var restored = deletes.Count - deletes.Count(d => d.remoteId != null && gone.Contains(d.remoteId));
+            Log.Add(ActivityKind.Info, $"[{Config.DisplayName}] {deletes.Count} exclusão(ões) cancelada(s): {restored} item(ns) restaurado(s) a partir da nuvem" +
+                                       (restored < deletes.Count ? $"; {deletes.Count - restored} já tinha(m) sido excluído(s) na nuvem por outro dispositivo (na Lixeira)" : ""));
         }
         finally { _mutate.Release(); }
         WakePins();
@@ -1250,7 +1388,9 @@ public sealed class DriveSync
     }
 
     /// <summary>Aplica um item do delta. Retorna false se a pasta pai ainda não é conhecida.</summary>
-    bool ApplyRemote(RemoteItem r, bool replayUpload = false)
+    /// <param name="restoring">Versão da nuvem que volta por recusa/cancelamento de exclusão local (412, "restaurar
+    /// exclusões"): a exclusão dela ainda está na fila e, se o nome estiver ocupado aqui, ela é que fica com nome de conflito.</param>
+    bool ApplyRemote(RemoteItem r, bool replayUpload = false, bool restoring = false)
     {
         if (r.IsRoot)
         {
@@ -1287,6 +1427,9 @@ public sealed class DriveSync
         var ctag = r.CTag ?? r.ETag;
         if (existing == null)
         {
+            // Exclusão local ainda na fila para este id (ex.: commit de um envio cujo arquivo foi apagado no meio): o delta
+            // não o reinsere nem o adota num item novo de mesmo nome — a exclusão o apagaria depois (§23.1).
+            if (!restoring && Db.PendingDeleteFor(DriveId, r.Id)) return true;
             // Eco de um upload novo cujo item local já foi renomeado/movido: o nome congelado identifica o envio,
             // não o nome atual no banco. O commit associará o id ao lid original.
             if (!replayUpload && _uploadNames.FirstOrDefault(x => x.Value.Parent == r.ParentId && x.Value.Name == r.Name) is var uploading && uploading.Key != 0)
@@ -1299,6 +1442,17 @@ public sealed class DriveSync
             if (!replayUpload && clash != null && Db.HasRunningUpload(clash.Lid))
             {
                 Db.DeferUploadDelta(DriveId, clash.Lid, r);
+                return true;
+            }
+            if (restoring && clash is { ItemId: null, LocalOnly: false, IsDir: false } && !r.IsFolder && TryAdoptSameContent(clash, r))
+                return true;
+            // Nome ocupado aqui por quem vai ficar com ele na nuvem — item com id movido/renomeado para ele (Move na fila)
+            // ou, na volta de uma exclusão recusada/cancelada, qualquer item local: a versão da nuvem fica com nome de
+            // conflito (aqui e na nuvem) em vez de duas linhas com o mesmo nome no mesmo pai (§23.3).
+            if (clash != null && !clash.LocalOnly && clash.ItemId != r.Id && !(clash.IsDir && r.IsFolder && clash.ItemId == null)
+                && (clash.ItemId == null ? restoring : HasPendingOp(clash.Lid, OpKind.Move)))
+            {
+                InsertCloudAsConflict(parent, r, ctag);
                 return true;
             }
             if (clash != null && clash.ItemId == null && !clash.LocalOnly)
@@ -1409,6 +1563,25 @@ public sealed class DriveSync
         Db.Update(local); // o envio pendente vira no-op (item limpo)
         Log.Add(ActivityKind.Info, $"'{local.Name}' já estava na nuvem com o mesmo conteúdo: vinculado sem cópia de conflito");
         return true;
+    }
+
+    /// <summary>
+    /// Insere a versão da nuvem com nome de conflito (o item local fica com o nome) e a renomeia também na nuvem: o Move
+    /// leva o nome antigo em ops.name/parent_remote, e quem vai ocupar esse nome espera ele sair da fila
+    /// (<c>StateDb.ClaimOps</c>) — sem isso o envio/Move local daria 409. Sob Db.Lock.
+    /// </summary>
+    void InsertCloudAsConflict(Item parent, RemoteItem r, string? ctag)
+    {
+        var item = new Item
+        {
+            DriveId = DriveId, ItemId = r.Id, ParentLid = parent.Lid, Name = UniqueName(parent.Lid, NamePolicy.ConflictName(r.Name)),
+            IsDir = r.IsFolder, Size = r.IsFolder ? 0 : r.Size, MTime = r.LastModified.ToUnixTimeMilliseconds(),
+            CTime = r.Created.ToUnixTimeMilliseconds(), ETag = r.ETag, CTag = ctag, Hash = r.QuickXorHash,
+        };
+        Db.Insert(item);
+        Db.Enqueue(DriveId, OpKind.Move, item.Lid, parentRemote: r.ParentId, name: r.Name);
+        RecordConflict(item.Lid, r.Name, item.Name, "nome já ocupado aqui por outro item",
+            $"Conflito: '{r.Name}' voltou da nuvem, mas o nome já está ocupado aqui; a versão da nuvem virou '{item.Name}'");
     }
 
     /// <summary>
@@ -1693,7 +1866,7 @@ public sealed class DriveSync
         finally { _mutate.Release(); }
     }
 
-    /// <summary>A Graph recusou o delta por pasta nesta sub-drive (400/404/sem suporte): usa só children.</summary>
+    /// <summary>A Graph recusou o delta por pasta nesta sub-drive (400/403/404/sem suporte): usa só children.</summary>
     bool _folderDeltaUnsupported;
 
     /// <summary>
@@ -1726,7 +1899,9 @@ public sealed class DriveSync
             catch (Exception ex) when (ex is NotSupportedException
                                            || ex is GraphException
                                            {
-                                               Status: HttpStatusCode.BadRequest or HttpStatusCode.NotFound
+                                               // 403: pasta de outro usuário sem permissão para o delta (a listagem
+                                               // por children ainda pode funcionar; se não, ela marca inacessível)
+                                               Status: HttpStatusCode.BadRequest or HttpStatusCode.NotFound or HttpStatusCode.Forbidden
                                                or HttpStatusCode.MethodNotAllowed or HttpStatusCode.NotImplemented
                                            })
             {
@@ -1838,7 +2013,7 @@ public sealed class DriveSync
         }
         finally
         {
-            // Não devolve enquanto houver trabalhadores usando Db/cache: Stop aguarda Busy antes de fechá-los.
+            // Não devolve enquanto houver trabalhadores usando Db/cache: quem encerra espera os laços terminarem antes de fechá-los.
             await Task.WhenAll(running);
         }
     }
@@ -1849,10 +2024,12 @@ public sealed class DriveSync
     async Task ProcessOpAsync(Op op, CancellationToken ct)
     {
         Interlocked.Increment(ref _busy);
+        using var uploadCts = op.Kind == OpKind.Upload ? CancellationTokenSource.CreateLinkedTokenSource(ct) : null;
+        if (uploadCts != null) _uploadCancel[op.Id] = (op.Lid, uploadCts);
         try
         {
             // Upload não prende a aplicação do delta durante a rede: só o commit usa _mutate.
-            if (op.Kind == OpKind.Upload) await ExecuteAsync(op, ct);
+            if (op.Kind == OpKind.Upload) await ExecuteAsync(op, uploadCts!.Token);
             else
             {
                 await _mutate.WaitAsync(ct);
@@ -1863,27 +2040,76 @@ public sealed class DriveSync
             Db.ClearFailures(op.Lid, op.Kind);
             Offline = false;
             AuthRequired = false;
+            Interlocked.Exchange(ref _lastOpOk, Environment.TickCount64);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { Db.ReleaseOp(op.Id); }
+        // pasta de destino excluída (§23.5): volta à fila — item apagado vira no-op; item movido para fora sobe no lugar novo
+        catch (OperationCanceledException) when (_targetDeleted.ContainsKey(op.Id)) { Db.ReleaseOp(op.Id); }
         catch (RetryNowException) { Db.ReleaseOp(op.Id); }
         catch (Exception ex)
         {
             var transient = HandleError(ex, DescribeOp(op));
             if (ex is GraphException { Status: (HttpStatusCode)423 } && op.Attempts + 1 >= LockedAttempts)
                 transient = false;
-            if (transient)
+            var exhausted = transient && ex is GraphException { IsTransient: true } && op.Attempts + 1 >= TransientAttempts
+                            && ServerAnswersOthers();
+            if (exhausted) Log.Add(ActivityKind.Error, $"[{Config.DisplayName}] {DescribeOp(op)}: tentativas esgotadas ({op.Attempts + 1}); vai para Problemas");
+            if (transient && !exhausted)
             {
                 var backoff = TimeSpan.FromSeconds(Math.Min(300, 5 * Math.Pow(2, Math.Min(op.Attempts, 6))));
                 Db.FailOp(op.Id, ex.Message, backoff);
             }
-            else Db.FailPermanently(op, ex.Message);
+            else Db.FailPermanently(op, exhausted ? $"Tentativas esgotadas ({op.Attempts + 1}): {ex.Message}" : ex.Message);
         }
         finally
         {
             _uploadNames.TryRemove(op.Lid, out _);
+            _uploadCancel.TryRemove(op.Id, out _);
+            _targetDeleted.TryRemove(op.Id, out _);
             Interlocked.Decrement(ref _busy);
             WakeOps();
         }
+    }
+
+    /// <summary>
+    /// Teto para erro "transitório" do servidor que só este item recebe (5xx/408/429/401 perene, §22.2): depois dele a
+    /// operação vai para Problemas ("tentativas esgotadas") em vez de ficar invisível na fila segurando Move/SetTime do
+    /// mesmo item e quem espera o nome. Com o backoff de até 5 min, são ~4 h de insistência.
+    /// </summary>
+    const int TransientAttempts = 50;
+
+    long _lastOpOk;
+
+    /// <summary>
+    /// O servidor está atendendo outros pedidos desta drive (delta ou outra operação confirmados na última hora): o erro
+    /// é deste item. Sem isso, throttling da conta inteira, queda do serviço ou credencial vencida mandariam a fila
+    /// toda para Problemas depois do teto.
+    /// </summary>
+    bool ServerAnswersOthers()
+    {
+        var window = TimeSpan.FromHours(1) + TimeSpan.FromSeconds(Math.Max(0, _e.Config.PollIntervalSeconds));
+        var lastOk = Interlocked.Read(ref _lastOpOk);
+        return LastSync is { } sync && DateTime.Now - sync < window
+               || lastOk != 0 && Environment.TickCount64 - lastOk < window.TotalMilliseconds;
+    }
+
+    readonly ConcurrentDictionary<long, (long Lid, CancellationTokenSource Cts)> _uploadCancel = new();
+    readonly ConcurrentDictionary<long, bool> _targetDeleted = new();
+
+    /// <summary>
+    /// Envios em execução cuja pasta de destino saiu do banco (excluída aqui): cancela antes de excluir na nuvem — o que
+    /// já tiver sido gravado vai junto com a pasta para a Lixeira do OneDrive (§23.5). Sob _mutate.
+    /// </summary>
+    void CancelUploadsIntoDeletedFolders()
+    {
+        foreach (var (opId, (lid, cts)) in _uploadCancel)
+            if (_uploadNames.TryGetValue(lid, out var target) && Db.GetByRemote(DriveId, target.Parent) == null)
+            {
+                _targetDeleted[opId] = true;
+                Log.Debug($"[{Config.DisplayName}] envio de '{target.Name}' cancelado: a pasta de destino foi excluída");
+                try { cts.Cancel(); }
+                catch (ObjectDisposedException) { } // o envio terminou nesse meio tempo
+            }
     }
 
     string DescribeOp(Op op)
@@ -1946,11 +2172,13 @@ public sealed class DriveSync
             {
                 var item = Db.Get(op.Lid);
                 if (item == null || item.ItemId != null || item.LocalOnly || !item.IsDir) return;
-                var r = await Api.CreateFolderAsync(ApiDriveId, ParentRemoteId(item), item.Name, ct);
+                var parentRemote = ParentRemoteId(item);
+                var r = await Api.CreateFolderAsync(ApiDriveId, parentRemote, item.Name, ct);
                 lock (Db.Lock)
                 {
                     var cur = Db.Get(op.Lid);
-                    if (cur == null) { Db.Enqueue(DriveId, OpKind.Delete, 0, r.Id); return; }
+                    // pai e nome: quem recriar esse nome espera esta exclusão (§22.3/§23.1)
+                    if (cur == null) { Db.Enqueue(DriveId, OpKind.Delete, 0, r.Id, parentRemote, item.Name, isDir: true); return; }
                     cur.ItemId = r.Id;
                     cur.ETag = r.ETag;
                     Db.Update(cur);
@@ -1964,6 +2192,7 @@ public sealed class DriveSync
                 return;
             case OpKind.Delete:
                 if (op.RemoteId == null) return;
+                CancelUploadsIntoDeletedFolders(); // §23.5: envio de filho já apagado não segura nem sobrevive à exclusão
                 if (op.ParentRemote != null && Db.PendingDeleteFor(DriveId, op.ParentRemote))
                 {
                     Log.Debug($"[{Config.DisplayName}] exclusão de '{op.Name}' coberta pela exclusão da pasta");
@@ -1973,11 +2202,19 @@ public sealed class DriveSync
                 catch (GraphException g) when (g.Status == HttpStatusCode.PreconditionFailed)
                 {
                     // offline o usuário apagou uma versão que conhecia; outro dispositivo a editou desde então — não apaga
-                    // a nova. Reinsere a versão da nuvem e deixa o aviso em Problemas (exclusão recusada).
+                    // a nova. Reinsere a versão da nuvem e deixa o aviso em Problemas (exclusão recusada). Se o nome já
+                    // foi ocupado aqui, a versão da nuvem volta com nome de conflito (§23.3).
                     var remote = await Api.GetItemAsync(ApiDriveId, op.RemoteId, ct);
-                    if (remote != null) Db.InTransaction(() => ApplyRemote(remote));
+                    if (remote != null) Db.InTransaction(() => ApplyRemote(remote, restoring: true));
                     throw new GraphException(HttpStatusCode.PreconditionFailed, g.Code,
                         $"'{op.Name ?? op.RemoteId}' mudou na nuvem depois de ser apagado aqui. A versão mais nova foi preservada; confira antes de excluir de novo.");
+                }
+                // lid 0 = sobra na nuvem de um envio/mkdir cujo item já tinha sido apagado aqui: não era um item que o
+                // usuário viu sincronizado — não entra na Lixeira (§23.5)
+                if (op.Lid == 0)
+                {
+                    Log.Debug($"[{Config.DisplayName}] removida da nuvem a cópia enviada de '{op.Name ?? op.RemoteId}' (apagado durante o envio)");
+                    return;
                 }
                 Log.Add(ActivityKind.Delete, $"Excluído na nuvem (vai para a Lixeira do OneDrive): {op.Name ?? op.RemoteId}");
                 if (Shared == null) Db.AddTrash(DriveId, op.RemoteId, op.Name ?? op.RemoteId, op.IsDir);
@@ -2040,9 +2277,15 @@ public sealed class DriveSync
     async Task UploadAsync(Op op, CancellationToken ct)
     {
         var item = Db.Get(op.Lid);
-        if (item == null || !item.Dirty || item.LocalOnly || item.IsDir) return;
+        if (item == null || !item.Dirty || item.LocalOnly || item.IsDir)
+        {
+            // envio cancelado/interrompido de item que já não precisa subir: a cópia congelada não serve mais
+            if (op.UploadSnapshot != null) try { File.Delete(op.UploadSnapshot); } catch { }
+            return;
+        }
         var parentId = ParentRemoteId(item);
         _uploadNames[op.Lid] = (parentId, item.Name);
+        Db.SetUploadTarget(op.Id, parentId); // exclusão de outra pasta não espera este envio (ClaimOps)
         var path = _e.Cache.PathFor(DriveId, item.Lid);
         if (!File.Exists(path))
         {
@@ -2120,6 +2363,8 @@ public sealed class DriveSync
         catch (GraphException g) when (g.Status == HttpStatusCode.Conflict && item.ItemId == null)
         {
             var same = await RemoteWithSameContentAsync(parentId, item.Name, snap, ct);
+            // id com exclusão na fila (o envio anterior deste nome, apagado no meio): não adota — espera a exclusão (§23.1)
+            if (same != null && Db.PendingDeleteFor(DriveId, same.Id)) throw new RetryNowException();
             if (same != null)
             {
                 Log.Debug($"'{item.Name}' já existia na nuvem com o mesmo conteúdo ({g.Message}): adotado sem cópia de conflito");
@@ -2161,6 +2406,7 @@ public sealed class DriveSync
         catch (Exception ex) when (ex is GraphException { IsTransient: true } || ex is OperationCanceledException || Errors.IsNetworkError(ex, ct))
         {
             keepSnapshot = true; // a próxima tentativa (ou o próximo início do app) retoma com a mesma cópia
+            if (_targetDeleted.ContainsKey(op.Id)) keepSnapshot = false; // sessão era para a pasta excluída (§23.5)
             throw;
         }
         finally
@@ -2190,8 +2436,11 @@ public sealed class DriveSync
                 var cur = Db.Get(item.Lid);
                 if (cur == null)
                 {
-                    // excluído localmente durante o envio
-                    Db.Enqueue(DriveId, OpKind.Delete, 0, r.Id, null, item.Name, etag: r.ETag);
+                    // excluído localmente durante o envio. Com pai e nome: um item novo com esse nome espera a exclusão
+                    // em vez de adotar o id que ela vai apagar (§23.1). Se outro item já adotou o id (409 + mesmo
+                    // conteúdo enquanto esta resposta vinha), o arquivo da nuvem é dele: não apaga.
+                    if (Db.GetByRemote(DriveId, r.Id) == null)
+                        Db.Enqueue(DriveId, OpKind.Delete, 0, r.Id, r.ParentId ?? _uploadNames.GetValueOrDefault(item.Lid).Parent, item.Name, etag: r.ETag);
                     return;
                 }
                 // Delta pode ter inserido o id enquanto a resposta do upload estava a caminho. Junta no lid local
@@ -2351,7 +2600,8 @@ public sealed class DriveSync
             });
             // lote cheio e sem falhas: ainda há o que baixar — continua já (antes esperava 5 min a cada 500).
             // Com falha, espera: um item que sempre falha voltaria no próximo lote e giraria sem parar.
-            if (failures == 0 && !_e.Paused && batch.Count == PinBatchSize) return;
+            // (lote vazio nunca emenda: com tamanho 0 isso virava laço quente)
+            if (failures == 0 && !_e.Paused && batch.Count > 0 && batch.Count == PinBatchSize) return;
         }
         await _pinSignal.WaitAsync(TimeSpan.FromMinutes(5), ct);
         while (_pinSignal.CurrentCount > 0) await _pinSignal.WaitAsync(ct);

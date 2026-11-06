@@ -179,24 +179,29 @@ public sealed class AppConfig
     public int DownloadConcurrency { get; set; } = 4;
     /// <summary>Envios simultâneos por drive (1–16). Só uploads são paralelos; metadados/exclusões são serializados.</summary>
     public int ParallelUploads { get; set; } = 3;
+    // Tamanhos/contagens/intervalos abaixo são limitados no próprio setter (§23.8): vale para o config.json (o
+    // desserializador usa os setters), para a interface e para quem altera o objeto em tempo de execução. Valor fora
+    // da faixa num config.json editado à mão (ex.: DeltaBatchSize 0) quebrava o delta a cada ciclo (Chunk(0)) e
+    // PinBatchSize 0 deixava o laço de fixados girando sem esperar (lote vazio == tamanho do lote).
+    // DownloadConcurrency/ParallelUploads/StreamingBlockKB continuam limitados no uso (ApplyTransferLimits/OpsLoop).
     /// <summary>Ajuste do motor por instância: MaxDownloadResumes (sem estado global entre motores/testes).</summary>
-    public int MaxDownloadResumes { get; set; } = 5;
+    public int MaxDownloadResumes { get; set => field = Math.Clamp(value, 0, 100); } = 5;
     /// <summary>Ajuste do motor por instância: DownloadAttempts (sem estado global entre motores/testes).</summary>
-    public int DownloadAttempts { get; set; } = 3;
+    public int DownloadAttempts { get; set => field = Math.Clamp(value, 1, 100); } = 3;
     /// <summary>Ajuste do motor por instância: SharedPollSeconds (sem estado global entre motores/testes).</summary>
-    public int SharedPollSeconds { get; set; } = 300;
+    public int SharedPollSeconds { get; set => field = Math.Max(0, value); } = 300;
     /// <summary>Ajuste do motor por instância: SharedMaxItems (sem estado global entre motores/testes).</summary>
-    public int SharedMaxItems { get; set; } = 50_000;
+    public int SharedMaxItems { get; set => field = Math.Max(1, value); } = 50_000;
     /// <summary>Ajuste do motor por instância: DeleteQuietMs (sem estado global entre motores/testes).</summary>
-    public int DeleteQuietMs { get; set; } = 3000;
+    public int DeleteQuietMs { get; set => field = Math.Max(0, value); } = 3000;
     /// <summary>Ajuste do motor por instância: UploadSettleMs (sem estado global entre motores/testes).</summary>
-    public int UploadSettleMs { get; set; } = 3000;
+    public int UploadSettleMs { get; set => field = Math.Max(0, value); } = 3000;
     /// <summary>Ajuste do motor por instância: MassDeleteWindow (sem estado global entre motores/testes).</summary>
-    public TimeSpan MassDeleteWindow { get; set; } = TimeSpan.FromMinutes(2);
+    public TimeSpan MassDeleteWindow { get; set => field = value < TimeSpan.Zero ? TimeSpan.Zero : value; } = TimeSpan.FromMinutes(2);
     /// <summary>Ajuste do motor por instância: DeltaBatchSize (sem estado global entre motores/testes).</summary>
-    public int DeltaBatchSize { get; set; } = 32;
+    public int DeltaBatchSize { get; set => field = Math.Clamp(value, 1, 10_000); } = 32;
     /// <summary>Ajuste do motor por instância: PinBatchSize (sem estado global entre motores/testes).</summary>
-    public int PinBatchSize { get; set; } = 500;
+    public int PinBatchSize { get; set => field = Math.Clamp(value, 1, 100_000); } = 500;
 
     /// <summary>Banda de download agregada por drive, em bytes/s. 0 (ou negativo) = ilimitado.</summary>
     public long DownloadBytesPerSecond { get; set; }
@@ -216,7 +221,7 @@ public sealed class AppConfig
     /// Exclusão em massa: se mais itens que isso forem apagados de uma drive de uma vez, as exclusões
     /// ficam retidas até o usuário confirmar (como o aviso do cliente do Windows). 0 = desativado.
     /// </summary>
-    public int MassDeleteThreshold { get; set; } = 50;
+    public int MassDeleteThreshold { get; set => field = Math.Max(0, value); } = 50;
     public bool Paused { get; set; }
 
     /// <summary>

@@ -55,8 +55,12 @@ sealed class KernelNotifications
     void Notificar(Item? antes, Item? depois)
     {
         var lid = (antes ?? depois)!.Lid;
-        var atual = _fs.ItemOfLid(lid); // espera a transação soltar Db.Lock; rollback também é respeitado
         var ino = (ulong)lid + 1;
+        // O kernel não conhece o inode nem o pai (antes ou depois): não há dentry nem página a invalidar, nem
+        // cache negativo do nome. Pular sem SQL — a enumeração inicial de pastas novas gera dezenas de milhares
+        // destes eventos. O pai de antes conta: o item pode ter saído (rename) de uma pasta que o kernel tem.
+        if (!_inodes.Has(ino) && !PaiConhecido(antes) && !PaiConhecido(depois)) return;
+        var atual = _fs.ItemOfLid(lid); // espera a transação soltar Db.Lock; rollback também é respeitado
         var antigo = _inodes.PathOf(ino);
         var novo = atual == null ? null : _fs.PathOfLid(lid);
         var mudouNome = antigo != null && antigo != novo;
@@ -73,6 +77,9 @@ sealed class KernelNotifications
             Conferir(fuse_lowlevel_notify_inval_inode(_session, ino, 0, 0));
     }
 
+    /// <summary>Pai do item tem inode no kernel. Raiz da drive (ParentLid 0) → raiz virtual, sempre conhecida.</summary>
+    bool PaiConhecido(Item? it) => it != null && _inodes.Has((ulong)it.ParentLid + 1);
+
     void Entrada(string path, ulong ino, bool excluir)
     {
         var i = path.LastIndexOf('/');
@@ -84,9 +91,16 @@ sealed class KernelNotifications
             : fuse_lowlevel_notify_inval_entry(_session, parent, nome, n));
     }
 
+    const int ENOTCONN = 107;
+
+    /// <summary>
+    /// Retornos esperados não são erro: ENOENT (o kernel já esqueceu), ENOTEMPTY (notify_delete de pasta com dentry
+    /// filha ainda em uso — o kernel mantém a pasta) e ENOTCONN (montagem já desfeita com fusermount -u).
+    /// </summary>
     static void Conferir(int r)
     {
-        if (r != 0 && r != -Errno.ENOENT) FuseHost.Log?.Invoke($"FUSE invalidação retornou errno {-r}");
+        if (r != 0 && r != -Errno.ENOENT && r != -Errno.ENOTEMPTY && r != -ENOTCONN)
+            FuseHost.Log?.Invoke($"FUSE invalidação retornou errno {-r}");
     }
 
     /// <summary>Desinscreve e junta a thread ANTES de destruir a sessão. Se não sair, a sessão deve ser vazada.</summary>

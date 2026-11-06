@@ -230,14 +230,15 @@ public class FilaA2Tests
         h.Engine.Paused = true;
         var old = h.Engine.Cache.PartialPathFor("removida", 999, "antigo");
         var current = h.Engine.Cache.PartialPathFor("removida", 999, "novo");
-        var other = h.Engine.Cache.PartialPathFor(FakeGraph.DriveId, h.Drive.RootLid, "vivo");
+        // parcial da versão atual de um item vivo (de outra versão também seria órfão: §23.11)
+        var other = h.Engine.Cache.PartialPathFor(FakeGraph.DriveId, h.Drive.RootLid, h.Db.Get(h.Drive.RootLid)!.CTag);
         foreach (var path in new[] { old, old + ".stream", old + ".blocks", current, other }) File.WriteAllText(path, "x");
         h.Engine.Cache.DeleteDrive("removida");
         Assert.All(new[] { old, old + ".stream", old + ".blocks", current }, p => Assert.False(File.Exists(p), p));
         Assert.True(File.Exists(other));
         var dead = h.Engine.Cache.PartialPathFor(FakeGraph.DriveId, 99999, "morto");
         File.WriteAllText(dead, "lixo");
-        h.Engine.Cache.CleanStale([], lid => h.Db.Get(lid)?.DriveId);
+        h.Engine.Cache.CleanStale([], h.Db.Get);
         Assert.False(File.Exists(dead));
         Assert.True(File.Exists(other));
         var orphan = h.Engine.Cache.NewUploadSnapshot(); File.WriteAllText(orphan, "lixo");
@@ -251,11 +252,11 @@ public class FilaA2Tests
         Assert.True(File.Exists(other));
     }
 
+    // §22.2: 401/5xx agora têm teto (50) quando o servidor atende os outros pedidos — ver Rodada3MotorFilaTests.S22_2_*;
+    // falta de rede continua sem teto.
     [Theory]
     [InlineData(0)]
-    [InlineData(401)]
-    [InlineData(503)]
-    public async Task Rede_e_401_nao_viram_permanentes_por_numero_de_tentativas(int status)
+    public async Task Rede_nao_vira_permanente_por_numero_de_tentativas(int status)
     {
         using var h = new Harness();
         h.Remote.UploadError = name => name != "bloqueado" ? null : status == 0

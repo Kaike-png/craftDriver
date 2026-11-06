@@ -219,8 +219,6 @@ public sealed partial class StateDb : IDisposable
         lock (Lock)
         {
             using var cmd = Cmd(sql, args);
-            if (sql.StartsWith("UPDATE items SET drive_id", StringComparison.Ordinal)
-                || sql.StartsWith("DELETE FROM items", StringComparison.Ordinal)) ItemsVersion++;
             cmd.ExecuteNonQuery();
         }
     }
@@ -303,7 +301,7 @@ public sealed partial class StateDb : IDisposable
             }
             catch
             {
-                ItemsVersion++; // caminhos vistos dentro de uma transação abortada não sobrevivem
+                MudouCaminhos(); // caminhos vistos dentro de uma transação abortada não sobrevivem
                 throw;
             }
             // confirmada: cada Insert/Update/Delete de items já incrementou; sem mudança, o cache de caminhos continua válido
@@ -343,9 +341,6 @@ public sealed partial class StateDb : IDisposable
     public List<Item> GetChildren(long parentLid) =>
         Items($"SELECT {Cols} FROM items WHERE parent_lid=$p ORDER BY name", ("$p", parentLid));
 
-    public bool HasChildren(long parentLid) =>
-        Scalar<long>("SELECT EXISTS(SELECT 1 FROM items WHERE parent_lid=$p)", ("$p", parentLid)) != 0;
-
     public long Insert(Item i)
     {
         lock (Lock)
@@ -355,7 +350,7 @@ public sealed partial class StateDb : IDisposable
                 VALUES($drive,$item,$parent,$name,$dir,$size,$mtime,$ctime,$etag,$ctag,$hash,$cached,$dirty,$gen,$pinned,$local,$access,$mode,$namekey);
                 SELECT last_insert_rowid();
                 """, Params(i));
-            ItemsVersion++;
+            MudouCaminhos();
             i.Lid = (long)cmd.ExecuteScalar()!;
             AvisarItem(null, i);
             return i.Lid;
@@ -366,14 +361,20 @@ public sealed partial class StateDb : IDisposable
     {
         lock (Lock)
         {
-            var antes = !DeveNotificar ? null : Get(i.Lid);
+            // Geração dos caches só sobe se mudou o que eles usam (§24.5): caminhos = pasta, nome, tipo, drive;
+            // fixados = também a marca de fixação. write() (MarkDirty), confirmação de envio e LRU não invalidam mais.
+            var antes = Get(i.Lid);
+            if (antes == null || antes.ParentLid != i.ParentLid || antes.Name != i.Name || antes.IsDir != i.IsDir
+                || antes.DriveId != i.DriveId) MudouCaminhos();
+            else if (antes.Pinned != i.Pinned) _geracaoFixados++;
+            var p = Params(i);
             Exec("""
         UPDATE items SET drive_id=$drive,item_id=$item,parent_lid=$parent,name=$name,is_dir=$dir,size=$size,mtime=$mtime,
           ctime=$ctime,etag=$etag,ctag=$ctag,hash=$hash,cached_ctag=$cached,dirty=$dirty,dirty_gen=$gen,pinned=$pinned,
           local_only=$local,last_access=$access,mode=$mode,name_key=$namekey WHERE lid=$lid
-        """, Params(i));
-            if (DeveNotificar && (antes == null || antes.ParentLid != i.ParentLid || antes.Name != i.Name
-                || antes.CTag != i.CTag || antes.Size != i.Size || antes.MTime != i.MTime)) AvisarItem(antes, i);
+        """, p);
+            if (DeveNotificar && antes != null && (antes.ParentLid != i.ParentLid || antes.Name != i.Name
+                || antes.CTag != i.CTag || antes.Size != i.Size || antes.MTime != i.MTime) && !ConfirmacaoDeEnvio(antes, i)) AvisarItem(antes, i);
         }
     }
 
@@ -427,7 +428,10 @@ public sealed partial class StateDb : IDisposable
             if (excluded) Exec("INSERT OR IGNORE INTO excluded(lid, drive_id) VALUES($l, $d)", ("$l", lid), ("$d", driveId));
             else Exec("DELETE FROM excluded WHERE lid=$l", ("$l", lid));
             LoadExcluded();
-            ItemsVersion++; // caminhos já resolvidos podem ter mudado de visibilidade
+            MudouCaminhos(); // caminhos já resolvidos podem ter mudado de visibilidade
+            // §24.6: o kernel descobre na hora (sem esperar o timeout): excluir = a pasta "some" (notify_delete do
+            // caminho antigo); reincluir = o nome passa a existir (invalida um cache negativo).
+            if (DeveNotificar && Get(lid) is { } pasta) AvisarItem(excluded ? pasta : null, pasta);
         }
     }
 
@@ -520,7 +524,7 @@ public sealed partial class StateDb : IDisposable
             Exec("DELETE FROM trash WHERE drive_id=$d", ("$d", driveId));
             Exec("DELETE FROM excluded WHERE drive_id=$d", ("$d", driveId));
             LoadExcluded();
-            ItemsVersion++;
+            MudouCaminhos();
         }
     }
 
@@ -763,22 +767,22 @@ public sealed partial class StateDb : IDisposable
                     // exclusão (que aguarda o período de silêncio) virava 409 e cópia de conflito.
                     if (op.Kind == OpKind.Move || op.Kind == OpKind.Mkdir || (op.Kind == OpKind.Upload && item?.ItemId == null))
                         if (item != null && Get(item.ParentLid)?.ItemId is { } parentRemote
-                            && Scalar<long>("""
-                                SELECT EXISTS(SELECT 1 FROM ops WHERE drive_id=$d AND kind='delete' AND id<$i
-                                  AND parent_remote=$p AND name=$n COLLATE NOCASE)
-                                """, ("$d", driveId), ("$i", op.Id), ("$p", parentRemote), ("$n", item.Name)) != 0)
+                            && NomeRetidoNaNuvem(driveId, op.Lid, parentRemote, item.Name))
                             continue;
                 }
                 if (op.Kind != OpKind.Upload)
                 {
                     // Barreira justa: drena uploads já iniciados, sem deixar uploads mais novos ultrapassarem
-                    // indefinidamente um metadado pronto (rename/mkdir/delete).
-                    if (running + picked.Count > 0) break;
+                    // indefinidamente um metadado pronto (rename/mkdir/delete). Exclusão só espera envio que ainda não
+                    // resolveu a pasta de destino: os demais gravam fora da subárvore excluída (a linha da pasta de destino
+                    // existe) ou dentro dela — esses o motor cancela antes de excluir (§23.5).
+                    if ((op.Kind == OpKind.Delete ? RunningUploadsWithoutTarget(driveId) : running) + picked.Count > 0) break;
                     Exec("UPDATE ops SET state='running' WHERE id=$i", ("$i", id));
                     picked.Add(op);
                     break;
                 }
-                Exec("UPDATE ops SET state='running' WHERE id=$i", ("$i", id));
+                // pasta de destino é resolvida de novo pelo envio (RunningUploadsWithoutTarget)
+                Exec("UPDATE ops SET state='running', parent_remote=NULL WHERE id=$i", ("$i", id));
                 picked.Add(op);
             }
             return picked;
@@ -916,7 +920,6 @@ public sealed partial class StateDb : IDisposable
     /// <summary>Tira da lista (a cópia continua lá).</summary>
     public void DismissConflict(long id) => Exec("DELETE FROM conflicts WHERE id=$i", ("$i", id));
 
-    public long ConflictCount() => ReadScalar("SELECT COUNT(*) FROM conflicts");
 
     public void DismissFailure(long id) => Exec("DELETE FROM failed_ops WHERE id=$i", ("$i", id));
 
@@ -1110,6 +1113,36 @@ public sealed partial class StateDb : IDisposable
             return list;
         }
     }
+
+    /// <summary>
+    /// O nome <paramref name="name"/> em <paramref name="parentRemote"/> ainda está ocupado na nuvem por um item que vai
+    /// liberá-lo: exclusão na fila (em qualquer ordem — a do commit de um envio entra depois do novo envio do mesmo nome),
+    /// exclusão em Problemas cujo item continua fora do banco (espera o usuário resolver; §23.6) ou Move de OUTRO item que
+    /// ainda carrega esse nome na nuvem (versão da nuvem renomeada para nome de conflito; §23.3). Compara como a nuvem
+    /// (<see cref="SameCloudName"/>: maiúsculas fora do ASCII e NFC/NFD). Chamar com <see cref="Lock"/>.
+    /// </summary>
+    bool NomeRetidoNaNuvem(string driveId, long lid, string parentRemote, string name)
+    {
+        using var cmd = Cmd("""
+            SELECT name FROM ops WHERE drive_id=$d AND parent_remote=$p AND name IS NOT NULL
+              AND (kind='delete' OR (kind='move' AND lid<>$l))
+            UNION ALL
+            SELECT f.name FROM failed_ops f WHERE f.drive_id=$d AND f.kind='delete' AND f.parent_remote=$p AND f.name IS NOT NULL
+              AND NOT EXISTS(SELECT 1 FROM items i WHERE i.drive_id=f.drive_id AND i.item_id=f.remote_id)
+            """, [("$d", driveId), ("$p", parentRemote), ("$l", lid)]);
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+            if (SameCloudName(r.GetString(0), name)) return true;
+        return false;
+    }
+
+    /// <summary>Envios em execução que ainda não gravaram a pasta de destino (<see cref="SetUploadTarget"/>).</summary>
+    long RunningUploadsWithoutTarget(string driveId) => Scalar<long>(
+        "SELECT COUNT(*) FROM ops WHERE drive_id=$d AND state='running' AND kind='upload' AND parent_remote IS NULL", ("$d", driveId));
+
+    /// <summary>Pasta remota em que o envio em execução grava (a exclusão de outras pastas não precisa esperá-lo).</summary>
+    public void SetUploadTarget(long opId, string parentRemote) =>
+        Exec("UPDATE ops SET parent_remote=$p WHERE id=$i AND kind='upload'", ("$p", parentRemote), ("$i", opId));
 }
 
 /// <summary>Item que o craftDriver viu ir para a Lixeira da nuvem (excluído aqui ou em outro dispositivo).</summary>

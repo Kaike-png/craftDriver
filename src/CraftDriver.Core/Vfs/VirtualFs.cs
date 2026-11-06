@@ -58,11 +58,6 @@ public sealed class VirtualFs
     readonly ConcurrentDictionary<ulong, long> _dirHandles = new();
     /// <summary>Handles abertos + reservas de abertura em andamento, por item (impede despejo do cache).</summary>
     readonly ConcurrentDictionary<long, int> _openCount = new();
-    /// <summary>
-    /// mtime definido explicitamente (utimens) com o arquivo aberto para escrita — "cp -p", "install -p" e
-    /// "rsync -t" gravam, ajustam a data e só então fecham; o fechamento não pode trocá-la pela hora atual.
-    /// </summary>
-    readonly ConcurrentDictionary<long, long> _mtimeOverride = new();
     readonly ConcurrentDictionary<int, (bool blocked, DateTime at)> _pidCache = new();
     readonly long _rootMtime = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
     long _nextFh;
@@ -167,6 +162,16 @@ public sealed class VirtualFs
                 _lruCaminhos.AddLast(posicao);
                 return Db.Get(lid) is { } hit ? new Node(false, drive, hit) : null;
             }
+            // Pai já resolvido nesta geração (rm -rf, ls -l, find: um lookup por filho): só o último nível. O lid do
+            // pai continua válido sem Get — mudar pasta/nome/exclusão sobe a geração, e apagar a pasta apaga os filhos.
+            if (!includeExcluded && parts.Length >= 2 && path[^1] != '/'
+                && _resolved.TryGetValue((drive.Config.DriveId, path[..path.LastIndexOf('/')]), out var paiLid))
+            {
+                var filho = Db.GetChild(paiLid, parts[^1]);
+                if (filho == null || Db.IsExcluded(filho.Lid)) return null;
+                Lembrar(key, filho.Lid);
+                return new Node(false, drive, filho);
+            }
             var cur = Db.Get(startLid);
             for (var i = 1; i < parts.Length && cur != null; i++)
             {
@@ -176,17 +181,23 @@ public sealed class VirtualFs
             }
             if (cur == null) return null;
             if (includeExcluded) return new Node(false, drive, cur); // não entra no cache dos caminhos visíveis
-            if (_resolved.Count >= LimiteCaminhos)
-            {
-                var antigo = _lruCaminhos.First!.Value;
-                _lruCaminhos.RemoveFirst();
-                _resolved.Remove(antigo);
-                _posicoesCaminhos.Remove(antigo);
-            }
-            _posicoesCaminhos[key] = _lruCaminhos.AddLast(key);
-            _resolved[key] = cur.Lid; // só lid: tamanho/mtime/dirty sempre vêm frescos do banco
+            Lembrar(key, cur.Lid);
             return new Node(false, drive, cur);
         }
+    }
+
+    /// <summary>Guarda o lid do caminho no LRU (sob Db.Lock). Só lid: tamanho/mtime/dirty sempre vêm frescos do banco.</summary>
+    void Lembrar((string drive, string path) key, long lid)
+    {
+        if (_resolved.Count >= LimiteCaminhos)
+        {
+            var antigo = _lruCaminhos.First!.Value;
+            _lruCaminhos.RemoveFirst();
+            _resolved.Remove(antigo);
+            _posicoesCaminhos.Remove(antigo);
+        }
+        _posicoesCaminhos[key] = _lruCaminhos.AddLast(key);
+        _resolved[key] = lid;
     }
 
     /// <summary>NAME_MAX do Linux: 255 BYTES (UTF-8), não caracteres — 128 "á" já passam. O kernel do FUSE só barra acima de 1024.</summary>
@@ -210,12 +221,13 @@ public sealed class VirtualFs
     {
         if (it.IsDir) return new FileAttr(true, 4096, it.MTime, 0, ModeOf(it), it.Lid, Db.FracaoMtime(it.Lid, it.MTime));
         long size = it.Size, blocks = 0;
-        if (SyncEngine.IsContentCurrent(it, _e.Cache))
+        // Mesmo critério de SyncEngine.IsContentCurrent, com um stat só (antes: Exists + File.Exists + Length).
+        if (it.Dirty || it.LocalOnly || it.ItemId == null || (it.CachedCTag != null && it.CachedCTag == it.CTag))
         {
-            var p = _e.Cache.PathFor(it.DriveId, it.Lid);
-            if (File.Exists(p))
+            var arquivo = new FileInfo(_e.Cache.PathFor(it.DriveId, it.Lid));
+            if (arquivo.Exists)
             {
-                size = new FileInfo(p).Length;
+                size = arquivo.Length;
                 blocks = (size + 511) / 512;
             }
         }
@@ -324,7 +336,6 @@ public sealed class VirtualFs
     {
         if (_openCount.AddOrUpdate(lid, 0, (_, v) => Math.Max(0, v - 1)) > 0) return;
         _openCount.TryRemove(new KeyValuePair<long, int>(lid, 0));
-        _mtimeOverride.TryRemove(lid, out _);
     }
 
     /// <summary>Registra o handle de um item já reservado com <see cref="Reserve"/>.</summary>
@@ -612,7 +623,6 @@ public sealed class VirtualFs
         catch (IOException) { return -Errno.EIO; }
         lock (Db.Lock) // a identidade do fd pode mudar na cópia de conflito (MoveOpenHandles, sob este mesmo lock)
         {
-            if (!_mtimeOverride.IsEmpty) _mtimeOverride.TryRemove(h.Lid, out _); // escrita depois do utimens: vale a hora atual
             h.Wrote = true;
             MarkDirty(h.Lid, null); // cada write altera mtime, não só o primeiro
         }
@@ -652,7 +662,6 @@ public sealed class VirtualFs
             catch (IOException) { return -Errno.EIO; }
             return 0;
         }
-        _mtimeOverride.TryRemove(lid, out _);
         var cachePath = _e.Cache.PathFor(item.DriveId, lid);
         try
         {
@@ -858,18 +867,19 @@ public sealed class VirtualFs
     void RemoveItem(Item item)
     {
         var cloudItems = 0;
-        lock (Db.Lock)
+        // Uma transação (rm no meio não deixa metade da subárvore) e CTE recursiva só para pasta (rm -rf: §24.4).
+        Db.InTransaction(() =>
         {
             if (item.ItemId != null && !item.LocalOnly)
                 Db.Enqueue(item.DriveId, OpKind.Delete, item.Lid, item.ItemId, Db.Get(item.ParentLid)?.ItemId, item.Name, item.IsDir);
-            foreach (var x in Db.GetSubtree(item.Lid))
+            foreach (var x in item.IsDir ? Db.GetSubtree(item.Lid) : [item])
             {
                 if (x.ItemId != null && !x.LocalOnly) cloudItems++;
                 Db.RemoveOpsForLid(x.Lid);
                 if (!x.IsDir) _e.Cache.Delete(x.DriveId, x.Lid);
                 Db.Delete(x.Lid);
             }
-        }
+        });
         _e.RecordLocalDeletes(item.DriveId, cloudItems);
         _e.NotifyLocalChange(item.DriveId);
     }
@@ -1014,8 +1024,8 @@ public sealed class VirtualFs
                         target.MTime = src.MTime;
                         target.Mode = src.Mode; // como no rename POSIX: vale o modo do arquivo que chegou
                         Db.Update(target);
-                        if (src.ItemId != null && !src.LocalOnly)
-                            Db.Enqueue(src.DriveId, OpKind.Delete, src.Lid, src.ItemId, null, src.Name);
+                        if (src.ItemId != null && !src.LocalOnly) // pai e nome: recriar a origem espera esta exclusão (§22.3)
+                            Db.Enqueue(src.DriveId, OpKind.Delete, src.Lid, src.ItemId, Db.Get(src.ParentLid)?.ItemId, src.Name);
                         Db.RemoveOpsForLid(src.Lid);
                         Db.Delete(src.Lid);
                         MoveOpenHandles(src.Lid, target.Lid);
@@ -1030,6 +1040,7 @@ public sealed class VirtualFs
             }
 
             var wasLocalOnly = src.LocalOnly;
+            var (oldParentRemote, oldName) = (Db.Get(src.ParentLid)?.ItemId, src.Name); // nome que a exclusão libera na nuvem
             src.ParentLid = dstParent.Lid;
             src.Name = newName;
             src.LocalOnly = newLocalOnly;
@@ -1038,7 +1049,7 @@ public sealed class VirtualFs
             if (!wasLocalOnly && newLocalOnly)
             {
                 // passou a ser só local (ex.: renomeado para nome inválido): remove da nuvem
-                if (src.ItemId != null) Db.Enqueue(src.DriveId, OpKind.Delete, src.Lid, src.ItemId, null, src.Name);
+                if (src.ItemId != null) Db.Enqueue(src.DriveId, OpKind.Delete, src.Lid, src.ItemId, oldParentRemote, oldName, src.IsDir);
                 foreach (var x in Db.GetSubtree(src.Lid))
                 {
                     Db.RemoveOpsForLid(x.Lid);
@@ -1137,8 +1148,6 @@ public sealed class VirtualFs
             // item novo ainda sem id remoto: o envio pendente já leva a data (e reenfileira se ela mudar durante o envio)
             if (!it.LocalOnly && !it.IsDir && it.ItemId != null) Db.Enqueue(it.DriveId, OpKind.SetTime, it.Lid);
         }
-        if (mtimeMs != null && _handles.Values.Any(x => x.Lid == lid && x.Writable)) _mtimeOverride[lid] = mtime;
-        else _mtimeOverride.TryRemove(lid, out _);
         _e.NotifyLocalChange(driveId);
         return 0;
     }

@@ -947,7 +947,7 @@ public sealed class FakeGraph : IGraphApi
         lock (_lock)
         {
             FolderDeltaCalls++;
-            if (!SupportsFolderDelta) throw new GraphException(HttpStatusCode.BadRequest, "invalidRequest", "delta só na raiz (simulado)");
+            if (!SupportsFolderDelta) throw new GraphException(FolderDeltaRefusal, FolderDeltaRefusal == HttpStatusCode.Forbidden ? "accessDenied" : "invalidRequest", "delta por pasta recusado (simulado)");
             if (!_nodes.TryGetValue(itemId, out var folder) || folder.Deleted || ShareOf(folder) == null)
                 throw new GraphException(HttpStatusCode.NotFound, "itemNotFound", "não existe");
             long since = link == null ? 0 : long.Parse(link.Split(':')[2]);
@@ -957,4 +957,7 @@ public sealed class FakeGraph : IGraphApi
             return Task.FromResult(new DeltaPage(items, null, $"fdelta:{itemId}:{_seq}"));
         }
     }
+
+    /// <summary>Status da recusa do delta por pasta quando <see cref="SupportsFolderDelta"/> é false (padrão 400).</summary>
+    public HttpStatusCode FolderDeltaRefusal = HttpStatusCode.BadRequest;
 }

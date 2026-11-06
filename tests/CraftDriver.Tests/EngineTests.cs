@@ -424,7 +424,7 @@ public class EngineTests
         Assert.Equal("escrito sem internet", h.ReadFile("/offline.txt"));
         h.Remote.OfflineMode = false;
         // backoff: força nova tentativa
-        if (h.Db.PeekOp(FakeGraph.DriveId) is { } op) h.Db.FailOp(op.Id, "teste", TimeSpan.Zero); // a fila só avança pela cabeça
+        if (h.Db.PeekOp(FakeGraph.DriveId) is { } op) h.Db.FailOp(op.Id, "teste", TimeSpan.Zero); // a op está em backoff (próxima tentativa no futuro): agenda para já
         h.Settle();
         Assert.Equal("escrito sem internet", h.Remote.ReadText("/offline.txt"));
     }

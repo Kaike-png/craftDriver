@@ -88,6 +88,16 @@ public sealed class InodeTable(Func<string, long?>? stableIdOf = null)
     /// </summary>
     public ulong ReaddirEntry(string path, long? lid, Func<ulong, bool> fits)
     {
+        // As páginas seguintes do readdirplus usam o lid do snapshot do offset 0. Se o caminho já está ligado a OUTRO
+        // inode estável, o item pode ter sido apagado e recriado entre as páginas (e o kernel já fez lookup do novo):
+        // confere o lid atual antes de religar — ligar o lid velho soltaria o inode novo (getattr → ENOENT, §24.7).
+        // Sem resposta do banco, fica a ligação atual. Custo: uma consulta só quando o snapshot discorda da tabela.
+        if (lid is { } snap && path != "/")
+        {
+            ulong atual;
+            lock (_lock) atual = _byPath.TryGetValue(path, out var c) ? c : 0;
+            if (IsStable(atual) && atual != (ulong)snap + 1) lid = stableIdOf?.Invoke(path) ?? (long)atual - 1;
+        }
         var ino = Lookup(path, lid);
         if (fits(ino)) return ino;
         Forget(ino, 1);

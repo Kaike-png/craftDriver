@@ -268,20 +268,25 @@ public static unsafe class FuseHost
     /// <summary>Caminho de um inode; null se o kernel citou um inode que não existe mais (apagado ainda aberto).</summary>
     static string? PathOf(ulong ino) => _inodes.PathOf(ino);
 
-    static bool Nome(IntPtr req, byte* name, out string nome)
+    /// <param name="existente">
+    /// O nome precisa já existir (lookup, unlink, rmdir, origem do rename): bytes que não são UTF-8 nunca foram
+    /// criados aqui, então a resposta é ENOENT — git/find tratam EILSEQ num stat como erro. EILSEQ fica para quem
+    /// cria (create/mkdir/destino do rename): o nome não pode ir para a nuvem.
+    /// </param>
+    static bool Nome(IntPtr req, byte* name, out string nome, bool existente = false)
     {
         nome = "";
         try { nome = S(name); }
-        catch (DecoderFallbackException) { fuse_reply_err(req, Errno.EILSEQ); return false; }
+        catch (DecoderFallbackException) { fuse_reply_err(req, existente ? Errno.ENOENT : Errno.EILSEQ); return false; }
         if (Encoding.UTF8.GetByteCount(nome) <= 255) return true;
         fuse_reply_err(req, Errno.ENAMETOOLONG);
         return false;
     }
 
-    static bool ChildPath(IntPtr req, ulong parent, byte* name, out string? path)
+    static bool ChildPath(IntPtr req, ulong parent, byte* name, out string? path, bool existente = false)
     {
         path = null;
-        if (!Nome(req, name, out var nome)) return false;
+        if (!Nome(req, name, out var nome, existente)) return false;
         var dir = PathOf(parent);
         path = dir == null ? null : InodeTable.Combine(dir, nome);
         return true;
@@ -344,7 +349,7 @@ public static unsafe class FuseHost
     [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
     static void Lookup(IntPtr req, ulong parent, byte* name)
     {
-        if (!ChildPath(req, parent, name, out var p)) return;
+        if (!ChildPath(req, parent, name, out var p, existente: true)) return;
         Handle(req, () => p == null ? -Errno.ENOENT : ReplyEntry(req, p));
     }
 
@@ -410,7 +415,7 @@ public static unsafe class FuseHost
     [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
     static void Unlink(IntPtr req, ulong parent, byte* name)
     {
-        if (!ChildPath(req, parent, name, out var p)) return;
+        if (!ChildPath(req, parent, name, out var p, existente: true)) return;
         Handle(req, () =>
         {
             if (p == null) return -Errno.ENOENT;
@@ -423,7 +428,7 @@ public static unsafe class FuseHost
     [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
     static void Rmdir(IntPtr req, ulong parent, byte* name)
     {
-        if (!ChildPath(req, parent, name, out var p)) return;
+        if (!ChildPath(req, parent, name, out var p, existente: true)) return;
         Handle(req, () =>
         {
             if (p == null) return -Errno.ENOENT;
@@ -437,7 +442,7 @@ public static unsafe class FuseHost
     [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
     static void Rename(IntPtr req, ulong parent, byte* name, ulong newParent, byte* newName, uint flags)
     {
-        if (!ChildPath(req, parent, name, out var from) || !ChildPath(req, newParent, newName, out var to)) return;
+        if (!ChildPath(req, parent, name, out var from, existente: true) || !ChildPath(req, newParent, newName, out var to)) return;
         Handle(req, () =>
         {
             if (from == null || to == null) return -Errno.ENOENT;
@@ -628,6 +633,9 @@ public static unsafe class FuseHost
                         var a = attr;
                         _inodes.ReaddirEntry(path, attr.Lid == 0 ? null : attr.Lid, entryIno =>
                         {
+                            // o snapshot ficou velho (item recriado entre páginas): atributos do item atual
+                            if (a.Lid != 0 && InodeTable.IsStable(entryIno) && entryIno != (ulong)a.Lid + 1 && _fs.GetAttr(path, out var atual) == 0)
+                                a = atual;
                             FillEntry((byte*)ep, entryIno, a);
                             got = fuse_add_direntry_plus(req, (byte*)at, room, (byte*)np, (byte*)ep, next);
                             return got <= room;

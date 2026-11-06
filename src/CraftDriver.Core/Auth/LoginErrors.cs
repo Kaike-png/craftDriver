@@ -53,7 +53,7 @@ public static class LoginErrors
             return new(LoginErrorKind.Declined,
                 "O pedido de acesso do craftDriver foi recusado na página da Microsoft. Para conectar a conta, tente de novo e clique em \"Aceitar\".",
                 detail);
-        if (Aad("AADSTS65001", "AADSTS90094", "AADSTS90095"))
+        if (Aad("AADSTS65001"))
             return AdminConsent(detail);
         if (Aad("AADSTS50020", "AADSTS50034", "AADSTS500200", "AADSTS50177", "AADSTS700016", "AADSTS90072", "AADSTS50128", "AADSTS50059"))
             return new(LoginErrorKind.WrongAccountOrTenant,

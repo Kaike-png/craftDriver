@@ -500,6 +500,7 @@ public sealed class StreamSession
         {
             // descarta antes de avisar: quem reage à mensagem (interface, testes) já encontra os blocos fora
             Discard(gen);
+            _e.Db.AvisarConteudoDescartado(Lid); // sem direct_io o kernel pode ter páginas dos blocos ruins
             _e.Activity.Add(ActivityKind.Error, $"O conteúdo baixado de '{Name}' não confere com a nuvem ({problem}); os blocos foram descartados.");
             return false;
         }

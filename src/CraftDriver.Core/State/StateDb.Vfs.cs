@@ -57,7 +57,7 @@ public sealed partial class StateDb
     {
         lock (Lock)
         {
-            if (_pinnedVersion != ItemsVersion)
+            if (_pinnedVersion != _geracaoFixados)
             {
                 using var cmd = Cmd("""
                     WITH RECURSIVE e(lid) AS (
@@ -72,7 +72,7 @@ public sealed partial class StateDb
                 var set = new HashSet<long>();
                 while (r.Read()) set.Add(r.GetInt64(0));
                 _pinnedVfs = set;
-                _pinnedVersion = ItemsVersion;
+                _pinnedVersion = _geracaoFixados;
             }
             return _pinnedVfs.Contains(lid);
         }
@@ -99,5 +99,47 @@ public sealed partial class StateDb
                 Exec("INSERT OR REPLACE INTO vfs_mtime(lid,ms,nanos) VALUES($l,$m,$n)", ("$l", lid), ("$m", ms), ("$n", nanos));
             }
         }
+    }
+
+    /// <summary>
+    /// Geração do conjunto de fixados (<see cref="IsEffectivelyPinnedVfs"/>): sobe com tudo que muda caminhos
+    /// (<see cref="MudouCaminhos"/>) e também quando só a marca de fixação muda. Ler sob <see cref="Lock"/>.
+    /// </summary>
+    long _geracaoFixados;
+
+    /// <summary>
+    /// Inserção, mudança de pasta/nome/tipo/drive, exclusão seletiva ou rollback: invalida o cache de caminhos do
+    /// FUSE (<see cref="ItemsVersion"/>) e o conjunto de fixados. Apagar um item NÃO precisa: o acerto do cache
+    /// revalida o lid com Get (lid nunca é reaproveitado) e apagar uma pasta apaga a subárvore.
+    /// </summary>
+    void MudouCaminhos()
+    {
+        ItemsVersion++;
+        _geracaoFixados++;
+    }
+
+    /// <summary>
+    /// Confirmação do envio de um arquivo gravado aqui (§22.6): sai de Dirty e só ganha cTag/eTag/id da nuvem, com o
+    /// mesmo tamanho e data locais. O kernel já tem exatamente esse conteúdo (foi ele que gravou): não notificar,
+    /// senão o notify_inval_inode descarta as páginas e atributos do arquivo recém-gravado.
+    /// </summary>
+    static bool ConfirmacaoDeEnvio(Item antes, Item depois) =>
+        antes.Dirty && !depois.Dirty && antes.ParentLid == depois.ParentLid && antes.Name == depois.Name
+        && antes.Size == depois.Size && antes.MTime == depois.MTime;
+
+    /// <summary>
+    /// Blocos da leitura por faixas descartados (hash divergente): o kernel pode ter páginas desse conteúdo no
+    /// cache (sem direct_io). Avisa como mudança de versão — mesmo dentro de um handler FUSE, já que o kernel não
+    /// sabe do descarte — para o notify_inval_inode descartar as páginas.
+    /// </summary>
+    public void AvisarConteudoDescartado(long lid)
+    {
+        if (ItemChanged == null) return;
+        Item? atual;
+        lock (Lock) atual = Get(lid);
+        if (atual == null) return;
+        var antes = atual.Clone();
+        antes.CTag = "\0descartado";
+        ItemChanged?.Invoke(antes, atual);
     }
 }

@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using CraftDriver.Core.Config;
+using CraftDriver.Core.State;
 
 namespace CraftDriver.Core.Sync;
 
@@ -278,9 +279,9 @@ public sealed class ContentCache
     /// Limpeza ao iniciar: temporários de execuções anteriores e cópias de envio que nenhuma operação usa mais.
     /// Downloads parciais ficam (são retomados).
     /// </summary>
-    public void CleanStale(IEnumerable<string> liveSnapshots, Func<long, string?>? driveOfLid = null)
+    public void CleanStale(IEnumerable<string> liveSnapshots, Func<long, Item?>? itemOfLid = null)
     {
-        if (driveOfLid != null) DeleteOrphanPartials(driveOfLid);
+        if (itemOfLid != null) DeleteOrphanPartials(itemOfLid);
         foreach (var f in Directory.EnumerateFiles(TempDir)) try { File.Delete(f); } catch (IOException) { }
         if (!Directory.Exists(UploadsDir)) return;
         var keep = new HashSet<string>(liveSnapshots);
@@ -317,20 +318,25 @@ public sealed class ContentCache
 
     /// <summary>
     /// Apaga downloads parciais cujo item não existe mais (excluído no meio do download, drive removida, banco
-    /// recriado). Eles contavam no limite do cache sem que o LRU pudesse despejá-los: com órfãos perto do limite,
-    /// o LRU apagava todo o cache não fixado a cada passada. <paramref name="driveOfLid"/> devolve a drive do item
-    /// (null = não existe). Devolve os bytes liberados.
+    /// recriado) ou de uma versão (cTag) que não é mais a atual do item — a sessão desligada por versão nova não
+    /// apaga os seus. Eles contavam no limite do cache sem que o LRU pudesse despejá-los: com órfãos perto do limite,
+    /// o LRU apagava todo o cache não fixado a cada passada. <paramref name="itemOfLid"/> devolve o item (null = não
+    /// existe). Devolve os bytes liberados.
     /// </summary>
-    public long DeleteOrphanPartials(Func<long, string?> driveOfLid)
+    public long DeleteOrphanPartials(Func<long, Item?> itemOfLid)
     {
         if (!Directory.Exists(PartialDir)) return 0;
         long freed = 0;
+        var itens = new Dictionary<long, Item?>(); // .stream e .blocks do mesmo lid: uma consulta
         foreach (var f in new DirectoryInfo(PartialDir).EnumerateFiles())
         {
             // {chave da drive}-{lid}-{versão}[.stream|.blocks]
             var parts = f.Name.Split('-', 3);
-            if (parts.Length == 3 && long.TryParse(parts[1], System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var lid)
-                && driveOfLid(lid) is { } drive && DriveKey(drive) == parts[0]) continue;
+            if (parts.Length == 3 && long.TryParse(parts[1], System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var lid))
+            {
+                if (!itens.TryGetValue(lid, out var item)) itens[lid] = item = itemOfLid(lid);
+                if (item != null && DriveKey(item.DriveId) == parts[0] && parts[2].Split('.')[0] == Short(item.CTag ?? "")) continue;
+            }
             try
             {
                 var len = f.Name.EndsWith(StreamSession.DataSuffix, StringComparison.Ordinal) ? StreamSession.StoredBytes(f.FullName) : f.Length;

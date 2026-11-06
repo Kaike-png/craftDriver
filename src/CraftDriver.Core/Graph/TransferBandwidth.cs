@@ -14,6 +14,9 @@ internal sealed class TransferBandwidth(long bytesPerSecond)
     /// <summary>Menor espera que vale a pena pedir ao timer; adiantamentos menores ficam para o próximo pedaço.</summary>
     public static readonly TimeSpan MinSleep = TimeSpan.FromMilliseconds(5);
 
+    /// <summary>Maior espera de uma vez (o limite pode ser retirado durante ela).</summary>
+    static readonly TimeSpan MaxSleepStep = TimeSpan.FromSeconds(1);
+
     /// <summary>Atraso em relação à agenda que ainda é recuperado; acima disso a transferência é tratada como ociosa.</summary>
     public static readonly TimeSpan CatchUpWindow = TimeSpan.FromMilliseconds(100);
 
@@ -22,7 +25,11 @@ internal sealed class TransferBandwidth(long bytesPerSecond)
     /// <summary>Horário (Stopwatch) em que o último byte agendado "pode" ter sido entregue.</summary>
     long _due;
 
-    /// <summary>Limite atual (0 = ilimitado). Pode mudar com transferências em andamento: vale do próximo pedaço em diante.</summary>
+    /// <summary>
+    /// Limite atual (0 = ilimitado). Pode mudar com transferências em andamento: vale da próxima fatia de 16 KiB em
+    /// diante, inclusive no meio de um pedaço (a fatia já agendada com o limite antigo ainda é paga, salvo se o limite for
+    /// retirado: aí ela é liberada na hora).
+    /// </summary>
     public long BytesPerSecond
     {
         get => Interlocked.Read(ref _rate);
@@ -50,9 +57,16 @@ internal sealed class TransferBandwidth(long bytesPerSecond)
         try
         {
             // paga antes de entregar (sem rajada inicial); tempo monotônico, e o atraso do timer não se acumula
-            // porque o alvo é absoluto
+            // porque o alvo é absoluto. Espera em passos de até 1 s: limite retirado (0) no meio libera na hora.
             while (Stopwatch.GetElapsedTime(Stopwatch.GetTimestamp(), target) is var ahead && ahead >= MinSleep)
-                await Task.Delay(ahead < TimeSpan.FromSeconds(60) ? ahead : TimeSpan.FromSeconds(60), ct);
+            {
+                if (!Enabled)
+                {
+                    lock (_lock) _due = Stopwatch.GetTimestamp();
+                    return;
+                }
+                await Task.Delay(ahead < MaxSleepStep ? ahead : MaxSleepStep, ct);
+            }
         }
         catch (OperationCanceledException)
         {
@@ -70,19 +84,36 @@ internal sealed class TransferBandwidth(long bytesPerSecond)
 
 internal sealed class BandwidthContent(byte[] bytes, int count, TransferBandwidth bandwidth) : HttpContent
 {
-    public double PacingSeconds => bandwidth.SecondsFor(count);
+    /// <summary>
+    /// Prazo de inatividade do pedido (definido pelo <see cref="GraphClient"/>): pausado enquanto o limitador dorme,
+    /// rearmado a cada fatia entregue e depois do último byte (espera da resposta). null = sem vigia.
+    /// </summary>
+    public CancellationTokenSource? Watchdog { get; set; }
+    public TimeSpan IdleTimeout { get; set; } = TimeSpan.FromMinutes(10);
+
     protected override bool TryComputeLength(out long length) { length = count; return true; }
     protected override Task SerializeToStreamAsync(Stream stream, TransportContext? context) =>
         SerializeToStreamAsync(stream, context, CancellationToken.None);
     protected override async Task SerializeToStreamAsync(Stream stream, TransportContext? context, CancellationToken ct)
     {
-        using var destination = new BandwidthWriteStream(stream, bandwidth);
+        using var destination = new BandwidthWriteStream(stream, bandwidth, Watchdog == null ? null : Arm);
         await destination.WriteAsync(bytes.AsMemory(0, count), ct);
+        Arm(true); // corpo entregue: o prazo passa a contar a espera da resposta
+    }
+
+    /// <param name="active">true = rede em uso (conta o prazo); false = dormindo no limitador (não conta).</param>
+    void Arm(bool active)
+    {
+        try { Watchdog?.CancelAfter(active ? IdleTimeout : Timeout.InfiniteTimeSpan); }
+        catch (ObjectDisposedException) { /* o pedido já terminou */ }
     }
 }
 
-/// <summary>Limita os bytes entregues ao destino; não fecha o stream do chamador.</summary>
-internal sealed class BandwidthWriteStream(Stream inner, TransferBandwidth bandwidth) : Stream
+/// <summary>
+/// Limita os bytes entregues ao destino; não fecha o stream do chamador. <paramref name="activity"/> (opcional) é
+/// avisado de quando a escrita espera o limitador (false) e quando volta a usar a rede (true).
+/// </summary>
+internal sealed class BandwidthWriteStream(Stream inner, TransferBandwidth bandwidth, Action<bool>? activity = null) : Stream
 {
     public override bool CanRead => false;
     public override bool CanSeek => inner.CanSeek;
@@ -101,7 +132,9 @@ internal sealed class BandwidthWriteStream(Stream inner, TransferBandwidth bandw
         while (!buffer.IsEmpty)
         {
             var count = Math.Min(buffer.Length, 16 * 1024);
+            activity?.Invoke(false);
             await bandwidth.WaitAsync(count, ct);
+            activity?.Invoke(true);
             await inner.WriteAsync(buffer[..count], ct);
             buffer = buffer[count..];
         }
