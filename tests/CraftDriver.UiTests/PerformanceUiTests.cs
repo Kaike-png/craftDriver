@@ -7,6 +7,9 @@ using CraftDriver.Core.Sync;
 
 namespace CraftDriver.UiTests;
 
+// CRAFTDRIVER_HOME é global ao processo: fora da coleção, dois AppHost abriam o mesmo banco ao mesmo tempo
+// ("duplicate column name" na migração, visto no CI)
+[Collection("host-isolado")]
 public class PerformanceUiTests
 {
     static AppHost NewHost()

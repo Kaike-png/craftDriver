@@ -24,6 +24,9 @@ public class TestApp
 }
 
 /// <summary>Renderiza todas as telas offscreen (sem montar nada) e salva PNGs para inspeção.</summary>
+// CRAFTDRIVER_HOME é global ao processo: fora da coleção, dois AppHost abriam o mesmo banco ao mesmo tempo
+// ("duplicate column name" na migração, visto no CI)
+[Collection("host-isolado")]
 public class ScreenTests
 {
     static readonly string Out = Environment.GetEnvironmentVariable("CRAFTDRIVER_UI_OUT") ?? Path.Combine(Path.GetTempPath(), "craftdriver-ui");

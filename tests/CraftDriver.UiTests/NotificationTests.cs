@@ -333,6 +333,9 @@ public class DBusNotificationTests
 }
 
 /// <summary>Notificações do AppHost: exclusão em massa (com ações) e sessão expirada (uma vez por conta).</summary>
+// CRAFTDRIVER_HOME é global ao processo: fora da coleção, dois AppHost abriam o mesmo banco ao mesmo tempo
+// ("duplicate column name" na migração, visto no CI)
+[Collection("host-isolado")]
 public class HostNotificationTests
 {
     sealed record Sent(string Title, string Body, NotificationAction[] Actions);
