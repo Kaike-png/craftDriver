@@ -45,7 +45,7 @@ public:
         bool singleFile = items.size() == 1;
         for (const KFileItem &item : items) {
             const QString path = item.localPath();
-            if (path.isEmpty() || !CraftDriver::insideMount(QDir::cleanPath(path), mounts)) {
+            if (path.isEmpty() || !CraftDriver::insideMountResolved(QDir::cleanPath(path), mounts, &m_canonical)) {
                 return {}; // algum item fora do craftDriver: sem menu
             }
             // status já lido pelo plugin de emblemas (vazio = desconhecido)
@@ -111,6 +111,7 @@ private:
 
     QStringList m_mounts;
     QElapsedTimer m_mountsAge;
+    QHash<QString, QString> m_canonical; // pasta -> realpath (montagem atrás de symlink)
 
     // Binário do CLI: $CRAFTDRIVER_BIN (testes), PATH, ou ~/.local/bin (instalação em modo usuário).
     static QString craftdriverBinary()

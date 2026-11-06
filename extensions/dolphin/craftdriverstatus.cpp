@@ -4,6 +4,8 @@
 #include <QRegularExpression>
 
 #include <cerrno>
+#include <climits>
+#include <cstdlib>
 #include <sys/xattr.h>
 
 namespace CraftDriver
@@ -68,6 +70,40 @@ bool insideMount(const QString &localPath, const QStringList &mounts)
         }
     }
     return false;
+}
+
+bool insideMountResolved(const QString &localPath, const QStringList &mounts, QHash<QString, QString> *dirCache)
+{
+    if (mounts.isEmpty()) {
+        return false;
+    }
+    if (insideMount(localPath, mounts)) {
+        return true;
+    }
+    const int slash = localPath.lastIndexOf(QLatin1Char('/'));
+    if (slash < 0) {
+        return false;
+    }
+    const QString parent = slash == 0 ? QStringLiteral("/") : localPath.left(slash);
+    const QString name = localPath.mid(slash + 1);
+    QString real;
+    if (dirCache && dirCache->contains(parent)) {
+        real = dirCache->value(parent);
+    } else {
+        char buf[PATH_MAX];
+        real = ::realpath(QFile::encodeName(parent).constData(), buf) ? QFile::decodeName(buf) : parent;
+        if (dirCache) {
+            if (dirCache->size() >= 512) {
+                dirCache->clear();
+            }
+            dirCache->insert(parent, real);
+        }
+    }
+    if (real == parent) {
+        return false;
+    }
+    const QString resolved = real.endsWith(QLatin1Char('/')) ? QString(real + name) : QString(real + QLatin1Char('/') + name);
+    return insideMount(resolved, mounts);
 }
 
 QString emblemFor(const QString &status)

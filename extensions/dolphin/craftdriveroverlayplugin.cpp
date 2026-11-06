@@ -10,6 +10,10 @@
 // 10 s enquanto o Dolphin vivesse, ≈ 400 getxattr/s mesmo com as pastas fora de vista. O Dolphin chama
 // getOverlays() de novo a cada overlaysChanged e ao mostrar a pasta, o que renova a entrada. O plugin de ações chama refreshPaths() depois
 // de rodar o CLI para o emblema mudar logo (via propriedade do qApp, sem dependência de link).
+//
+// Só itens dentro de uma montagem do craftDriver (tabela de montagens relida a cada 2 s, como no plugin de ações)
+// vão para a fila: antes todo arquivo de todo disco gerava um getxattr. Entrada com resposta vazia (ex.: vista
+// enquanto o craftDriver ainda montava) é relida no intervalo longo e quando o Dolphin pede de novo.
 #include "craftdriverstatus.h"
 
 #include <KOverlayIconPlugin>
@@ -17,6 +21,7 @@
 #include <QCoreApplication>
 #include <QDateTime>
 #include <QDir>
+#include <QElapsedTimer>
 #include <QHash>
 #include <QPointer>
 #include <QThread>
@@ -44,6 +49,9 @@ public Q_SLOTS:
     void query(const QStringList &paths)
     {
         for (const QString &path : paths) {
+            if (QThread::currentThread()->isInterruptionRequested()) {
+                return; // plugin destruído (ver ~CraftDriverOverlayPlugin)
+            }
             int err = 0;
             const QString status = CraftDriver::readStatus(path, &err);
             Q_EMIT result(path, status, err == ENOENT);
@@ -66,12 +74,14 @@ public:
         , m_maxEntries(envInt("CRAFTDRIVER_OVERLAY_MAX_ENTRIES", 4000))
         , m_activeMs(envInt("CRAFTDRIVER_OVERLAY_ACTIVE_MS", 120000))
     {
-        m_thread.setObjectName(QStringLiteral("craftdriver-overlay"));
+        // Sem dono: se no fim a thread estiver presa num getxattr, ela é vazada (ver o destrutor).
+        m_thread = new QThread;
+        m_thread->setObjectName(QStringLiteral("craftdriver-overlay"));
         m_worker = new CraftDriverStatusWorker;
-        m_worker->moveToThread(&m_thread);
-        connect(&m_thread, &QThread::finished, m_worker, &QObject::deleteLater);
+        m_worker->moveToThread(m_thread);
+        connect(m_thread, &QThread::finished, m_worker, &QObject::deleteLater);
         connect(m_worker, &CraftDriverStatusWorker::result, this, &CraftDriverOverlayPlugin::onResult, Qt::QueuedConnection);
-        m_thread.start();
+        m_thread->start();
 
         m_timer.setInterval(qMin(m_syncingMs, m_idleMs) / 2 + 1);
         connect(&m_timer, &QTimer::timeout, this, &CraftDriverOverlayPlugin::refreshDue);
@@ -88,10 +98,16 @@ public:
         if (qApp && qApp->property("craftdriverOverlayPlugin").value<QObject *>() == this) {
             qApp->setProperty("craftdriverOverlayPlugin", QVariant());
         }
-        m_thread.quit();
-        // Um FUSE travado prenderia a thread num getxattr; não segura o encerramento do Dolphin por isso.
-        if (!m_thread.wait(2000)) {
-            qWarning("craftdriveroverlayplugin: thread de leitura não terminou (FUSE travado?)");
+        m_thread->requestInterruption();
+        m_thread->quit();
+        // Um FUSE travado prenderia a thread num getxattr; não segura o encerramento do Dolphin por isso. Destruir um
+        // QThread ainda rodando é qFatal (o Dolphin abortaria ao fechar): nesse caso a thread é vazada de propósito —
+        // termina sozinha quando o getxattr voltar (o worker vê a interrupção e o finished apaga o worker) ou morre
+        // com o processo. Os resultados não chegam mais aqui: a conexão com este objeto some no ~QObject.
+        if (m_thread->wait(2000)) {
+            delete m_thread;
+        } else {
+            qWarning("craftdriveroverlayplugin: thread de leitura não terminou (FUSE travado?); deixada para trás");
         }
     }
 
@@ -101,6 +117,9 @@ public:
             return {};
         }
         const QString path = QDir::cleanPath(url.toLocalFile());
+        if (!CraftDriver::insideMountResolved(path, mounts(), &m_canonical)) {
+            return {};
+        }
         const qint64 now = QDateTime::currentMSecsSinceEpoch();
         auto it = m_cache.find(path);
         if (it == m_cache.end()) {
@@ -113,6 +132,11 @@ public:
             return {};
         }
         it->lastUsed = now;
+        // resposta vazia (sem xattr ainda, ex.: o craftDriver montava): o Dolphin pediu de novo, relê (com limite)
+        if (it->status.isEmpty() && !it->pending && now - it->lastChecked >= m_syncingMs) {
+            it->pending = true;
+            request({path});
+        }
         return overlaysFor(it->status);
     }
 
@@ -177,8 +201,8 @@ private Q_SLOTS:
         QStringList due;
         for (auto it = m_cache.begin(); it != m_cache.end(); ++it) {
             Entry &e = it.value();
-            if (e.pending || e.status.isEmpty()) {
-                continue; // fora do craftDriver: não relê
+            if (e.pending) {
+                continue;
             }
             const bool syncing = e.status == QLatin1String("Syncing");
             if (now - e.lastUsed > m_activeMs) {
@@ -233,8 +257,21 @@ private:
         }
     }
 
-    QThread m_thread;
+    // Tabela de montagens relida no máximo a cada 2 s (lê o procfs, nunca o FUSE).
+    QStringList mounts()
+    {
+        if (!m_mountsAge.isValid() || m_mountsAge.elapsed() > 2000) {
+            m_mounts = CraftDriver::craftdriverMounts();
+            m_mountsAge.start();
+        }
+        return m_mounts;
+    }
+
+    QThread *m_thread = nullptr;
     QPointer<CraftDriverStatusWorker> m_worker;
+    QStringList m_mounts;
+    QElapsedTimer m_mountsAge;
+    QHash<QString, QString> m_canonical; // pasta -> realpath (montagem atrás de symlink)
     QTimer m_timer;
     QHash<QString, Entry> m_cache;
     const int m_syncingMs;

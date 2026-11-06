@@ -33,12 +33,14 @@ class InstallUca(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.config = Path(self.tmp.name)
         self.uca = self.config / "Thunar" / "uca.xml"
+        self.sysdirs = Path(self.tmp.name) / "xdg-vazio"
 
     def tearDown(self):
         self.tmp.cleanup()
 
     def run_script(self, *args):
-        env = dict(os.environ, XDG_CONFIG_HOME=str(self.config))
+        # XDG_CONFIG_DIRS isolado: o /etc/xdg/Thunar/uca.xml da máquina não pode entrar no teste
+        env = dict(os.environ, XDG_CONFIG_HOME=str(self.config), XDG_CONFIG_DIRS=str(self.sysdirs))
         r = subprocess.run([sys.executable, str(SCRIPT), *args], env=env, capture_output=True, text=True)
         self.assertEqual(r.returncode, 0, r.stderr)
         return r.stdout
@@ -64,6 +66,17 @@ class InstallUca(unittest.TestCase):
     def test_creates_file_when_missing(self):
         self.run_script()
         self.assertEqual([a[0] for a in self.actions()], ["craftdriver-pin", "craftdriver-free", "craftdriver-status", "craftdriver-share", "craftdriver-versions"])
+
+    def test_new_file_keeps_system_default_actions(self):
+        # Sem uca.xml do usuário o Thunar usa o do sistema ($XDG_CONFIG_DIRS/Thunar/uca.xml, ex.: "Abrir terminal
+        # aqui"); criar um arquivo só com as ações do craftDriver esconderia essas ações padrão.
+        sysdir = Path(self.tmp.name) / "xdg-sistema"
+        (sysdir / "Thunar").mkdir(parents=True)
+        (sysdir / "Thunar" / "uca.xml").write_text(EXISTING)
+        self.sysdirs = f"{self.tmp.name}/nao-existe:{sysdir}"
+        self.run_script()
+        self.assertEqual([a[0] for a in self.actions()][0], "1700000000000000-1")
+        self.assertEqual(len(self.actions()), 6)
 
     def test_merge_is_idempotent_and_keeps_user_actions(self):
         self.uca.parent.mkdir(parents=True)

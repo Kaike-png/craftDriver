@@ -65,6 +65,12 @@ ACTIONS = [
 NO_NOTIFY = {"versions"}
 
 SYNCING_POLL_MS = 2000
+# Item que continua "Syncing" (envio grande, ou preso em Problemas): relido a cada 1, 1, 1, 2, 4, 8, 16 e depois
+# 30 ciclos (1 min) — recuo exponencial — e esquecido após SYNCING_EXPIRE_TICKS ciclos (30 min); o emblema volta a ser
+# lido quando o Nautilus pedir de novo (ao reabrir a pasta).
+SYNCING_BACKOFF = (1, 1, 1, 2, 4, 8, 16, 30)
+SYNCING_EXPIRE_TICKS = 900
+CANONICAL_CACHE_MAX = 512
 
 
 def read_status(path):
@@ -107,7 +113,7 @@ def craftdriver_mounts(mounts_file=None):
 
 
 def inside_mount(path, mounts):
-    """O caminho é um ponto de montagem do craftDriver ou fica dentro de um."""
+    """O caminho é um ponto de montagem do craftDriver ou fica dentro de um (comparação textual, sem syscalls)."""
     for mount in mounts:
         root = mount.rstrip("/") or "/"
         if path == root or path.startswith(root.rstrip("/") + "/"):
@@ -173,8 +179,10 @@ class CraftDriverExtension(GObject.GObject, Nautilus.InfoProvider, Nautilus.Menu
         super().__init__()
         self._icon_exists = None
         self._icon_checked = False
-        # Itens "Syncing" vistos: relidos a cada SYNCING_POLL_MS até mudarem (o FUSE não avisa).
-        self._syncing = {}  # caminho -> Nautilus.FileInfo
+        # Itens "Syncing" vistos: relidos (com recuo, ver SYNCING_BACKOFF) até mudarem (o FUSE não avisa).
+        self._syncing = {}  # caminho -> [Nautilus.FileInfo, nº de releituras, ciclo da próxima, ciclo em que entrou]
+        self._tick = 0  # ciclos do timer de SYNCING_POLL_MS
+        self._canonical = {}  # pasta -> pasta canônica (realpath), para montagem atrás de symlink
         self._poll_id = 0
         self._polling = False  # releitura dos "Syncing" em curso na thread
         self._status = {}  # caminho -> último status lido (o menu usa isto; não lê xattr na thread da interface)
@@ -199,10 +207,26 @@ class CraftDriverExtension(GObject.GObject, Nautilus.InfoProvider, Nautilus.Menu
             self._mounts_at = now
         return self._mounts
 
+    def _in_mount(self, path):
+        """Dentro de uma montagem do craftDriver, também quando o caminho passa por um symlink (/proc/mounts traz o
+        caminho canônico; ~/OneDrive -> /data/od). O realpath é da PASTA (cache): um por pasta, não por arquivo."""
+        mounts = self._craftdriver_mounts()
+        if not mounts:
+            return False
+        if inside_mount(path, mounts):
+            return True
+        parent, name = os.path.split(path.rstrip("/") or "/")
+        real = self._canonical.get(parent)
+        if real is None:
+            if len(self._canonical) >= CANONICAL_CACHE_MAX:
+                self._canonical.clear()
+            real = self._canonical[parent] = os.path.realpath(parent)
+        return real != parent and inside_mount(os.path.join(real, name), mounts)
+
     def update_file_info_full(self, provider, handle, closure, file_info):
         path = local_path(file_info)
         # Fora das montagens do craftDriver não há o que ler (antes toda pasta de todo disco ia para a fila).
-        if path is None or not inside_mount(path, self._craftdriver_mounts()):
+        if path is None or not self._in_mount(path):
             return Nautilus.OperationResult.COMPLETE
         # getxattr num FUSE passa pelo processo do craftDriver: lê numa thread única (fila), fora da
         # thread da interface, e completa a operação no loop principal.
@@ -249,7 +273,11 @@ class CraftDriverExtension(GObject.GObject, Nautilus.InfoProvider, Nautilus.Menu
         if emblem:
             file_info.add_emblem(emblem)
         if status == "Syncing":
-            self._syncing[path] = file_info
+            entry = self._syncing.get(path)
+            if entry is None:  # novo: releitura no próximo ciclo; já acompanhado: mantém o recuo
+                self._syncing[path] = [file_info, 0, self._tick + 1, self._tick]
+            else:
+                entry[0] = file_info
             self._ensure_poll()
         else:
             self._syncing.pop(path, None)
@@ -263,9 +291,17 @@ class CraftDriverExtension(GObject.GObject, Nautilus.InfoProvider, Nautilus.Menu
         if not self._syncing and not self._polling:
             self._poll_id = 0
             return False
-        if not self._polling and self._syncing:
+        self._tick += 1
+        for path in [p for p, e in self._syncing.items() if self._tick - e[3] >= SYNCING_EXPIRE_TICKS]:
+            del self._syncing[path]  # preso há muito tempo: para de reler (sem polling perpétuo)
+        due = [p for p, e in self._syncing.items() if e[2] <= self._tick]
+        if not self._polling and due:
             self._polling = True
-            self._queue.put(("poll", list(self._syncing)))
+            for path in due:
+                entry = self._syncing[path]
+                entry[2] = self._tick + SYNCING_BACKOFF[min(entry[1], len(SYNCING_BACKOFF) - 1)]
+                entry[1] += 1
+            self._queue.put(("poll", due))
             self._ensure_worker()
         return True
 
@@ -274,8 +310,9 @@ class CraftDriverExtension(GObject.GObject, Nautilus.InfoProvider, Nautilus.Menu
         for path, status in results:
             if status == "Syncing":
                 continue
-            file_info = self._syncing.pop(path, None)
-            if file_info is not None:
+            entry = self._syncing.pop(path, None)
+            if entry is not None:
+                file_info = entry[0]
                 self._status[path] = status
                 file_info.invalidate_extension_info()  # o Nautilus chama update_file_info de novo
         return False  # GLib.idle_add: não repetir
@@ -287,11 +324,10 @@ class CraftDriverExtension(GObject.GObject, Nautilus.InfoProvider, Nautilus.Menu
         files = args[-1]
         if not files:
             return []
-        mounts = self._craftdriver_mounts()
         paths, statuses = [], []
         for f in files:
             path = local_path(f)
-            if path is None or not inside_mount(path, mounts):
+            if path is None or not self._in_mount(path):
                 return []  # algum item fora do craftDriver: sem menu
             paths.append(path)
             # status dos emblemas (já lido na thread); None = ainda não lido: tudo habilitado

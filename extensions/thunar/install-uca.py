@@ -5,7 +5,8 @@ Uso: install-uca.py [--remove] [--uca CAMINHO] [--command CMD]
   --uca      arquivo de destino (padrão: $XDG_CONFIG_HOME/Thunar/uca.xml)
   --command  troca "craftdriver" no início dos comandos (ex.: ~/.local/bin/craftdriver)
 
-Idempotente: ações com <unique-id> craftdriver-* são substituídas, as outras ficam intactas.
+Idempotente: ações com <unique-id> craftdriver-* são substituídas, as outras ficam intactas. Sem uca.xml do
+usuário, parte do uca.xml do sistema ($XDG_CONFIG_DIRS/Thunar/uca.xml) para não esconder as ações padrão.
 Antes de alterar um uca.xml existente, grava uma cópia em uca.xml.bak-craftdriver.
 O Thunar relê o arquivo ao abrir uma nova janela (ou: thunar -q).
 """
@@ -23,6 +24,15 @@ PREFIX = "craftdriver-"
 def default_uca():
     config = os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")
     return Path(config) / "Thunar" / "uca.xml"
+
+
+def system_uca():
+    """uca.xml que o Thunar usa enquanto o usuário não tem o seu ($XDG_CONFIG_DIRS, padrão /etc/xdg)."""
+    for d in (os.environ.get("XDG_CONFIG_DIRS") or "/etc/xdg").split(":"):
+        p = Path(d) / "Thunar" / "uca.xml" if d else None
+        if p and p.is_file():
+            return p
+    return None
 
 
 def snippet_path():
@@ -57,8 +67,12 @@ def main(argv=None):
         if args.remove:
             print(f"{uca} não existe; nada a remover")
             return 0
-        root = ET.Element("actions")
-        tree = ET.ElementTree(root)
+        # parte do uca.xml do sistema: um arquivo só com as nossas ações esconderia as padrão ("Abrir terminal aqui")
+        system = system_uca()
+        tree = ET.parse(system) if system else None
+        if tree is None or tree.getroot().tag != "actions":
+            tree = ET.ElementTree(ET.Element("actions"))
+        root = tree.getroot()
 
     removed = [a for a in root.findall("action") if ours(a)]
     for a in removed:

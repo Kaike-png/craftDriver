@@ -13,6 +13,7 @@
 #include <KPluginMetaData>
 
 #include <QAction>
+#include <QFileInfo>
 #include <QMenu>
 #include <QSignalSpy>
 #include <QTest>
@@ -78,7 +79,9 @@ private Q_SLOTS:
         m_dir = QDir(m_tmp->filePath(QStringLiteral("mnt")));
         QFile table(m_tmp->filePath(QStringLiteral("mounts")));
         QVERIFY(table.open(QIODevice::WriteOnly));
-        table.write("craftdriver " + QFile::encodeName(m_dir.path()).replace(" ", "\\040") + " fuse.onedrive rw 0 0\n");
+        // caminho canônico, como o kernel escreve no /proc/mounts
+        table.write("craftdriver " + QFile::encodeName(QFileInfo(m_dir.path()).canonicalFilePath()).replace(" ", "\\040")
+                    + " fuse.onedrive rw 0 0\n");
         table.close();
         qputenv("CRAFTDRIVER_MOUNTS_FILE", QFile::encodeName(table.fileName()));
         m_online = TestUtil::touch(m_dir, QStringLiteral("online.txt"));
@@ -138,6 +141,18 @@ private Q_SLOTS:
     }
 
     // Sem o plugin de emblemas (status desconhecido): tudo habilitado, versões só para um arquivo.
+    // §25.8: montagem vista por um link simbólico (~/OneDrive -> /data/od; /proc/mounts traz o canônico): com menu.
+    void mountBehindSymlink()
+    {
+        const QString link = m_tmp->filePath(QStringLiteral("atalho-OneDrive"));
+        QVERIFY(QFile::link(m_dir.path(), link));
+        QCOMPARE(actionsFor({link + QStringLiteral("/online.txt")}).size(), 1);
+        // link que aponta para fora da montagem continua sem menu
+        const QString foraLink = m_tmp->filePath(QStringLiteral("atalho-fora"));
+        QVERIFY(QFile::link(m_tmp->filePath(QStringLiteral("fora")), foraLink));
+        QCOMPARE(actionsFor({foraLink + QStringLiteral("/x.txt")}).size(), 0);
+    }
+
     void unknownStatusEnablesAll()
     {
         QVERIFY(m_plugin);

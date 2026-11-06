@@ -6,6 +6,7 @@
 #include <KPluginMetaData>
 
 #include <QDirIterator>
+#include <QFileInfo>
 #include <QElapsedTimer>
 #include <QIcon>
 #include <QPluginLoader>
@@ -18,7 +19,9 @@ class OverlayTest : public QObject
 {
     Q_OBJECT
     std::unique_ptr<QTemporaryDir> m_tmp;
+    std::unique_ptr<QTemporaryDir> m_other; // fora da montagem do craftDriver
     QDir m_dir;
+    QByteArray m_mountsFile;
     KOverlayIconPlugin *m_plugin = nullptr;
     QHash<QString, QString> m_files; // status → caminho
 
@@ -70,6 +73,17 @@ private Q_SLOTS:
         QVERIFY(TestUtil::setStatus(m_dir.filePath(QStringLiteral("pasta")), QStringLiteral("Folder")));
         m_files.insert(QStringLiteral("Folder"), m_dir.filePath(QStringLiteral("pasta")));
         m_files.insert(QString(), TestUtil::touch(m_dir, QStringLiteral("fora.txt"))); // sem xattr
+
+        // m_dir faz o papel da montagem do craftDriver (tabela de montagens falsa, caminho canônico como o kernel)
+        m_other = TestUtil::makeDir();
+        QVERIFY(m_other->isValid());
+        QFile table(m_other->filePath(QStringLiteral("mounts")));
+        QVERIFY(table.open(QIODevice::WriteOnly));
+        table.write("craftdriver " + QFile::encodeName(QFileInfo(m_dir.path()).canonicalFilePath()).replace(" ", "\\040")
+                    + " fuse.onedrive rw 0 0\n");
+        table.close();
+        m_mountsFile = QFile::encodeName(table.fileName());
+        qputenv("CRAFTDRIVER_MOUNTS_FILE", m_mountsFile);
     }
 
     void emblemTable()
@@ -122,7 +136,7 @@ private Q_SLOTS:
         f.close();
         qputenv("CRAFTDRIVER_MOUNTS_FILE", QFile::encodeName(table));
         const QStringList mounts = CraftDriver::craftdriverMounts();
-        qunsetenv("CRAFTDRIVER_MOUNTS_FILE");
+        qputenv("CRAFTDRIVER_MOUNTS_FILE", m_mountsFile);
         QCOMPARE(mounts, (QStringList{QStringLiteral("/home/u/One Drive"), QStringLiteral("/mnt/cd/")}));
         QVERIFY(CraftDriver::insideMount(QStringLiteral("/home/u/One Drive"), mounts));
         QVERIFY(CraftDriver::insideMount(QStringLiteral("/home/u/One Drive/a/b.txt"), mounts));
@@ -245,6 +259,57 @@ private Q_SLOTS:
         QString st;
         QVERIFY(QMetaObject::invokeMethod(hook, "cachedStatus", Qt::DirectConnection, Q_RETURN_ARG(QString, st), Q_ARG(QString, s.toLocalFile())));
         QCOMPARE(st, QStringLiteral("Available"));
+    }
+
+    // §25.13: pasta vista ANTES de o craftDriver montar (1º getxattr vazio) precisa ganhar emblema quando o
+    // status aparecer — pelo intervalo longo (60 s aqui) ou quando o Dolphin pedir de novo. Hoje a entrada vazia
+    // fica no cache e nunca é relida (refreshDue pula status vazio; getOverlays só lê na 1ª vez).
+    void emptyFirstAnswerIsRereadLater()
+    {
+        QSignalSpy spy(m_plugin, &KOverlayIconPlugin::overlaysChanged);
+        const QString f = TestUtil::touch(m_dir, QStringLiteral("antes-de-montar"));
+        const QUrl u = QUrl::fromLocalFile(f);
+        QCOMPARE(m_plugin->getOverlays(u), QStringList());
+        QTest::qWait(500); // 1ª leitura: sem xattr → vazio, sem sinal
+        QVERIFY(TestUtil::setStatus(f, QStringLiteral("Available"))); // o craftDriver "montou"
+        QElapsedTimer t;
+        t.start();
+        QStringList got;
+        while (t.elapsed() < 65000 && got.isEmpty()) {
+            got = m_plugin->getOverlays(u); // o Dolphin repinta a pasta
+            QTest::qWait(200);
+        }
+        QCOMPARE(got, QStringList{QStringLiteral("emblem-default-symbolic")});
+    }
+
+    // §25.13: arquivo fora das montagens do craftDriver não vai para a fila de getxattr (antes: todo arquivo de
+    // todo disco que o Dolphin mostrava). Aqui ele TEM o xattr: se fosse lido, ganharia emblema.
+    void outsideMountIsNotRead()
+    {
+        QSignalSpy spy(m_plugin, &KOverlayIconPlugin::overlaysChanged);
+        const QString f = TestUtil::touch(QDir(m_other->path()), QStringLiteral("alheio.txt"));
+        QVERIFY(TestUtil::setStatus(f, QStringLiteral("Available")));
+        const QUrl u = QUrl::fromLocalFile(f);
+        QCOMPARE(m_plugin->getOverlays(u), QStringList());
+        QCOMPARE(waitFor(spy, u, 800), QStringList{QStringLiteral("<timeout>")});
+        QCOMPARE(m_plugin->getOverlays(u), QStringList());
+        QString st;
+        QObject *hook = qApp->property("craftdriverOverlayPlugin").value<QObject *>();
+        QVERIFY(QMetaObject::invokeMethod(hook, "cachedStatus", Qt::DirectConnection, Q_RETURN_ARG(QString, st), Q_ARG(QString, f)));
+        QCOMPARE(st, QString());
+    }
+
+    // §25.8: a montagem vista por um link simbólico (~/OneDrive -> /data/od) continua com emblemas.
+    void mountBehindSymlink()
+    {
+        QSignalSpy spy(m_plugin, &KOverlayIconPlugin::overlaysChanged);
+        const QString link = m_other->filePath(QStringLiteral("atalho-OneDrive"));
+        QVERIFY(QFile::link(m_dir.path(), link));
+        const QString f = TestUtil::touch(m_dir, QStringLiteral("via-link.txt"));
+        QVERIFY(TestUtil::setStatus(f, QStringLiteral("OnlineOnly")));
+        const QUrl u = QUrl::fromLocalFile(link + QStringLiteral("/via-link.txt"));
+        QCOMPARE(m_plugin->getOverlays(u), QStringList());
+        QCOMPARE(waitFor(spy, u, 3000), QStringList{QStringLiteral("folder-cloud")});
     }
 };
 

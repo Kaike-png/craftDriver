@@ -1,6 +1,7 @@
 // Leitura do status do craftDriver (xattr do FUSE) e escolha do emblema.
 #pragma once
 
+#include <QHash>
 #include <QString>
 #include <QStringList>
 
@@ -18,8 +19,13 @@ QString readStatus(const QString &localPath, int *err = nullptr);
 // ou $CRAFTDRIVER_MOUNTS_FILE (testes). Lê o procfs, nunca o FUSE — pode rodar na thread da interface.
 QStringList craftdriverMounts();
 
-// O caminho é um ponto de montagem do craftDriver ou fica dentro de um.
+// O caminho é um ponto de montagem do craftDriver ou fica dentro de um (comparação textual, sem syscalls).
 bool insideMount(const QString &localPath, const QStringList &mounts);
+
+// insideMount, também quando o caminho passa por um link simbólico (~/OneDrive -> /data/od): o /proc/mounts traz o
+// caminho canônico. Só quando a comparação textual falha, faz realpath() da PASTA do item (cache por pasta em
+// *dirCache, limitado), nunca do item.
+bool insideMountResolved(const QString &localPath, const QStringList &mounts, QHash<QString, QString> *dirCache);
 
 // Nome do ícone do emblema para um status (vazio = sem emblema, ex. "Folder" ou valor desconhecido).
 QString emblemFor(const QString &status);

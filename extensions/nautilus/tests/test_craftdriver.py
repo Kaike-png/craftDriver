@@ -358,6 +358,49 @@ class WithFiles(unittest.TestCase):
         _GLib.fire_timeouts()
         self.assertEqual(_GLib.timeouts, [])  # nada mais sincronizando: parou o timer
 
+    def test_mount_point_behind_symlink(self):
+        # §25.8: ~/OneDrive é symlink para /data/od; /proc/mounts mostra o caminho canônico (o kernel resolve o
+        # symlink ao montar), mas o Nautilus navega pelo caminho do symlink → hoje não há emblema nem menu.
+        link = self.root / "atalho-OneDrive"
+        link.symlink_to(self.dir, target_is_directory=True)
+        via_link = str(link / Path(self.files["Available"]).name)
+        info = FakeFileInfo(via_link)
+        if self.ext.update_file_info_full("p", object(), "c", info) == _OperationResult.IN_PROGRESS:
+            self._pump()
+        self.assertEqual(info.emblems, [CD.emblem_for("Available")],
+                         "arquivo da montagem acessado pelo symlink ficou sem emblema")
+
+    def test_syncing_forever_is_not_polled_forever(self):
+        # §25.14: item preso em "Syncing" (ex.: envio em Problemas) com o Nautilus aberto por 1 h (1800 ciclos de
+        # 2 s). Hoje: 1 getxattr a cada 2 s, sem teto/expiração/recuo. Esperado: recuo ou expiração (bem menos leituras).
+        reads = []
+        original = CD.read_status
+        CD.read_status = lambda path: reads.append(path) or original(path)
+        try:
+            self._update(self.files["Syncing"])
+            reads.clear()
+            cycles = 1800
+            for _ in range(cycles):
+                if not _GLib.timeouts:
+                    break
+                _GLib.fire_timeouts()
+                if self.ext._polling:
+                    self._pump()
+            self.assertLess(len(reads), cycles // 4,
+                            f"{len(reads)} releituras em {cycles} ciclos: polling perpétuo de item preso em Syncing")
+        finally:
+            CD.read_status = original
+
+    def test_syncing_expires_and_timer_stops(self):
+        # §25.14: depois de SYNCING_EXPIRE_TICKS ciclos o item é esquecido e o timer para (sem polling perpétuo).
+        self._update(self.files["Syncing"])
+        for _ in range(CD.SYNCING_EXPIRE_TICKS + 2):
+            _GLib.fire_timeouts()
+            if self.ext._polling:
+                self._pump()
+        self.assertEqual(self.ext._syncing, {})
+        self.assertEqual(_GLib.timeouts, [])
+
     def test_poll_and_menu_never_read_xattr_on_the_main_loop(self):
         main = threading.get_ident()
         on_main = []
