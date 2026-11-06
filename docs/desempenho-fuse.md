@@ -39,8 +39,11 @@ https://libfuse.github.io/doxygen/ . Na de alto nível a resposta ao kernel só 
 
 - `FuseHost` usa `fuse_session_new`/`fuse_session_loop_mt` e responde com `fuse_reply_*`, que pode ser chamado de
   qualquer thread. `open`, `setattr` com tamanho (truncate), `rename`, `fsync` e `copy_file_range` — os que podem baixar ou ir ao
-  servidor — rodam em `SlowOps` (e o `read` de um bloco ainda não baixado da leitura por faixas, ver `streaming.md`) (threads próprias, sob demanda, até 256) e respondem quando terminam; a thread do
-  loop volta na hora. O resto é local e responde na própria thread.
+  servidor — rodam em `SlowOps` (e o `read` de um bloco ainda não baixado da leitura por faixas, ver `streaming.md`) e respondem quando
+  terminam; a thread do loop volta na hora. `SlowOps` tem duas filas com threads próprias, criadas sob demanda: **rede**
+  (até 256 esperas: o que pode baixar ou falar com o servidor) e **local** (até 16 operações em disco, ex.: `fsync`,
+  `rename` e `open` de arquivo já em cache). Separadas para que 256 reads presos na rede não atrasem as operações locais.
+  O resto (lookup, getattr, readdir, write) responde na própria thread do loop.
 - O `fuse_file_info` da libfuse fica na pilha do loop: o `open` assíncrono responde com uma cópia.
 - `SlowOps` não usa o ThreadPool: os handlers esperam bloqueados o download assíncrono, que precisa do ThreadPool.
 - `InodeTable` traduz inodes ↔ caminhos para o `VirtualFs` (que continua por caminho): contagem de lookups por

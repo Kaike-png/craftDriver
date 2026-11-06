@@ -1,8 +1,10 @@
 # Pendências e melhorias — craftDriver
 
 Rodada 1 (seções 1–11): levantamento sobre a v0.1.4 (7,5 k LOC, 40 testes) — quase tudo feito, notas "**Feito:**" em cada item.
-Rodada 2 (seções 12–19): novo levantamento sobre a árvore atual (26 k LOC, 0 avisos, 238 + 118 testes verdes, nada commitado
-desde `fb03c53`). Ordenado por consequência. `arquivo:linha` conferidos na data; deslocam com edições. **HIPÓTESE** = não reproduzido.
+Rodada 2 (seções 12–21): novo levantamento sobre a árvore atual (26 k LOC, 0 avisos, 238 + 118 testes verdes, nada commitado
+desde `fb03c53`). Rodada 3 (seções 22–27; **concluída em 2026-11-06** — notas "**Feito (rodada 3)**" ao fim das seções 22–25; abertos: §24.9, §24.10 e o 1º push para o CI): verificação das notas "Feito" da rodada 2 + mecanismos novos (33 k LOC, 0 avisos,
+361 + 171 testes verdes, HEAD `933f0fa`, 5 commits ainda não enviados → o CI novo nunca rodou).
+Ordenado por consequência. `arquivo:linha` conferidos na data; deslocam com edições. **HIPÓTESE** = não reproduzido.
 Marque `[x]` ao concluir.
 
 **Rodada 2 concluída em 2026-11-06** (notas "**Feito (rodada 2)**" ao fim de cada seção 12–19): os 88 itens tiveram a
@@ -787,10 +789,275 @@ informativa). Não verificado: o CI novo só roda no próximo push.
   `Unreserve`, respostas FUSE (cada caminho responde uma vez), `Unmount`, notificações D-Bus, `TrayHostProbe`,
   `WindowPlacement`, CI (permissões mínimas, gating, artefatos).
 
-## Ordem sugerida (rodada 2)
+## Ordem sugerida (rodada 2 — concluída)
 
-1. §12 inteira (perda de dados; os 4 primeiros têm correção pequena e mecanismo confirmado).
-2. §15.1–15.4 (crash do "Entrar novamente", tratador global, IPC cedo, SIGTERM) + §19.1 (`install.sh`).
-3. §13.1–13.4 (`_mutate` no upload → destrava uploads paralelos; teto de tentativas; parciais órfãos).
-4. §14.1–14.2 (InodeTable) + §16 índices e cache negativo.
-5. §19 documentação (README, metainfo, checks de release).
+~~1. §12 2. §15.1–15.4 + §19.1 3. §13.1–13.4 4. §14.1–14.2 + §16 5. §19~~
+
+---
+
+# Rodada 3
+
+Verificação das notas "Feito" da rodada 2 contra o código + auditoria dos mecanismos novos. As notas conferidas por mim
+batem (install.sh, README, sinais, CrashGuard, flock, `ApiDriveId`, Move `fail`, invalidação ativa, `pragma_table_info`,
+deps `libssl`/`krb5`, versão 0.2.0 coerente). O que segue é o que ainda diverge ou é novo.
+
+## 22. Contradições com as notas "Feito" (doc drift)
+
+- [x] **Painel "Envio parado" tem premissa obsoleta** — `MainViewModel.cs:224-227,592-611`, `MainWindow.axaml:111`: dizem "a fila
+  anda só pela cabeça; nada atrás dela anda" e mostram "Esperando atrás dela: N", mas `ClaimOps` (`StateDb.cs:733`) reivindica
+  qualquer op com `next_try<=now` — só mkdir pendente e metadado em execução bloqueiam. Um upload em backoff aparece como
+  "fila parada" enquanto os outros sobem. `Secao18UiTests.cs:263-294` passa porque não liga o motor; CHANGELOG "[Não
+  lançado]" e `EngineTests.cs:427` repetem a afirmação. Correção: listar "falhas aguardando nova tentativa" e só chamar
+  "parada" quando a op bloqueia dependentes (mkdir pendente / `DeleteHold`), com contagem real.
+- [x] **§13.2 "após N tentativas → FailPermanently" vale só para 423** (`SyncEngine.cs:1847,1872`); 5xx/408/429/401 continuam sem
+  teto por decisão registrada só no comentário `:1846`. Um 500 perene de um item fica invisível (não entra em Problemas) e
+  segura Move/SetTime do mesmo lid e esperas por nome. Sugestão: teto alto (50) com "tentativas esgotadas".
+- [x] **§12 "esperam a exclusão do mesmo nome na mesma pasta"** só vale para Deletes com `parent_remote`; os quatro `Enqueue(Delete)`
+  sem pai (`VirtualFs.cs:1018,1041`, `SyncEngine.cs:1953,2194`) escapam da espera (ver §23.1). E a comparação é `COLLATE
+  NOCASE` (ASCII, `StateDb.cs:768`) enquanto o resto do motor usa `SameCloudName` (Unicode).
+- [x] **§13.14 "throttling compartilhado por conta"**: 503 em pedido não idempotente (`restoreVersion`, PUT vazio) sobe sem
+  `Throttle.Block` (`GraphClient.cs:99` exige `idempotent || 429`); após a 5ª tentativa o 429/503 vira exceção também sem
+  `Block` → a conta não é marcada bloqueada justamente quando o servidor mais insiste.
+- [x] **§16 "cada getattr de arquivo em cache = 3 stat()"** continua 3 (`VirtualFs.cs:213-218`: `cache.Exists` + `File.Exists` +
+  `FileInfo.Length`). **§16 `ApplyRemote` só grava o que mudou** — corrigido só do lado remoto: todo `write()` local faz
+  `MarkDirty`→`Db.Update` (`VirtualFs.cs:617,507`) → `ItemsVersion++` (`StateDb.cs:222-223`) → LRU de caminhos zerado e CTE
+  de fixados refeita no próximo `getxattr`. `cp` de 1 GiB = ~1.000 invalidações globais. `Resolve_repetido…` só exercita leitura.
+- [x] **§18 "permite timeouts maiores"**: produção continua com 1 s (`FuseHost.cs:885`); só o teste usa 60 s. **§18 "handler local
+  não reinvalida"**: a confirmação do upload (`SyncEngine.cs:2232-2242`, `Update` fora de `MutacaoLocal`) dispara
+  `notify_inval_inode` para todo arquivo enviado — descarta páginas/atributos do arquivo recém-gravado. Inofensivo, mas é o
+  "reenviar notify" que a nota diz evitar.
+- [~] **§17 "código morto removido"** — continuam: `StateDb.ConflictCount` (:918), `StateDb.PeekOp` (:700, só testes; duplica
+  `ReadOp` :788), `StateDb.HasChildren` (:345), `ContentCache.TotalBytesAsync` (`Support.cs:361`), `GraphDrive.OwnerName`
+  (`Models.cs:73`), `GraphClient.ParseCanWrite` (:630, zero usos), `fields` (:200) duplica `ItemFields` (:600),
+  `LoginErrors.cs:50/:56` testam `AADSTS90094/90095` duas vezes, `AppHost.CreateAsync()` sem parâmetros, `App.HostOrNull`.
+  Novo estático mutável: `AuthService.HttpClientFactory` (`:49`). `_mtimeOverride` (`VirtualFs.cs:65,327,615,655,1140`) só é
+  escrito, nunca lido — estado morto. Comentário `SyncEngine.cs:1841` "Stop aguarda Busy": nada aguarda `Busy`.
+- [x] `docs/inicio-e-janela.md:17-18` ainda diz "o socket de IPC só abre depois do AppHost; abrir o app de novo durante a espera
+  inicia uma segunda instância" — contradiz §15.3. `docs/desempenho-fuse.md` não lista `copy_file_range`/fila local dos SlowOps.
+- [x] **§15.4 SIGTERM** só vale depois de `OnShutdownSignal` definido (`App.axaml.cs:67`; `Program.cs:345` no headless, após a
+  espera do chaveiro): sinal durante a espera → morte sem `finally` (socket fica). Inócuo; a nota não ressalva.
+- [x] `packaging/install-user.sh:53-60` "Exec com caminho absoluto" vale só para os 2 `.desktop` reescritos; PCManFM
+  (`TryExec=craftdriver`) e Thunar (`uca.xml`) continuam exigindo `~/.local/bin` no PATH.
+- [x] `PRAGMA user_version` nunca é gravado (a §17 o citava como alternativa).
+
+**Feito (rodada 3, §22):** painel da fila reescrito para a fila paralela (`StateDb.QueueWaits`, `StateDb.Painel.cs`): "Falhas
+aguardando nova tentativa" (neutro) e "Envio parado" só quando a op segura dependentes (mesmo item, filhos de mkdir,
+mesmo nome atrás de exclusão em backoff, retida ou em Problemas). Teto de 50 tentativas para 5xx/408/429/401 (§23.6).
+Deletes com pai+nome em todos os pontos e espera por nome Unicode (§23.1/23.2). Throttle.Block em todo 429/503 (§22.4).
+getattr em cache = 1 stat e write não invalida mais o cache de caminhos (§24.5). Confirmação do envio não reinvalida o
+inode (só quando sai de Dirty com tamanho/mtime iguais); o timeout de 1 s em produção fica (a invalidação ativa cobre o
+remoto). Código morto removido: `ConflictCount`, `HasChildren`, `ParseCanWrite`, `fields` duplicado, `AADSTS9009x`
+repetido, `_mtimeOverride`, `HostOrNull`, comentário do `Busy`; **ficam** (só testes/informativo): `PeekOp`,
+`AppHost.CreateAsync()`, `TotalBytesAsync`, `GraphDrive.OwnerName`, `AuthService.HttpClientFactory`. Docs
+`inicio-e-janela.md` (instância única) e `desempenho-fuse.md` (duas filas do SlowOps; `copy_file_range` já estava).
+SIGTERM registrado antes da espera do chaveiro. `install-user.sh` reescreve PCManFM com caminho absoluto e passa
+`--command` ao Thunar. `PRAGMA user_version`: não adotado (migrações por `pragma_table_info`), nota da §17 obsoleta.
+
+## 23. Bugs — motor e fila
+
+- [x] **Delete sem `parent_remote` escapa da espera por nome → adoção + exclusão do mesmo id** (HIPÓTESE por leitura, mecanismo
+  confirmado) — upload de X em voo; `rm X`; recriar X (upload2 pendente); upload1 commita → `Enqueue(Delete, 0, R,
+  parent=null)` (`SyncEngine.cs:2194`) com id > upload2 e sem pai → upload2 não espera → 409 → `RemoteWithSameContentAsync`
+  adota R se o conteúdo for igual → Delete(R) roda → delta traz exclusão de R → `RemoveLocal` apaga o X novo (recuperável na
+  Lixeira). Conteúdo diferente → "X (conflito)" na nuvem. Mesma classe em `VirtualFs.cs:1018,1041` e `SyncEngine.cs:1953`.
+  Correção: `parentRemote`/`name` em todos os `Enqueue(Delete)` e tirar `id<$i` da espera (ou comparar `created`).
+- [x] Espera por nome com `COLLATE NOCASE` ASCII (`StateDb.cs:768`): `rm Ação` + criar `AÇÃO` → 409 → cópia de conflito
+  desnecessária. Usar a chave de nome Unicode (`SameCloudName`) na coluna `ops.name`.
+- [x] **412 na exclusão reinsere item com nome já ocupado por `ItemId!=null`** (`SyncEngine.cs:1973-1975` → `ApplyRemote :1308-1321`,
+  clash não tratado; `items` sem índice único em parent+name): duas linhas com o mesmo nome no mesmo pai até o Move dar 409;
+  `readdir` mostra duplicata. Mesmo efeito em `RestoreDeletesAsync` com Move pendente sobre o nome.
+- [x] **Corrida `ReloadDrives`/`ForgetDrive` × workers vivos** (HIPÓTESE): `Stop()` só cancela (`:96-112`); novo `DriveSync` faz
+  `ResetRunningOps` e reivindica ops que o worker antigo ainda libera (`ReleaseOp :1867`) → dois envios do mesmo op; em
+  `ForgetDrive` um commit tardio enfileira `Delete` para drive removida (linha órfã em `ops` → status "sincronizando" eterno).
+- [x] Delete de pasta com upload de filho em voo: espera o upload de GBs drenar em vez de cancelá-lo (`VirtualFs.cs:864-870`,
+  `:1776`); depois `AddTrash` + "Excluído na nuvem" para o 404 engolido (`:1979-1980`) → entrada fantasma na Lixeira local.
+- [x] Exclusão com erro "transitório" perene (5xx) ou sob `DeleteHold`: Move/mkdir/upload do mesmo nome esperam indefinidamente
+  sem aparecer em Problemas (consequência de §22.2 + espera por nome).
+- [x] Move: `MoveAsync` não manda `If-Match` (412 nunca ocorre); Move permanente-falho (400/403) deixa `src` renomeado só
+  localmente e o destino já na Lixeira, sem Problemas mencionar o destino excluído. Aceitável; documentar.
+- [x] **Config sem validação**: `DeltaBatchSize`/`PinBatchSize`/`DownloadAttempts` ≤ 0 em `config.json` → `pending.Chunk(0)`
+  (`SyncEngine.cs:1203/1673/1748`) lança `ArgumentOutOfRangeException` a cada ciclo de delta; `PinnedNeedingDownload(…, 0)`;
+  `attempt++ < 0`. Só `DownloadConcurrency`, `ParallelUploads` e `StreamingBlockKB` têm `Clamp`. `AppConfig.SchemaVersion`
+  continua 1 apesar dos campos novos (aditivo; versão antiga descarta ao salvar).
+- [x] Delta por pasta (sub-drives pessoais): 403 não cai para `children` (`SyncEngine.cs:1726-1731` só 400/404/405/501) → erro
+  não transitório a cada poll. HIPÓTESE no status real. `_folderDeltaUnsupported` só em memória (1 pedido 400 por início).
+- [x] Mudança do limite de upload não vale "do próximo pedaço": `ConfigureUploadBandwidth` (`GraphClient.cs:30-31`) troca o
+  objeto; o `BandwidthContent` do pedaço em voo (10 MiB) segura o antigo (com 100 KB/s, o novo só vale após ~100 s).
+- [x] Streaming: descarte de blocos corrompidos (`Streaming.cs:498-503`) sem `notify_inval_inode` (só dispara em mudança de
+  cTag/mtime/size) → sem `direct_io` (libfuse < 3.17.3) páginas ruins ficam no page cache. HIPÓTESE. Sessão desligada por cTag
+  novo não libera `.stream/.blocks` da versão velha até a próxima abertura do lid (`Detach :213-222`); `DeleteOrphanPartials`
+  não olha versão.
+- [x] `ContentCache.DeleteDrive` usa `DriveKey(driveId)-*` → parciais das sub-drives não são apagados ao remover a hospedeira
+  (só `DeleteOrphanPartials` no próximo início). HIPÓTESE: não verificado se o motor chama `DeleteDrive` por sub-drive.
+- [x] Cache de token: 401 concorrente pode forçar 2 renovações (`AccessTokenCache.cs:31-41`, `seen` não é o snapshot do pedido
+  que falhou). Raro. `GraphThrottle.WaitAsync:35` com `Retry-After` > 24,8 dias → `ArgumentOutOfRangeException` (improvável).
+- [x] Op em backoff (`attempts>0`) não coalesce → cada `release` durante backoff acrescenta uma op (viram no-op). Ruído.
+- [x] `RestoreDeletesAsync` com 404 (item apagado por outro dispositivo): ignora, não registra em `trash`. Menor.
+
+**Feito (rodada 3):** testes RED em `Rodada3MotorFilaTests`/`Rodada3MotorRedeTests`, cada correção provada por mutação.
+23.1: Delete do commit leva pai+nome e não apaga id adotado; espera por nome sem `id<$i` (`NomeRetidoNaNuvem`); o delta
+não adota/insere id com Delete pendente; Deletes de rename/mkdir com pai e nome ANTIGOS. 23.2: `SameCloudName`.
+23.3: versão da nuvem volta com nome de conflito + Move que guarda o nome (decisão do usuário). 23.4: `DriveSync.Stop()`
+devolve a Task dos laços; religar/ForgetDrive esperam o antigo; `ResetRunningOps` só no `SyncEngine.Start`; ForgetDrive
+apaga de novo após os laços pararem. 23.5: Delete só espera envio sem destino gravado (`SetUploadTarget`); envio para
+pasta apagada é cancelado; Delete `lid==0` não vai à Lixeira. 23.6: teto 50 (só se o servidor atende outros pedidos);
+exclusão em Problemas segura o nome até o usuário resolver (decisão do usuário; descartar acorda a fila).
+23.7: só documentado (If-Match em Move daria 412 falso: eTag de pasta muda com filhos). 23.8: clamp no setter do
+AppConfig (lotes, tentativas, prazos) + PinLoop não emenda lote vazio. 23.9: 403 cai para children. 23.10: limite muda o
+objeto existente + timeout por inatividade. 23.11: parciais de cTag velho apagados; `.stream/.blocks` soltos ao fechar a
+sessão desligada; inval após bloco corrompido. 23.12 e 23.14: **refutados** (defesa dupla no ForgetDrive/ReconcileShared;
+backoff coalesce em no máximo 1 op extra). 23.13: renova só se o token que falhou ainda é o atual; esperas de no máximo
+1 dia. 23.15: 404 ao restaurar vai para a Lixeira. **Parcial:** exclusões antigas no banco sem pai/nome só têm o guarda
+do 409; Move/mkdir ainda esperam todos os envios em execução.
+
+## 24. Bugs — FUSE/VFS
+
+- [x] **SlowOps: wakeup perdido no limite da fila** — `SlowOps.cs:31-47` × `:56-70`. `Run` enfileira, vê `_idle==0`, bate no limite
+  (16 local / 256 rede) e retorna; se um worker acabou de falhar `TryDequeue` e ainda não fez `_idle++`, o trabalho fica na fila;
+  o worker espera 30 s e **sai sem reler a fila**. O `fuse_req` (open/fsync/rename) fica sem resposta até a próxima operação na
+  mesma fila. Janela de ns; consequência é syscall pendurada. Correção: após `_idle++` (e após o timeout) conferir
+  `!_queue.IsEmpty`.
+- [x] **Invalidação ativa — tempestade na enumeração**: `Notificar` faz `ItemOfLid` + `PathOfLid` (1 SELECT por nível, sob
+  `Db.Lock`, `VirtualFs.cs:92-113`) para TODO Insert/Update antes de saber se o kernel conhece o inode ou o pai
+  (`KernelNotifications.cs:58-61`); fila `BlockingCollection` sem limite. 50 k itens × profundidade ≈ 200–300 k SELECTs na
+  thread `fuse-notify` concorrendo com a enumeração. HIPÓTESE no custo. Saída: `parentIno = ParentLid+1`; se `!Has(ino) &&
+  !Has(parentIno)` nem calcular caminho. cTag de pasta muda em todos os ancestrais → `notify_inval_inode` em cada pasta.
+- [~] Invalidação ativa — stalls: `notify_inval_entry/delete` bloqueiam em `inode_lock(parent)` enquanto um request relacionado
+  estiver pendente no daemon (`rename` em SlowOps baixando, `setattr` com tamanho, `readdir` atrás de transação longa); fila
+  serial → todas as notificações seguintes esperam. Em modo cache de página (3.14) `notify_inval_inode` espera folio travado
+  por `Read` de streaming preso. Stall, não deadlock. `Conferir` (`KernelNotifications.cs:89`) loga como erro `-ENOTEMPTY`
+  (pasta com dentry filha em uso) e `-ENOTCONN` (após `fusermount -u`) — retornos esperados; ruído de log.
+- [x] `rm -rf` lento (gargalo real, não a InodeTable): por arquivo, `lookup` = `Resolve` em miss (o `Delete` anterior zerou o LRU)
+  + 3 stat; `unlink` = outro `Resolve` + `Get(pai)` + **`GetSubtree` CTE recursiva mesmo para arquivo** (`VirtualFs.cs:865`) +
+  `RemoveOpsForLid` + `Cache.Delete` (unlink + `Directory.EnumerateFiles(.partial)`, `Support.cs:297,314`) + `DELETE items` +
+  `INSERT ops`, cada statement em autocommit (sem `InTransaction` em `RemoveItem`). 10 k × ~17 statements ≈ 30 s. Prova
+  sugerida: contar SELECTs com o `Sql` de `MedicoesDesempenhoTests` dentro do `rm -rf`.
+- [x] LRU de caminhos: invalidação ainda global por `ItemsVersion`, que sobe em `Insert`, qualquer `Update`, `Delete`, `SetExcluded`,
+  rollback. O hit já revalida com `Db.Get(lid)` (`VirtualFs.cs:168`) → `DELETE` não precisaria subir a geração, nem `Update`
+  que não muda `parent_lid`/`name`. `Update` com notificação ligada faz um `Get` extra por chamada (`StateDb.cs:369`).
+- [x] `SetExcluded` (excluir/reincluir) não emite `ItemChanged` → depende do timeout (ok a 1 s).
+- [x] HIPÓTESE (janela pequena): readdirplus paginado usa lids do snapshot de offset 0 (`FuseHost.cs:598-605,629`); item apagado e
+  recriado entre páginas → `Bind(path, inoVelho)` faz `Unbind` do inode novo → `getattr(inoNovo)` ENOENT até revalidação.
+- [x] HIPÓTESE: `lookup` de nome não-UTF-8 → `EILSEQ` em vez de `ENOENT` (`git status`/`find` com Latin-1 no índice podem tratar
+  como erro). `touch ~/OneDrive` e `touch <raiz da drive>` retornam 0 sem efeito (`VirtualFs.cs:1124,1133`).
+- [ ] `Open`/`Create`/`SetAttr`/`Rename` avaliam `OpenNeedsNetwork`/`RenameNeedsNetwork` na thread do loop (`FuseHost.cs:395,448,
+  481,783`) = `Resolve` extra por operação; em `Create` o caminho não existe → caminhada completa não cacheada. Padrão Dolphin
+  por arquivo (cache hit): ~2 SELECT + 3 stat sem plugin; ~6 SELECT + 4 stat com os 4 xattrs.
+- [ ] `Write` roda inline no loop (16 threads) e precisa de `Db.Lock`: transação longa do delta congela a montagem (conhecido).
+
+**Feito (rodada 3):** testes em `Rodada3FuseTests` (FUSE real, 3 rodadas). 24.1: worker relê a fila após `_idle++` e
+sai de `_threads` antes de reler no timeout (10 M iterações sem perda). 24.2: `Notificar` sem SQL para inodes que o
+kernel não conhece (18.012 → 3 SELECTs). 24.3: só o ruído (`-ENOTEMPTY`/`-ENOTCONN` fora do log de erro); os stalls
+continuam (inerentes). 24.4: `RemoveItem` em transação, CTE só para pasta, retenção em memória (1.001 → 1 CTE;
+11,8 → 7,8 statements/arquivo; 1,4 → 0,9 s para 1.000). 24.5: `ItemsVersion` só em mudança de pasta/nome/tipo/drive,
+Insert, exclusão seletiva e rollback; fixados com geração própria. 24.6: `SetExcluded` emite `ItemChanged`. 24.7:
+`ReaddirEntry` revalida lid velho. 24.8: lookup/unlink/rmdir de nome não-UTF-8 = ENOENT; `touch` na raiz continua 0
+(EPERM quebraria `rsync -a`/`cp -a`; teste de caracterização). **Abertos:** 24.9 (Resolve extra no loop) e 24.10.
+
+## 25. Bugs — app, UI, integração
+
+- [x] **`RestartRequested` agenda o relaunch antes da confirmação de saída** — `MainWindow.axaml.cs:107-111`: `ScheduleRelaunch()`
+  e depois `QuitCommand`, que agora pede confirmação com transferências ativas (`MainViewModel.cs:685-693`). Cancelar deixa
+  um `sh` esperando o PID para sempre: horas depois, ao sair normalmente, o app reabre sozinho. Inverter a ordem.
+- [x] **`SingleInstance.cs:28` `catch (IOException)`** trata ENOSPC/EROFS/EIO ao criar o `.lock` como "outra instância" →
+  "O craftDriver já está em execução" com rc 0, sem app. Distinguir EWOULDBLOCK (HResult 11).
+- [x] **`install-user.sh:38-41` com o app aberto**: `craftdriver quit` volta na hora; o script faz `rm -rf $DEST` com o processo
+  antigo ainda desmontando e, se o usuário abre logo, a instância nova acha a trava presa → `AlreadyRunning` → `show` ignorado
+  por `_quitting` → sai 0: **nenhuma instância fica** (mesmo defeito que §15.9 corrigiu no `AppRestart`). Esperar o PID.
+  `--uninstall` não roda `install-uca.py --remove` e apaga o script antes (`:22`): ações do Thunar órfãs. Sem teste com
+  instância viva.
+- [x] **`App.axaml.cs:71,95-122` `_ = StartAsync(...)`**: exceção depois da fábrica (`Host.Start`, `new MainViewModel`,
+  `CreateTray`) fica presa na Task descartada; `OnUnobserved` só a vê no GC. Processo vivo sem janela/bandeja, segurando trava
+  e socket ("ainda iniciando" para sempre). HIPÓTESE no gatilho. `try/catch` → `CrashGuard.Report` + `Shutdown()`.
+- [x] `Program.cs:26-31`: após `OnShutdownSignal` definido, todo sinal é cancelado — 2º Ctrl+C/SIGTERM durante encerramento preso
+  (unmount EBUSY 10 s) é engolido; só `kill -9`. Segundo sinal → saída forçada. `App.axaml.cs:27-30`: `quit`/`show` via IPC no
+  1º segundo do modo gráfico (`Current as App` null) se perdem depois de responder ok.
+- [x] `AppRestart.cs:51-52`: em `dotnet CraftDriver.App.dll` (dev) relança `dotnet <args>` sem a DLL; `DesktopIntegration.ExecCommand:
+  24-33` já trata — reaproveitar (duas resoluções de "qual executável").
+- [x] `CrashGuard.cs:75-81` sem limitação de taxa: exceção determinística em layout/binding ou dentro de `RefreshActivity`
+  (`Report` → `Activity.Add` → `Changed` → `Post(RefreshActivity)` → exceção…) inunda log e Atividade. HIPÓTESE; agrupar
+  repetições por janela.
+- [x] Mount point sob symlink (`~/OneDrive → /data/od`): `/proc/mounts` canônico vs `Config.MountPoint`/KIO/GIO não canônico →
+  extensões não mostram menu ou CLI diz "fora da pasta" (`AppHost.cs:446-452`, `craftdriverstatus.cpp:insideMount`,
+  `craftdriver.py:109`). HIPÓTESE. Canonizar (`realpath`) dos dois lados; `ValidateMountPoint` não avisa.
+- [x] Instância única: trava e socket em `RuntimeDir` (`AppConfig.cs:34-37,93`); com `CRAFTDRIVER_HOME`/`XDG_RUNTIME_DIR`
+  diferentes duas instâncias montam o mesmo `MountPoint` e usam o mesmo SQLite — a trava não é chaveada pela config.
+  `DOTNET_SYSTEM_IO_DISABLEFILELOCKING=1` desliga a trava em silêncio. 2ª instância `--headless` (unit) com GUI aberta sai 0
+  calada → `systemctl --user status` "inactive" e `stop` nunca alcança a GUI.
+- [x] "Sair" da bandeja (`App.axaml.cs:197-198`) e "Encerrar" do `NoTrayCloseWindow` chamam `App.Quit()` direto, sem a confirmação
+  com transferências que Ctrl+Q/botão têm (`MainViewModel.cs:685`). `HotKey="Ctrl+S"` do Salvar (`MainWindow.axaml:421`) vale
+  em todas as abas.
+- [x] Notificação "sessão expirada": servidor sem capacidade `actions` (não consultada via `GetCapabilities`) → sem botão nem dica
+  (aba Contas / `craftdriver login`); após `ResetAsync` (`DesktopNotifier.cs:246`) a etiqueta some e o aviso antigo não é fechado.
+- [x] Unit systemd (`DesktopIntegration.cs:134-135`): `After=graphical-session.target` com `WantedBy=default.target` sobe no login
+  antes de o target existir → `PassEnvironment` vazio em GNOME/KDE/uwsm (sem clipboard/notificações; chaveiro fechado).
+  HIPÓTESE. `WantedBy=graphical-session.target` quando existir.
+- [x] Dolphin: entrada cujo 1º `getxattr` deu vazio (pasta vista antes de o craftDriver montar) nunca é relida
+  (`craftdriveroverlayplugin.cpp:164-166`, `refreshDue` pula `status.isEmpty()`) → sem emblemas até reiniciar o Dolphin.
+  `~QThread` com a thread presa num `getxattr` (FUSE travado) é `qFatal` → o Dolphin aborta ao fechar (`:87-92`); vazar a
+  thread. `getOverlays` enfileira `getxattr` para todo arquivo do sistema (sem filtro por mountinfo como o Nautilus).
+- [x] Nautilus `_syncing` (`craftdriver.py:177,251-253`) relê a cada 2 s sem teto nem expiração enquanto o item ficar "Syncing"
+  (item em Problemas?) — polling perpétuo com Nautilus aberto por horas.
+- [x] `packaging/test/smoke.sh:24` `grep -c craftdriver /proc/mounts || echo desmontado`: com a montagem presente o grep sai 0 e o
+  smoke passa calado. Usar `! grep -q`.
+- [x] `.rpm` do plugin Dolphin sem o nome da distro no arquivo (`craftdriver-dolphin-0.2.0-1.x86_64.rpm`; o `.deb` tem) → um 2º
+  Fedora na matriz sobrescreveria o asset (`ci.yml:274`). Falta `python3` em *suggests* deb/rpm para o script do Thunar.
+  `publish-aur.sh:14` `ssh-keyscan` em TOFU — pinar a fingerprint do AUR.
+- [~] **CI novo nunca rodou**: 5 commits locais (`0420769`…`933f0fa`) não enviados; `-warnaserror` em `dotnet test CraftDriver.slnx`
+  (`ci.yml:103`) não foi provado — testes usam `Task.Run(...).GetAwaiter().GetResult()` em `[AvaloniaFact]`
+  (`Secao15ContinuacaoTests.cs:27,134`); se xUnit1031 for emitido, o primeiro push cai. Rodar `dotnet build CraftDriver.slnx -c
+  Release -warnaserror` antes do push.
+
+**Feito (rodada 3):** testes em `Rodada3AppTests` (UiTests) e scripts em `packaging/test/`. 25.1: `ConfirmQuitAsync` e
+relaunch só se confirmado. 25.2: só EWOULDBLOCK é "outra instância"; ENOSPC/EROFS/EIO/EACCES mostram o erro e saem 1;
+flock direto na libc. 25.3: `craftdriver quit` espera a trava (30 s; 0/1/2) + `install-user.sh` espera PIDs e trava e
+aborta sem tocar na versão atual; `--uninstall` remove as ações do Thunar. 25.4: StartAsync com try/catch → CrashGuard +
+Shutdown. 25.5: 2º sinal força a saída; "quit/show no 1º segundo se perdem" **refutado** (o Post roda após o init).
+25.6: `DesktopIntegration.ExecArgv`. 25.7: CrashGuard agrupa por 30 s. 25.8: `MountPath` canônico no app/CLI, Nautilus e
+Dolphin; aviso ao escolher pasta sob link. 25.9: 2ª trava pelo caminho real da montagem; 2ª `--headless` sai 3
+(`RestartPreventExitStatus=3`). 25.10: bandeja e "Encerrar" passam pela confirmação (cria a janela se iniciou
+minimizado); Ctrl+S só na aba Configurações. 25.11: `GetCapabilities`; sem `actions` a dica vai no texto. 25.12:
+`WantedBy=graphical-session.target` só se o alvo está ativo ao habilitar. 25.13: Dolphin relê vazio, filtra por
+montagem, vaza a thread presa (sem teste: exige FUSE travado). 25.14: Nautilus com recuo e expiração (30 min).
+25.15: smoke falha de verdade (montagem ausente e presente). 25.16: `%{?dist}`, `python3` em suggests, chave do AUR
+fixada. 25.17: `dotnet build -c Release -warnaserror` limpo localmente; **falta enviar os commits para o CI rodar.**
+
+## 26. Lacunas de testes (rodada 3)
+
+- §23.1 (rm + recriar com upload em voo), §23.4 (`ReloadDrives` com worker vivo), 5xx perene na cabeça com dependentes.
+- SlowOps no limite (§24.1); contagem de SQL na thread `fuse-notify` durante enumeração de 50 k; `rm -rf` com contagem de SQL
+  por unlink; `cp` grande + `ls -l`/`getxattr` concorrentes (churn de `ItemsVersion`); upload concluído com montagem ativa →
+  `notify_inval_inode` (R18 roda pausado); evento inotify real (`inotifywait`) em rename/exclusão remota; rename remoto de
+  pasta com processo com cwd dentro (ENOTEMPTY).
+- `install-user.sh` com instância em execução; cancelar "Reiniciar agora"; `.lock` em disco cheio; sinal durante a espera do
+  chaveiro; `quit` via IPC no 1º segundo.
+- Config com valores ≤ 0; delta por pasta com 403.
+- Dolphin: pasta vista antes da montagem; fechar com FUSE preso. Nautilus: item "Syncing" por horas.
+
+## 27. Não verificado (rodada 3)
+
+- Tudo por leitura estática; nada reproduzido salvo onde a mecânica é direta (SlowOps, ordem do `RestartRequested`,
+  `catch (IOException)`, `smoke.sh`, texto do painel de fila, `ParseCanWrite` morto, 423-only, `Chunk` sem clamp, 403 fora do
+  fallback, Deletes sem `parent_remote`, `COLLATE NOCASE`).
+- Graph real: status do delta de pasta compartilhada em tenant corporativo; `conflictBehavior` no PATCH do SharePoint; GET de
+  item na Lixeira; QuickXorHash de arquivo vazio; Move repetido contra si mesmo (409?).
+- Kernel: `fuse_reverse_inval_entry` (ENOTEMPTY/`inode_lock`) por memória do fonte 6.x, não medido no 7.2 daqui.
+- `After=graphical-session.target` sem medir num login GNOME/KDE/uwsm; servidor de notificações real; Nautilus 42 e Dolphin
+  reais com FUSE travado.
+- Áreas sólidas por leitura: `ResetRunningOps` no start, barreiras de metadado e dependência de mkdir, coalescência com op
+  running, commit do upload × duplicata do delta (lid do upload sobrevive), `delta_candidates`/retomada, `Start()` varre
+  Dirty, `CommitOpenWrites` no unmount, adoção por hash (pai + tipo + hash não nulo), retomada de sessão expirada, parciais
+  órfãos, `GraphThrottle` por conta, token por conta com margem, `ArrayPool` (Rent/Return em finally), limitador de banda
+  (agenda absoluta, rajada ≤ rate × 100 ms), migrações cobrem todas as colunas, 7 índices + `ix_ops_claim`, `_ro` em WAL,
+  `DeleteDriveRows` cobre sub-drives, InodeTable (lid conferido, aliases, forget em nó movido, readdirplus sem SELECT), POSIX
+  corrigidos (`O_RDONLY|O_TRUNC`, `EILSEQ`, `EPERM`, raiz 0555, `fstat` em apagado), flock sem herança por filhos,
+  `ExecStop` com socket "ainda iniciando", Nautilus (fila única, API 3.0/4.0, mountinfo), pacotes Dolphin deb/rpm,
+  deps .NET por distro, `metainfo.py --check`, job AUR sem força.
+
+## Ordem sugerida (rodada 3 — concluída, exceto §24.9/§24.10 e o envio para o CI)
+
+1. §24.1 (SlowOps — syscall pendurada), §25.1–25.3 (relaunch órfão, `.lock` em disco cheio, `install-user.sh` com app aberto)
+   e §25.16 (rodar `-warnaserror` local e enviar os 5 commits para o CI).
+2. §23.1–23.3 (Deletes sem pai, NOCASE, duplicata após 412) + §23.8 (validar config) + §22.1 (painel de fila).
+3. §22.2/§23.6 (teto para 5xx) + §24.2–24.4 (tempestade de notificações, `rm -rf`, LRU por write).
+4. §22.7 (mortos) + docs (`inicio-e-janela.md`, `desempenho-fuse.md`, nota §13.2).

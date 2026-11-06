@@ -67,7 +67,7 @@ funcionam com qualquer ponto de montagem, e chamam `craftdriver pin|unpin|status
 | Dolphin (servicemenu, já vem nos pacotes) | não | não: aparece em qualquer arquivo | instalado pelo pacote/app; o plugin acima o esconde (`/etc/xdg/kservicemenurc`) |
 | Nautilus 42+ (API 4.0; fallback 3.0) | sim | sim | pacotes instalam em `/usr/share/nautilus-python/extensions/`; manual: copie `extensions/nautilus/craftdriver.py` para `~/.local/share/nautilus-python/extensions/`. Precisa de `python-nautilus` (Debian/Ubuntu: `python3-nautilus`; Fedora: `nautilus-python`). Depois `nautilus -q` |
 | PCManFM / PCManFM-Qt | não | sim (`ShowIfTrue` + `getfattr`, pacote `attr`) | pacotes instalam em `/usr/share/file-manager/actions/`; manual: copie `extensions/pcmanfm/*.desktop` para `~/.local/share/file-manager/actions/` |
-| Thunar | não | não: o Thunar só filtra por nome/tipo | `python3 /usr/share/craftdriver/thunar/install-uca.py` (ou `extensions/thunar/install-uca.py`); `--remove` desfaz |
+| Thunar | não | não: o Thunar só filtra por nome/tipo | `python3 /usr/share/craftdriver/thunar/install-uca.py` (ou `extensions/thunar/install-uca.py`); `--remove` desfaz; `--command CAMINHO` troca o `craftdriver` do início dos comandos (ex.: `--command ~/.local/bin/craftdriver` quando `~/.local/bin` não está no PATH da sessão). O `install-user.sh` já roda com o caminho absoluto se o Thunar estiver instalado ou as ações já existirem |
 
 Emblemas no Dolphin (tema Breeze): nuvem = somente online, ✓ = disponível, ✓ verde = sempre disponível,
 seta laranja = sincronizando, ✗ cinza = somente local. O Dolphin precisa ser reaberto depois de instalar o plugin.
@@ -168,7 +168,10 @@ e mantém os tokens salvos no chaveiro (não é preciso entrar de novo).
 [MIT](LICENSE)
 
 Tarball: extraia **a pasta inteira** e rode `./install-user.sh` para instalar em `~/.local` (binário, atalho,
-ícones e menus; sem SDK e sem sudo). `./install-user.sh --uninstall` remove a instalação e mantém os seus dados.
+ícones e menus; sem SDK e sem sudo). `./install-user.sh --uninstall` remove a instalação (inclusive as ações do Thunar) e mantém os seus dados. Com o
+app aberto, os dois encerram a instância e esperam ela desmontar e sair (até 30 s, `CRAFTDRIVER_QUIT_TIMEOUT`); se
+ela não sair, a instalação é abortada sem mexer na versão atual. Menus do Dolphin, PCManFM e Thunar apontam para o
+caminho absoluto `~/.local/bin/craftdriver` (não exigem `~/.local/bin` no PATH da sessão).
 Não remova `lib/`: o executável não é single-file. Para compilar a fonte, `./install.sh` exige SDK .NET 10.
 
 ## Limitações conhecidas

@@ -14,8 +14,9 @@
 - `--headless` e os comandos de CLI continuam sem janela (o headless espera o chaveiro como antes).
 - Um chaveiro travado (ex.: pedindo senha) que termine de abrir depois de "Continuar" é descartado: o registro do
   helper no cache do MSAL só acontece depois do `await` cancelável (`AuthService.KeyringAccess`).
-- Limitação: o socket de IPC só abre depois do `AppHost`; abrir o app de novo durante a espera inicia uma segunda
-  instância (já era assim antes, só não havia janela).
+- Instância única: `Program.Main` pega um `flock` em `run/craftdriver.lock` e abre o socket de IPC **antes** do
+  Avalonia e do `AppHost`. Abrir o app de novo durante a espera do chaveiro não inicia outra instância: o segundo
+  processo fala com o primeiro (que responde "ainda iniciando" enquanto o `AppHost` não existe) e sai.
 
 ## Fechar a janela
 
