@@ -223,7 +223,11 @@ public partial class Rodada3AppTests
         var psi = new ProcessStartInfo(Child.Exe) { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true };
         foreach (var a in args) psi.ArgumentList.Add(a);
         psi.Environment["CRAFTDRIVER_HOME"] = home;
-        psi.Environment["XDG_RUNTIME_DIR"] = Path.Combine(Scratch, "run");
+        // a pasta precisa existir: o .NET (e o rastreador do coverlet no CI) cria mutex nomeado em $XDG_RUNTIME_DIR
+        // ao descarregar o módulo — sem ela o processo aborta com 134 depois de já ter respondido
+        var runtimeDir = Path.Combine(Scratch, "run");
+        Directory.CreateDirectory(runtimeDir);
+        psi.Environment["XDG_RUNTIME_DIR"] = runtimeDir;
         psi.Environment["DBUS_SESSION_BUS_ADDRESS"] = "unix:path=/nonexistent";
         psi.Environment["CRAFTDRIVER_NO_NOTIFY"] = "1";
         psi.Environment.Remove("WAYLAND_DISPLAY");
