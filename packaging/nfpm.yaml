@@ -46,6 +46,7 @@ overrides:
       - python3-nautilus   # extensão do Nautilus (emblemas + menu)
       - attr               # getfattr, usado pelas ações do PCManFM
       - python3            # /usr/share/craftdriver/thunar/install-uca.py (ações do Thunar)
+      - pkexec | policykit-1   # "Atualizar agora" pede a senha de administrador (sem ele: comando para o terminal)
   rpm:
     depends:
       - fuse3
@@ -71,6 +72,7 @@ overrides:
       - nautilus-python    # extensão do Nautilus (emblemas + menu)
       - attr               # getfattr, usado pelas ações do PCManFM
       - python3            # /usr/share/craftdriver/thunar/install-uca.py (ações do Thunar)
+      - polkit             # pkexec: "Atualizar agora" pede a senha de administrador
 
 contents:
   # o app inteiro (apphost "craftdriver" + DLLs + .so); "tree" preserva os modos dos arquivos

@@ -19,7 +19,8 @@ optdepends=('krb5: autenticação Negotiate/Kerberos (opcional para OAuth)'
             'libnotify: notify-send, se o serviço de notificações não responder pelo D-Bus'
             'wl-clipboard: copiar o link de compartilhamento no Wayland'
             'xclip: copiar o link de compartilhamento no X11'
-            'noto-fonts-emoji: ícones de status na janela')
+            'noto-fonts-emoji: ícones de status na janela'
+            'polkit: "Atualizar agora" pede a senha de administrador (pkexec)')
 provides=('craftdriver')
 conflicts=('craftdriver')
 # bibliotecas do .NET/Skia já vêm prontas: strip não ganha nada e pode quebrar as assinaturas de tamanho
