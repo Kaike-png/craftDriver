@@ -20,17 +20,24 @@ public static class DesktopIntegration
     public static string ScalableIconFile => Path.Combine(DataHome, "icons", "hicolor", "scalable", "apps", "craftdriver.svg");
     public static string SymbolicIconFile => Path.Combine(DataHome, "icons", "hicolor", "symbolic", "apps", "craftdriver-symbolic.svg");
 
-    /// <summary>Comando para executar este programa (binário publicado ou "dotnet app.dll").</summary>
-    public static string ExecCommand
+    /// <summary>
+    /// Argumentos para executar este programa: o binário publicado, ou "dotnet" + a DLL de entrada quando roda como
+    /// <c>dotnet app.dll</c>. Única resolução de "qual executável" — usada pelos atalhos (<see cref="ExecCommand"/>) e
+    /// pelo "Reiniciar agora" (<see cref="AppRestart"/>, que antes relançava "dotnet" sem a DLL).
+    /// </summary>
+    public static string[] ExecArgv => ExecArgvFor(Environment.ProcessPath, Environment.GetCommandLineArgs());
+
+    internal static string[] ExecArgvFor(string? processPath, string[] commandLineArgs)
     {
-        get
-        {
-            var exe = Environment.ProcessPath ?? "craftdriver";
-            if (Path.GetFileNameWithoutExtension(exe) == "dotnet")
-                return $"\"{exe}\" \"{typeof(DesktopIntegration).Assembly.Location}\"";
-            return $"\"{exe}\"";
-        }
+        var exe = processPath ?? "craftdriver";
+        if (Path.GetFileNameWithoutExtension(exe) != "dotnet") return [exe];
+        // sob o host "dotnet", o argv[0] do .NET é a DLL de entrada (dotnet app.dll / dotnet exec app.dll)
+        var dll = commandLineArgs is [{ Length: > 0 } first, ..] ? first : typeof(DesktopIntegration).Assembly.Location;
+        return [exe, Path.GetFullPath(dll)];
     }
+
+    /// <summary>Comando para executar este programa (binário publicado ou "dotnet app.dll"), com aspas.</summary>
+    public static string ExecCommand => string.Join(' ', ExecArgv.Select(a => $"\"{a}\""));
 
     /// <summary>Unit do systemd --user (Hyprland/Sway e afins, que não leem ~/.config/autostart).</summary>
     public static string SystemdUnitFile => SystemdUnitPath(ConfigHome);
@@ -104,8 +111,15 @@ public static class DesktopIntegration
             return warning;
         }
 
+        // graphical-session.target ativo (GNOME, KDE, uwsm): a unit sobe com a sessão gráfica e herda o ambiente dela.
+        // Inativo (Hyprland/Sway sem uwsm nunca o ativam): default.target, senão a unit nunca subiria.
+        var graphical = systemctl != null && systemctl(["is-active", "--quiet", "graphical-session.target"]) == 0;
+        var text = SystemdUnitText(graphical);
         Directory.CreateDirectory(Path.GetDirectoryName(unit)!);
-        File.WriteAllText(unit, SystemdUnitText());
+        // trocar o WantedBy de uma unit já habilitada: o disable (lendo o [Install] antigo) tira o link do alvo antigo
+        if (systemctl != null && File.Exists(unit) && WantedBy(File.ReadAllText(unit)) is { } old && old != WantedBy(text))
+            systemctl(["disable", SystemdUnitName]);
+        File.WriteAllText(unit, text);
         if (systemctl == null)
             return "systemctl não encontrado: o serviço foi gravado em " + unit + ", mas não foi habilitado.";
         if (systemctl(["daemon-reload"]) != 0 || systemctl(["enable", SystemdUnitName]) != 0)
@@ -134,8 +148,16 @@ public static class DesktopIntegration
     /// After/PartOf: quando há graphical-session.target (GNOME, KDE, uwsm), sobe depois dele e para junto no
     /// logout; PassEnvironment repassa as variáveis que a sessão exportou para o systemd --user (notificações,
     /// navegador do login, área de transferência).
+    /// <para>
+    /// WantedBy (decidido ao habilitar, <paramref name="graphicalSession"/>): com graphical-session.target ativo, a unit
+    /// é puxada por ele — com default.target ela subia no login ANTES de a sessão exportar WAYLAND_DISPLAY/DBUS…, e o
+    /// PassEnvironment ia vazio (sem notificações nem área de transferência). Sem ele ativo (Hyprland/Sway sem uwsm,
+    /// que não o ativam), default.target: puxada pelo graphical-session.target, a unit nunca subiria.
+    /// </para>
+    /// <para>RestartPreventExitStatus: o --headless com outra instância já em execução sai com
+    /// <see cref="Program.AlreadyRunningExitCode"/> (falha visível no status, sem reiniciar a cada 10 s).</para>
     /// </summary>
-    internal static string SystemdUnitText()
+    internal static string SystemdUnitText(bool graphicalSession = false)
     {
         var exec = ExecCommand.Replace("%", "%%");
         return $"""
@@ -154,12 +176,17 @@ public static class DesktopIntegration
         PassEnvironment=WAYLAND_DISPLAY DISPLAY DBUS_SESSION_BUS_ADDRESS XDG_CURRENT_DESKTOP
         Restart=on-failure
         RestartSec=10
+        RestartPreventExitStatus={Program.AlreadyRunningExitCode}
 
         [Install]
-        WantedBy=default.target
+        WantedBy={(graphicalSession ? "graphical-session.target" : "default.target")}
 
         """;
     }
+
+    /// <summary>Valor de WantedBy= de uma unit (null se não houver).</summary>
+    internal static string? WantedBy(string unitText) =>
+        unitText.Split('\n').Select(l => l.Trim()).FirstOrDefault(l => l.StartsWith("WantedBy=", StringComparison.Ordinal))?["WantedBy=".Length..];
 
     internal static string? FindInPath(string name)
     {

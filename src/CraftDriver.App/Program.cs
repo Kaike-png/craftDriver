@@ -20,15 +20,18 @@ sealed class Program
     internal static volatile Action? OnShutdownSignal;
     static readonly List<System.Runtime.InteropServices.PosixSignalRegistration> Signals = [];
 
+    /// <summary>1º sinal = encerramento completo; 2º durante o encerramento = saída imediata (§25.5).</summary>
+    static readonly ShutdownSignalGate SignalGate = new(() => OnShutdownSignal, Environment.Exit, DeleteSocket);
+
     static void RegisterShutdownSignals()
     {
         foreach (var sig in new[] { System.Runtime.InteropServices.PosixSignal.SIGTERM, System.Runtime.InteropServices.PosixSignal.SIGINT, System.Runtime.InteropServices.PosixSignal.SIGHUP })
-            Signals.Add(System.Runtime.InteropServices.PosixSignalRegistration.Create(sig, ctx =>
-            {
-                if (OnShutdownSignal is not { } quit) return;
-                ctx.Cancel = true; // o encerramento é nosso: o processo sai quando ele terminar
-                quit();
-            }));
+            Signals.Add(System.Runtime.InteropServices.PosixSignalRegistration.Create(sig, SignalGate.Handle));
+    }
+
+    static void DeleteSocket()
+    {
+        try { File.Delete(AppPaths.SocketPath); } catch { }
     }
 
     [STAThread]
@@ -37,7 +40,7 @@ sealed class Program
         try { AppPaths.MigrateLegacy(); }
         catch (Exception ex) { Console.Error.WriteLine("Aviso: migração da configuração antiga falhou: " + ex.Message); }
         try { AppPaths.EnsureDirs(); }
-        catch (IOException ex)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             Console.Error.WriteLine("craftDriver: " + ex.Message);
             return 1;
@@ -64,25 +67,37 @@ sealed class Program
 
         // instância única: a trava vem antes de tudo — enquanto a 1ª espera o chaveiro (até 60 s) ela já é dona do
         // socket; a 2ª só conversa com ela e nunca apaga o socket nem tenta montar o mesmo ponto
-        _instance = SingleInstance.TryAcquire(AppPaths.LockFile);
+        try { _instance = SingleInstance.TryAcquire(AppPaths.LockFile); }
+        catch (SingleInstanceException ex)
+        {
+            // disco cheio, só-leitura, sem permissão: não é "outra instância" — mostra o erro real e sai ≠ 0
+            return StartupFailed(args, ex.Message);
+        }
         if (_instance == null) return AlreadyRunning(args);
 
         var headless = args.Contains("--headless");
         IpcServer? early = null;
         try
         {
-            early = new IpcServer(AppPaths.SocketPath, r => Task.FromResult(StartupIpc.Handle(r, headless ? null : App.RequestStartupShow,
-                headless ? QuitWhileStarting : App.RequestStartupQuit)));
-        }
-        catch (Exception ex) { Console.Error.WriteLine("Aviso: comandos do craftDriver (IPC) indisponíveis: " + ex.Message); }
-        try
-        {
-            CrashGuard.Install(() => App.HostOrNull?.Activity, null);
-            RegisterShutdownSignals();
-            DesktopIntegration.RemoveLegacyLeftovers();
             // só a configuração (rápido); o AppHost — que espera o chaveiro por até 60 s — é criado depois
             var cfg = AppConfig.Load();
             if (cfg.LoadWarning is { } warning) Console.Error.WriteLine("Aviso: " + warning);
+            // a mesma pasta não pode ser montada por duas instâncias com configurações (CRAFTDRIVER_HOME) diferentes
+            if (InstanceLocks.AcquireMount(cfg.MountPoint, out var mountInUse) is { } mountLockError)
+                return StartupFailed(args, mountLockError, mountInUse ? AlreadyRunningExitCode : 1);
+
+            try
+            {
+                early = new IpcServer(AppPaths.SocketPath, r => Task.FromResult(StartupIpc.Handle(r, headless ? null : App.RequestStartupShow,
+                    headless ? QuitWhileStarting : App.RequestStartupQuit)));
+            }
+            catch (Exception ex) { Console.Error.WriteLine("Aviso: comandos do craftDriver (IPC) indisponíveis: " + ex.Message); }
+            CrashGuard.Install(() => App.Host?.Activity, null);
+            // sinal antes de haver o que desmontar (espera do chaveiro, Avalonia subindo): sai já, apagando o socket —
+            // antes o término padrão pulava o finally e o socket ficava (§22.9)
+            OnShutdownSignal = ExitWhileStarting;
+            RegisterShutdownSignals();
+            DesktopIntegration.RemoveLegacyLeftovers();
 
             if (headless)
             {
@@ -105,8 +120,25 @@ sealed class Program
         {
             OnShutdownSignal = null;
             early?.Dispose(); // normalmente já fechado pelo AppHost; saiu antes dele (espera abandonada): apaga o socket
+            InstanceLocks.Release();
             _instance.Dispose();
         }
+    }
+
+    /// <summary>Não dá para iniciar (trava): mensagem no terminal e, aberto pelo menu (sem terminal), notificação.</summary>
+    static int StartupFailed(string[] args, string message, int exitCode = 1)
+    {
+        Console.Error.WriteLine("craftDriver: " + message);
+        if (!args.Contains("--headless"))
+            DesktopIntegration.Notify("craftDriver não iniciou", message).Wait(TimeSpan.FromSeconds(5));
+        return exitCode;
+    }
+
+    /// <summary>Sinal antes de haver AppHost/interface: nada montado nem gravado; apaga o socket e sai 0.</summary>
+    static void ExitWhileStarting()
+    {
+        DeleteSocket();
+        Environment.Exit(0);
     }
 
     /// <summary>
@@ -140,11 +172,23 @@ sealed class Program
                 return 1;
             }
         }
-        Console.WriteLine(running?.Text == "iniciando"
+        var text = running?.Text == "iniciando"
             ? "O craftDriver já está em execução (ainda iniciando)."
-            : "O craftDriver já está em execução.");
+            : "O craftDriver já está em execução.";
+        if (args.Contains("--headless"))
+        {
+            // serviço do systemd (ou script) com outra instância viva: sair 0 calado deixava a unit "inactive" e o
+            // "systemctl --user stop" nunca chegava à instância de verdade. Código próprio (sem reinício: a unit tem
+            // RestartPreventExitStatus) e a mensagem no stderr, que vai para o journal.
+            Console.Error.WriteLine(text + " Este --headless não iniciou (a trava " + AppPaths.LockFile + " é da outra instância).");
+            return AlreadyRunningExitCode;
+        }
+        Console.WriteLine(text);
         return 0;
     }
+
+    /// <summary>Saída do --headless quando outra instância já tem a trava (a unit do systemd não reinicia com ele).</summary>
+    internal const int AlreadyRunningExitCode = 3;
 
     public static AppBuilder BuildAvaloniaApp()
         => AppBuilder.Configure<App>()
@@ -178,7 +222,8 @@ sealed class Program
               craftdriver share [--edit] <arquivos…>   cria link de compartilhamento e copia (--edit: pode editar)
               craftdriver versions <arquivo> [--list | --restore=ID | --copy=ID]   versões anteriores
               craftdriver trash [restore N | open]    excluídos recentes / restaurar da Lixeira
-              craftdriver sync | pause | resume | quit
+              craftdriver sync | pause | resume
+              craftdriver quit                 encerra e espera o app terminar (até 30 s; CRAFTDRIVER_QUIT_TIMEOUT)
             """);
     }
 
@@ -243,7 +288,45 @@ sealed class Program
         if (resp.Links != null) text = await CliShare.FinishAsync(resp, t => ClipboardService.CopyAsync(t));
         if (!hostNotifies && (notify || (notifyErrors && !resp.Ok))) await NotifyAndWait(text);
         Console.WriteLine(text);
+        // quit: a resposta sai antes do encerramento (desmontar, terminar envios). Quem chama em seguida (instalador,
+        // desinstalador, "Reiniciar") precisa da instância fora: espera ela soltar a trava
+        if (args[0] == "quit" && resp.Ok) return await WaitInstanceExitAsync(QuitWaitTimeout()) ? 0 : 1;
         return resp.Ok ? 0 : 1;
+    }
+
+    /// <summary>Prazo do "craftdriver quit" (CRAFTDRIVER_QUIT_TIMEOUT em segundos; padrão 30).</summary>
+    static TimeSpan QuitWaitTimeout() =>
+        TimeSpan.FromSeconds(double.TryParse(Environment.GetEnvironmentVariable("CRAFTDRIVER_QUIT_TIMEOUT"),
+            System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var s) && s >= 0 ? s : 30);
+
+    /// <summary>
+    /// Espera a instância soltar a trava de instância única (o processo saiu ou está no fim do encerramento). Pega e
+    /// solta na hora: não segura nada que impeça a próxima instância de abrir.
+    /// </summary>
+    internal static async Task<bool> WaitInstanceExitAsync(TimeSpan timeout)
+    {
+        var until = DateTime.UtcNow + timeout;
+        while (true)
+        {
+            try
+            {
+                using var probe = SingleInstance.TryAcquire(AppPaths.LockFile);
+                if (probe != null) return true;
+            }
+            catch (SingleInstanceException ex)
+            {
+                Console.Error.WriteLine("Não foi possível conferir se o craftDriver terminou: " + ex.Message);
+                return false;
+            }
+            if (DateTime.UtcNow >= until)
+            {
+                Console.Error.WriteLine($"O craftDriver recebeu o pedido para sair, mas ainda não terminou depois de {timeout.TotalSeconds:0} s " +
+                                        "(desmontagem ocupada por um programa com arquivo aberto na pasta, ou envio em andamento). " +
+                                        "Veja \"craftdriver status\" e o log; para forçar, envie SIGTERM duas vezes ao processo.");
+                return false;
+            }
+            await Task.Delay(200);
+        }
     }
 
     /// <summary>Processo curto: espera a notificação ser entregue (D-Bus) antes de sair, por até 5 s.</summary>

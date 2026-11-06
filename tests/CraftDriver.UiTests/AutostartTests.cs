@@ -45,7 +45,8 @@ public class AutostartTests
         WithDir(cfg =>
         {
             var calls = new List<string>();
-            int Fake(string[] a) { calls.Add(string.Join(' ', a)); return 0; }
+            // sem graphical-session.target ativo (Hyprland sem uwsm): is-active sai 3
+            int Fake(string[] a) { calls.Add(string.Join(' ', a)); return a[0] == "is-active" ? 3 : 0; }
 
             Assert.Null(DesktopIntegration.SetAutostart(true, AutostartMode.Xdg, cfg, Fake));
             Assert.True(File.Exists(Path.Combine(cfg, "autostart", "craftdriver.desktop")));
@@ -64,7 +65,8 @@ public class AutostartTests
             Assert.Contains("\nAfter=graphical-session.target\n", unit);
             Assert.Contains("\nPartOf=graphical-session.target\n", unit);
             Assert.Contains("\nPassEnvironment=WAYLAND_DISPLAY DISPLAY DBUS_SESSION_BUS_ADDRESS XDG_CURRENT_DESKTOP\n", unit);
-            Assert.Equal(["daemon-reload", "enable craftdriver.service"], calls);
+            Assert.Contains("\nRestartPreventExitStatus=3\n", unit); // 2ª --headless com outra instância viva
+            Assert.Equal(["is-active --quiet graphical-session.target", "daemon-reload", "enable craftdriver.service"], calls);
             Assert.False(File.Exists(Path.Combine(cfg, "autostart", "craftdriver.desktop")), "iniciaria duas vezes");
 
             calls.Clear();

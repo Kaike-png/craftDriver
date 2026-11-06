@@ -252,7 +252,9 @@ public class Secao15ContinuacaoTests
             var inodeBefore = File.Exists(sock) ? Inode(sock) : null;
             using var second = Child.Start(home, "--headless");
             Assert.True(second.P.WaitForExit(20000), "2ª instância não saiu: " + second.Text);
-            Assert.Equal(0, second.P.ExitCode);
+            // §25.9: a 2ª --headless (unit do systemd) sai ≠ 0 — com 0 a unit ficava "inactive" calada e o "stop" nunca
+            // chegava à instância viva; 3 = AlreadyRunningExitCode (RestartPreventExitStatus na unit, sem reinício em laço)
+            Assert.Equal(3, second.P.ExitCode);
             Assert.Contains("já está em execução", second.Text);
             Assert.False(first.P.HasExited, "a 1ª morreu: " + first.Text);
             Assert.NotNull(inodeBefore);

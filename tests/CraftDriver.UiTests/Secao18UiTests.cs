@@ -258,7 +258,10 @@ public class Secao18UiTests
 
     // ---------- fila ----------
 
-    /// <summary>A fila anda só pela cabeça: quando ela falha e espera, a interface diz o que é e por quê.</summary>
+    /// <summary>
+    /// Falha esperando nova tentativa: a interface diz o que é e por quê. §22.1: a fila é paralela (ClaimOps), então uma
+    /// falha isolada NÃO é "fila parada" — o painel diz que as outras alterações seguem (antes: "Esperando atrás dela: 1").
+    /// </summary>
     [AvaloniaFact]
     public void Painel_mostra_o_que_trava_a_cabeca_da_fila()
     {
@@ -277,7 +280,10 @@ public class Secao18UiTests
         Assert.Contains("4 tentativas", line);
         Assert.Contains("HTTP 503", line);
         Assert.Contains("OneDrive - Pessoal", line);
-        Assert.Contains("1 ", line[line.IndexOf("atrás dela", StringComparison.Ordinal)..]); // 1 esperando atrás dela
+        Assert.DoesNotContain("Parada", line); // depois.txt não depende dela
+        Assert.Contains("continuam sendo enviadas", line);
+        Assert.Equal("Falhas aguardando nova tentativa", vm.QueueHeader);
+        Assert.False(vm.QueueStalled);
         Assert.True(vm.HasQueueBlocked);
         host.Activity.Add(ActivityKind.Error, "Falha ao enviar planilha.xlsx: HTTP 503");
         vm.ActivityFilter = "planilha";

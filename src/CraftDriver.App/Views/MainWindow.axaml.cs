@@ -104,10 +104,11 @@ public partial class MainWindow : Window
                 var res = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions { Title = title, AllowMultiple = false });
                 return res.Count > 0 ? res[0].TryGetLocalPath() : null;
             };
+            // a saída já foi confirmada pelo RestartCommand: agenda o relançamento e sai sem perguntar de novo
             vm.RestartRequested += () =>
             {
                 AppRestart.ScheduleRelaunch();
-                vm.QuitCommand.Execute(null);
+                vm.QuitConfirmed();
             };
         };
     }

@@ -162,9 +162,12 @@ public sealed class AppHost
                 continue;
             }
             void Reauth() => ReauthRequested?.Invoke(acc);
+            // servidor sem botões (sem a capacidade "actions") ou notify-send: a dica vai no texto
+            const string hint = "Para entrar: abra o craftDriver, aba Contas, ou rode \"craftdriver login\" no terminal.";
             NotifyTagged(SessionTag(id), "craftDriver — sessão expirada",
                 $"A sessão de {acc.Username} expirou e a sincronização dessa conta está parada até você entrar novamente.",
-                [new(NotificationAction.Default, "Entrar novamente", Reauth), new("relogin", "Entrar novamente", Reauth)]);
+                [new(NotificationAction.Default, "Entrar novamente", Reauth) { HintWithoutButtons = hint },
+                 new("relogin", "Entrar novamente", Reauth) { HintWithoutButtons = hint }]);
         }
     }
 
@@ -438,18 +441,28 @@ public sealed class AppHost
 
     public int RetryAllFailures() => Db.Failures().Count(f => Engine.GetDrive(f.DriveId)?.RetryFailure(f.Id) == true);
 
-    /// <summary>Descarta o registro da falha (as alterações locais do item continuam lá).</summary>
-    public void DismissFailure(long id) => Db.DismissFailure(id);
+    /// <summary>
+    /// Descarta o registro da falha (as alterações locais do item continuam lá). Acorda a fila da drive: uma exclusão
+    /// descartada pode estar segurando o envio de outro item com o mesmo nome (§23.6).
+    /// </summary>
+    public void DismissFailure(long id)
+    {
+        var drive = Db.Failures().FirstOrDefault(f => f.Id == id)?.DriveId;
+        Db.DismissFailure(id);
+        if (drive != null) Engine.NotifyLocalChange(drive);
+    }
 
     // ---------- caminhos locais ----------
 
+    /// <summary>
+    /// Item de um caminho local (CLI, menus de contexto, seletor de pasta). Aceita o caminho configurado e o real:
+    /// com a pasta sob link simbólico (<c>~/OneDrive → /data/od</c>) o kernel, o /proc/mounts e o gerenciador de arquivos
+    /// podem usar um e a configuração o outro — antes o CLI dizia "fora da pasta sincronizada".
+    /// </summary>
     public Item? ItemFromLocalPath(string path, bool includeExcluded = false)
     {
-        var mount = Path.GetFullPath(Config.MountPoint).TrimEnd('/');
-        var full = Path.GetFullPath(path).TrimEnd('/');
-        if (full != mount && !full.StartsWith(mount + "/")) return null;
-        var rel = full.Length == mount.Length ? "/" : full[mount.Length..];
-        return Fs.Resolve(rel, includeExcluded)?.Item;
+        var rel = MountPath.RelativeToMount(path, Config.MountPoint);
+        return rel == null ? null : Fs.Resolve(rel, includeExcluded)?.Item;
     }
 
     public string LocalPathOf(Item item)

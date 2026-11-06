@@ -3,6 +3,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using CraftDriver.App.Services;
 using CraftDriver.Core.Config;
+using CraftDriver.Core.State;
 using CraftDriver.Core.Sync;
 
 namespace CraftDriver.App.ViewModels;
@@ -221,11 +222,16 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
     [ObservableProperty] public partial bool ActivityErrorsOnly { get; set; }
 
     /// <summary>
-    /// Por drive, a operação na cabeça da fila que está falhando e esperando nova tentativa. A fila anda só pela
-    /// cabeça: enquanto ela espera, nada atrás dela é enviado — sem isto a tela só dizia "N alterações na fila".
+    /// Operações que falharam e esperam nova tentativa (sem isto a tela só dizia "N alterações na fila"). A fila é
+    /// paralela: uma falha só "para" o que depende dela (outras alterações do mesmo item, itens dentro de uma pasta
+    /// ainda não criada, alterações que esperam uma exclusão liberar o nome) — e só então a linha diz "Parada", com a
+    /// contagem real. As demais seguem sendo enviadas.
     /// </summary>
     public ObservableCollection<string> QueueBlocked { get; } = [];
     [ObservableProperty] public partial bool HasQueueBlocked { get; set; }
+    /// <summary>Alguma falha segura alterações que dependem dela (o painel vira "Envio parado").</summary>
+    [ObservableProperty] public partial bool QueueStalled { get; set; }
+    [ObservableProperty] public partial string QueueHeader { get; set; } = "Falhas aguardando nova tentativa";
 
     /// <summary>Liga/desliga o início automático; devolve um aviso para mostrar (troque nos testes).</summary>
     internal Func<bool, AutostartMode, string?> SetAutostart { get; set; } = DesktopIntegration.SetAutostart;
@@ -252,7 +258,22 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
     }
 
     [RelayCommand] void ClearMessage() => Message = "";
-    [RelayCommand] void Restart() => RestartRequested?.Invoke();
+    /// <summary>
+    /// "Reiniciar agora": a mesma confirmação do Sair (transferências) ANTES de agendar o relançamento — agendado
+    /// antes, cancelar a saída deixava um sh esperando este PID e, ao sair horas depois, o app reabria sozinho.
+    /// </summary>
+    [RelayCommand]
+    async Task Restart()
+    {
+        if (!await ConfirmQuitAsync()) return;
+        RestartRequested?.Invoke();
+    }
+
+    /// <summary>Saída já confirmada (ex.: depois do "Reiniciar agora"): sem perguntar de novo.</summary>
+    public void QuitConfirmed() => QuitRequested?.Invoke();
+
+    /// <summary>Alguém (a janela) responde às confirmações.</summary>
+    public bool HasConfirmHandler => ConfirmRequested != null;
     [RelayCommand] void ShowSettings() => SelectedTab = SettingsTab;
 
     Task<bool> ConfirmAsync(ConfirmRequest request) =>
@@ -588,22 +609,53 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
         FailuresHeader = HasFailures ? $"Problemas ({Failures.Count})" : "Problemas";
     }
 
-    /// <summary>Atualiza <see cref="QueueBlocked"/>: cabeças de fila que já falharam e estão esperando.</summary>
+    /// <summary>Atualiza <see cref="QueueBlocked"/>: falhas esperando nova tentativa e o que cada uma segura.</summary>
     public void RefreshQueue()
     {
         var lines = new List<string>();
-        foreach (var h in Host.Db.QueueHeads().Where(h => h.Attempts > 0))
+        var stalled = false;
+        var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        foreach (var w in Host.Db.QueueWaits())
         {
-            var drive = Host.Config.Drives.FirstOrDefault(d => d.DriveId == h.DriveId)?.DisplayName
-                        ?? Host.Engine.GetDrive(h.DriveId)?.Config.DisplayName ?? h.DriveId;
-            var path = h.Lid != 0 && Host.Db.Get(h.Lid) is { } it && Host.LocalPathOf(it) is { Length: > 0 } p ? p : h.Name ?? "?";
-            var when = h.NextTry > DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
-                ? $"próxima tentativa às {DateTimeOffset.FromUnixTimeMilliseconds(h.NextTry).ToLocalTime():HH:mm:ss}"
+            var drive = Host.Config.Drives.FirstOrDefault(d => d.DriveId == w.DriveId)?.DisplayName
+                        ?? Host.Engine.GetDrive(w.DriveId)?.Config.DisplayName ?? w.DriveId;
+            var path = w.Lid != 0 && Host.Db.Get(w.Lid) is { } it && Host.LocalPathOf(it) is { Length: > 0 } p ? p : w.Name ?? "?";
+            var deps = $"{w.Blocked} {(w.Blocked == 1 ? "alteração" : "alterações")}";
+            if (w.InProblems)
+            {
+                stalled = true;
+                lines.Add($"\"{drive}\": exclusão de \"{path}\" está em Problemas" +
+                          (w.LastError != null ? $" ({w.LastError})" : "") +
+                          $". Parada para {deps} com o mesmo nome até você tentar de novo ou descartar o problema.");
+                continue;
+            }
+            if (w.Held)
+            {
+                stalled = true;
+                lines.Add($"\"{drive}\": exclusão retida de \"{path}\" (exclusão em massa aguardando confirmação). " +
+                          $"Parada para {deps} com o mesmo nome até você confirmar ou restaurar as exclusões.");
+                continue;
+            }
+            var when = w.NextTry > now
+                ? $"próxima tentativa às {DateTimeOffset.FromUnixTimeMilliseconds(w.NextTry).ToLocalTime():HH:mm:ss}"
                 : "tentando de novo agora";
-            lines.Add($"Fila de \"{drive}\" parada em {AppHost.KindLabel(h.Kind)} \"{path}\": {h.Attempts} tentativas" +
-                      (h.LastError != null ? $", último erro: {h.LastError}" : "") + $"; {when}. " +
-                      $"Esperando atrás dela: {h.Behind} {(h.Behind == 1 ? "alteração" : "alterações")}.");
+            var line = $"\"{drive}\": {AppHost.KindLabel(w.Kind)} \"{path}\" — {w.Attempts} tentativas" +
+                       (w.LastError != null ? $", último erro: {w.LastError}" : "") + $"; {when}. ";
+            if (w.Blocked > 0)
+            {
+                stalled = true;
+                line += $"Parada para {deps} que {(w.Blocked == 1 ? "depende" : "dependem")} dela" + w.Kind switch
+                {
+                    OpKind.Mkdir => " (itens dentro da pasta esperam ela ser criada na nuvem).",
+                    OpKind.Delete => " (esperam a exclusão liberar o nome).",
+                    _ => " (outras alterações do mesmo item).",
+                };
+            }
+            else line += "As outras alterações continuam sendo enviadas.";
+            lines.Add(line);
         }
+        QueueStalled = stalled;
+        QueueHeader = stalled ? "Envio parado" : "Falhas aguardando nova tentativa";
         if (lines.SequenceEqual(QueueBlocked)) return;
         QueueBlocked.Clear();
         foreach (var l in lines) QueueBlocked.Add(l);
@@ -684,12 +736,19 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
     [RelayCommand]
     async Task Quit()
     {
+        if (await ConfirmQuitAsync()) QuitRequested?.Invoke();
+    }
+
+    /// <summary>
+    /// true = pode sair: sem transferências, ou o usuário confirmou. Usado pelo Sair (Ctrl+Q/botão), pelo "Sair" da
+    /// bandeja, pelo "Encerrar" do aviso sem bandeja e pelo "Reiniciar agora". Sem quem responda, não sai.
+    /// </summary>
+    public async Task<bool> ConfirmQuitAsync()
+    {
         var transfers = Host.Activity.Transfers.Count;
-        if (transfers > 0 && !await ConfirmAsync(new ConfirmRequest("Sair do craftDriver?",
-                $"{(transfers == 1 ? "Há 1 transferência" : $"Há {transfers} transferências")} em andamento. Elas são interrompidas e " +
-                "continuam na próxima vez que o craftDriver abrir; até lá, a pasta sincronizada fica indisponível.", "Sair")))
-            return;
-        QuitRequested?.Invoke();
+        return transfers == 0 || await ConfirmAsync(new ConfirmRequest("Sair do craftDriver?",
+            $"{(transfers == 1 ? "Há 1 transferência" : $"Há {transfers} transferências")} em andamento. Elas são interrompidas e " +
+            "continuam na próxima vez que o craftDriver abrir; até lá, a pasta sincronizada fica indisponível.", "Sair"));
     }
     [RelayCommand] void OpenLog() => DesktopIntegration.OpenPath(AppPaths.LogFile);
 
@@ -832,6 +891,10 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
         Message = $"{n} arquivo(s) removido(s) deste dispositivo; continuam na nuvem.";
     }
 
+    /// <summary>Ctrl+S: salva só com a aba Configurações aberta (nas outras não há o que salvar).</summary>
+    [RelayCommand]
+    Task SaveSettingsShortcut() => SelectedTab == SettingsTab ? SaveSettingsCommand.ExecuteAsync(null) : Task.CompletedTask;
+
     [RelayCommand]
     async Task SaveSettings()
     {
@@ -856,10 +919,21 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
             ShowError("O Client ID precisa ser um identificador do Entra ID (ex.: 00000000-0000-0000-0000-000000000000).");
             return;
         }
+        // a nova pasta não pode ser a de outra instância (outra configuração): a trava passa para ela antes de desmontar
+        SingleInstance? movedLock = null;
+        string? movedKey = null;
+        if (remount && InstanceLocks.PrepareMove(mount, out movedLock, out movedKey) is { } lockError)
+        {
+            ShowError(lockError);
+            return;
+        }
         if (remount && !await ConfirmAsync(new ConfirmRequest("Mudar a pasta sincronizada?",
                 $"A pasta sai de {c.MountPoint} e passa para {mount}. Programas com arquivos abertos na pasta atual perdem o acesso a eles; " +
                 "atalhos e favoritos que apontam para o caminho antigo deixam de funcionar.", "Mudar")))
+        {
+            InstanceLocks.CancelMove(movedLock);
             return;
+        }
         MountPoint = mount;
         c.CacheLimitMB = (long)(CacheLimitGB * 1024);
         c.DownloadConcurrency = (int)Math.Clamp(DownloadConcurrency, 1, 32);
@@ -885,11 +959,13 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
             // pasta ocupada (EBUSY): a montagem continua na antiga; gravar a nova faria a tela e a configuração mentirem
             if (await Host.UnmountAsync())
             {
+                InstanceLocks.CommitMove(movedLock, movedKey);
                 c.MountPoint = MountPoint;
                 Host.Mount();
             }
             else
             {
+                InstanceLocks.CancelMove(movedLock);
                 mountProblem = $"A pasta sincronizada continua em {c.MountPoint}: {AppHost.BusyMountText}.";
                 MountPoint = c.MountPoint;
             }
@@ -905,6 +981,7 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
             : notes.Count == 0 ? "Configurações salvas."
             : "Configurações salvas — " + string.Join("; ", notes) + ". Use \"Reiniciar agora\".";
         if (mountProblem != null) text = mountProblem + " " + text;
+        else if (remount && MountPath.SymlinkWarning(c.MountPoint) is { } linkNote) text += " " + linkNote; // aviso, não bloqueia
         if (autostartNote != null) text += " " + autostartNote; // aviso do início automático não pode sumir
         if (!saved || mountProblem != null) ShowError(text);
         else Message = text;

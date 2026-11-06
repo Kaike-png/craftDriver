@@ -307,7 +307,7 @@ public class VersionsWindowTests
     /// <summary>Para o motor fora da thread de UI (Stop espera os laços, que podem estar presos num envio).</summary>
     sealed class Stopper(ShareVersionsHostTests.Env env) : IDisposable
     {
-        public void Dispose() => Task.Run(env.Dispose).Wait();
+        public void Dispose() => ShellUi.Wait(Task.Run(env.Dispose), 30000);
     }
 
     static void Pump(Func<bool>? until = null, int ms = 400)
@@ -337,7 +337,7 @@ public class VersionsWindowTests
         env.Remote.RemoteCreate("/", "Relatório trimestral.docx", "primeira versão do relatório");
         env.Remote.RemoteUpdate("/Relatório trimestral.docx", "segunda versão, revisada");
         env.Remote.RemoteUpdate("/Relatório trimestral.docx", "terceira (atual) com gráficos");
-        Task.Run(env.Start).Wait(); // motor fora da thread de UI (os laços não podem capturar o contexto dela)
+        ShellUi.Wait(Task.Run(env.Start), 30000); // motor fora da thread de UI (os laços não podem capturar o contexto dela)
         var item = env.Host.ItemFromLocalPath(env.Path("Relatório trimestral.docx"))!;
 
         var vm = new VersionsViewModel(env.Host, item.Lid);
@@ -374,7 +374,7 @@ public class VersionsWindowTests
         CraftDriver.App.App.Host = env.Host;
         env.Remote.RemoteCreate("/", "notas.txt", "v1");
         env.Remote.RemoteUpdate("/notas.txt", "v2");
-        Task.Run(env.Start).Wait(); // motor fora da thread de UI (os laços não podem capturar o contexto dela)
+        ShellUi.Wait(Task.Run(env.Start), 30000); // motor fora da thread de UI (os laços não podem capturar o contexto dela)
         env.Remote.BeforeUpload = (_, ct) => Task.Delay(Timeout.Infinite, ct);
         var path = "/" + ShareVersionsHostTests.Env.Drive + "/notas.txt";
         // fora da thread de UI: o Open baixa o conteúdo esperando de forma síncrona (como o FUSE)
@@ -405,10 +405,10 @@ public class VersionsWindowTests
         CraftDriver.App.App.Host = env.Host;
         env.Remote.RemoteCreate("/", "Fotos da viagem", null, folder: true);
         env.Remote.RemoteCreate("/", "orçamento antigo.xlsx", "x");
-        Task.Run(env.Start).Wait(); // motor fora da thread de UI (os laços não podem capturar o contexto dela)
+        ShellUi.Wait(Task.Run(env.Start), 30000); // motor fora da thread de UI (os laços não podem capturar o contexto dela)
         env.Remote.RemoteDelete("/orçamento antigo.xlsx");
         env.Remote.RemoteDelete("/Fotos da viagem");
-        Task.Run(env.Settle).Wait(); // fora da thread de UI (espera síncrona do delta)
+        ShellUi.Wait(Task.Run(env.Settle), 30000); // fora da thread de UI (espera síncrona do delta)
 
         var vm = new TrashViewModel(env.Host);
         var w = new TrashWindow(vm) { Width = 720, Height = 460 };

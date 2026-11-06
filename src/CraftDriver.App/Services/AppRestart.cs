@@ -46,9 +46,15 @@ public static class AppRestart
         catch { return null; }
     }
 
+    /// <summary>
+    /// Agenda o relançamento com o mesmo comando (<see cref="DesktopIntegration.ExecArgv"/>: binário, ou "dotnet" + DLL)
+    /// e os mesmos argumentos. Só chame depois de a saída estar confirmada: o sh fica esperando este PID.
+    /// </summary>
     public static void ScheduleRelaunch()
     {
-        var exe = Environment.ProcessPath ?? throw new InvalidOperationException("caminho do executável desconhecido");
-        Process.Start(BuildRelaunch(Environment.ProcessId, exe, Environment.GetCommandLineArgs().Skip(1), StartTimeOf(Environment.ProcessId)));
+        if (Environment.ProcessPath == null) throw new InvalidOperationException("caminho do executável desconhecido");
+        var argv = DesktopIntegration.ExecArgv;
+        Process.Start(BuildRelaunch(Environment.ProcessId, argv[0], [.. argv.Skip(1), .. Environment.GetCommandLineArgs().Skip(1)],
+            StartTimeOf(Environment.ProcessId)));
     }
 }

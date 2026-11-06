@@ -12,6 +12,8 @@
         <KeyBinding Gesture="Ctrl+R" Command="{Binding SyncNowCommand}" />
         <KeyBinding Gesture="Ctrl+OemComma" Command="{Binding ShowSettingsCommand}" />
         <KeyBinding Gesture="Ctrl+Q" Command="{Binding QuitCommand}" />
+        <!-- Salvar das Configurações: só naquela aba (o HotKey do botão valia em todas) -->
+        <KeyBinding Gesture="Ctrl+S" Command="{Binding SaveSettingsShortcutCommand}" />
     </Window.KeyBindings>
 
     <DockPanel>
@@ -108,10 +110,10 @@
                         </StackPanel>
                     </Border>
 
-                    <!-- cabeça da fila falhando: nada atrás dela anda até ela passar -->
-                    <Border Grid.Row="2" Classes="danger" Padding="12" Margin="0,0,0,8" IsVisible="{Binding HasQueueBlocked}">
+                    <!-- falhas esperando nova tentativa; "Envio parado" só quando alguma segura alterações que dependem dela -->
+                    <Border Grid.Row="2" Classes="card" Classes.danger="{Binding QueueStalled}" Padding="12" Margin="0,0,0,8" IsVisible="{Binding HasQueueBlocked}">
                         <StackPanel Spacing="4">
-                            <TextBlock Text="Envio parado" FontWeight="SemiBold" />
+                            <TextBlock Text="{Binding QueueHeader}" FontWeight="SemiBold" />
                             <ItemsControl ItemsSource="{Binding QueueBlocked}">
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate x:DataType="x:String">
@@ -418,7 +420,7 @@
                         <TextBox AutomationProperties.LabeledBy="{Binding #ClientIdLabel}" Text="{Binding ClientId}" />
 
                         <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,8,0,0">
-                            <Button Classes="accent" Content="Salvar" Command="{Binding SaveSettingsCommand}" HotKey="Ctrl+S" ToolTip.Tip="Ctrl+S" />
+                            <Button Classes="accent" Content="Salvar" Command="{Binding SaveSettingsCommand}" ToolTip.Tip="Ctrl+S" />
                             <Button Content="Abrir log" Command="{Binding OpenLogCommand}" />
                             <Button Content="Sair do craftDriver" Command="{Binding QuitCommand}" />
                         </StackPanel>

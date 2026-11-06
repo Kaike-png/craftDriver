@@ -81,6 +81,8 @@ sealed class FakeNotificationServer : IPathMethodHandler, IDisposable
     public ConcurrentQueue<Call> Calls { get; } = new();
     /// <summary>Ids pedidos em CloseNotification.</summary>
     public ConcurrentQueue<uint> Closed { get; } = new();
+    /// <summary>Resposta do GetCapabilities (sem "actions" = servidor que não mostra botões).</summary>
+    public string[] Capabilities { get; set; } = ["actions", "body"];
     public string Path => "/org/freedesktop/Notifications";
     public bool HandlesChildPaths => false;
 
@@ -130,7 +132,7 @@ sealed class FakeNotificationServer : IPathMethodHandler, IDisposable
             case "GetCapabilities":
             {
                 using var w = ctx.CreateReplyWriter("as");
-                w.WriteArray(new[] { "actions", "body" });
+                w.WriteArray(Capabilities);
                 ctx.Reply(w.CreateMessage());
                 break;
             }

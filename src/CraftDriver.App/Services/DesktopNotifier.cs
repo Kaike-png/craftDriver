@@ -12,6 +12,12 @@ public sealed record NotificationAction(string Id, string Label, Action OnInvoke
 {
     /// <summary>Id que o servidor de notificações usa para o clique no corpo da notificação (sem botão).</summary>
     public const string Default = "default";
+
+    /// <summary>
+    /// Como fazer o mesmo sem o botão — acrescentado ao texto quando o servidor não mostra ações (sem a capacidade
+    /// <c>actions</c>, ex.: alguns daemons mínimos) ou no notify-send. Sem isto a notificação ficava sem botão e sem dica.
+    /// </summary>
+    public string? HintWithoutButtons { get; init; }
 }
 
 /// <summary>
@@ -36,7 +42,10 @@ public sealed class DesktopNotifier : IDisposable
     /// <summary>Etiqueta → id da última notificação mostrada com ela (substituir/fechar).</summary>
     readonly ConcurrentDictionary<string, uint> _tags = new();
     DBusConnection? _conn;
+    /// <summary>Capacidades do servidor nesta conexão (GetCapabilities); null = ainda não consultadas.</summary>
+    Task<bool>? _supportsActions;
     readonly List<IDisposable> _watches = [];
+    readonly Lock _capsLock = new();
     bool _disposed;
 
     /// <summary>Diagnóstico (falhas do D-Bus, uso do fallback). Padrão: nada.</summary>
@@ -82,7 +91,10 @@ public sealed class DesktopNotifier : IDisposable
                 {
                     var conn = await ConnectionAsync().ConfigureAwait(false);
                     var replaces = tag != null && _tags.TryGetValue(tag, out var old) ? old : 0u;
-                    var id = await SendAsync(conn, title, body, icon, actions, replaces).WaitAsync(CallTimeout).ConfigureAwait(false);
+                    var (shownBody, shownActions) = actions.Count > 0 && !await SupportsActionsAsync(conn).ConfigureAwait(false)
+                        ? (WithHints(body, actions), (IReadOnlyList<NotificationAction>)[])
+                        : (body, actions);
+                    var id = await SendAsync(conn, title, shownBody, icon, shownActions, replaces).WaitAsync(CallTimeout).ConfigureAwait(false);
                     if (tag != null)
                     {
                         // o servidor costuma devolver o mesmo id ao substituir; se não, os botões da antiga saem
@@ -104,8 +116,43 @@ public sealed class DesktopNotifier : IDisposable
                 }
             }
         }
-        RunNotifySend(title, body, icon);
+        RunNotifySend(title, WithHints(body, actions), icon); // notify-send não tem botões
         return null;
+    }
+
+    /// <summary>Texto com as dicas das ações que não vão aparecer como botão.</summary>
+    internal static string WithHints(string body, IReadOnlyList<NotificationAction> actions)
+    {
+        var hints = actions.Select(a => a.HintWithoutButtons).OfType<string>().Distinct().ToList();
+        return hints.Count == 0 ? body : body + "\n" + string.Join("\n", hints);
+    }
+
+    /// <summary>O servidor mostra botões (capacidade "actions")? Consultado uma vez por conexão; erro = não.</summary>
+    Task<bool> SupportsActionsAsync(DBusConnection conn)
+    {
+        lock (_capsLock)
+            return _supportsActions ??= QueryActionsAsync(conn);
+    }
+
+    async Task<bool> QueryActionsAsync(DBusConnection conn)
+    {
+        try
+        {
+            MessageBuffer msg;
+            using (var w = conn.GetMessageWriter())
+            {
+                w.WriteMethodCallHeader(Service, ObjPath, Iface, "GetCapabilities", null, MessageFlags.None);
+                msg = w.CreateMessage();
+            }
+            var caps = await conn.CallMethodAsync(msg, static (m, _) => m.GetBodyReader().ReadArrayOfString(), null)
+                .WaitAsync(CallTimeout).ConfigureAwait(false);
+            return caps.Contains("actions");
+        }
+        catch (Exception ex)
+        {
+            Log?.Invoke($"GetCapabilities falhou ({ex.GetType().Name}: {ex.Message}); notificações sem botões");
+            return false;
+        }
     }
 
     async Task<DBusConnection> ConnectionAsync()
@@ -189,20 +236,34 @@ public sealed class DesktopNotifier : IDisposable
     {
         if (!_tags.TryRemove(tag, out var id)) return;
         _callbacks.TryRemove(id, out _);
-        var conn = _conn;
-        if (conn == null || _disposed) return;
-        try
+        if (_address == null || _disposed) return;
+        // conexão caída desde o aviso: reconecta (como o NotifyAsync) — o servidor costuma ser o mesmo e o id ainda vale
+        for (var attempt = 0; attempt < 2; attempt++)
         {
-            MessageBuffer msg;
-            using (var w = conn.GetMessageWriter())
+            try
             {
-                w.WriteMethodCallHeader(Service, ObjPath, Iface, "CloseNotification", "u", MessageFlags.None);
-                w.WriteUInt32(id);
-                msg = w.CreateMessage();
+                var conn = await ConnectionAsync().ConfigureAwait(false);
+                MessageBuffer msg;
+                using (var w = conn.GetMessageWriter())
+                {
+                    w.WriteMethodCallHeader(Service, ObjPath, Iface, "CloseNotification", "u", MessageFlags.None);
+                    w.WriteUInt32(id);
+                    msg = w.CreateMessage();
+                }
+                await conn.CallMethodAsync(msg).WaitAsync(CallTimeout).ConfigureAwait(false);
+                return;
             }
-            await conn.CallMethodAsync(msg).WaitAsync(CallTimeout).ConfigureAwait(false);
+            catch (DBusErrorReplyException ex)
+            {
+                Log?.Invoke($"Não foi possível fechar a notificação ({ex.ErrorName})");
+                return;
+            }
+            catch (Exception ex)
+            {
+                Log?.Invoke($"Não foi possível fechar a notificação ({ex.GetType().Name}: {ex.Message})");
+                await ResetAsync().ConfigureAwait(false);
+            }
         }
-        catch (Exception ex) { Log?.Invoke($"Não foi possível fechar a notificação ({ex.GetType().Name}: {ex.Message})"); }
     }
 
     void OnActionInvoked(uint id, string key)
@@ -242,8 +303,11 @@ public sealed class DesktopNotifier : IDisposable
             DisposeWatches();
             _conn?.Dispose();
             _conn = null;
+            lock (_capsLock) _supportsActions = null; // o servidor pode ser outro
             _callbacks.Clear();
-            _tags.Clear(); // ids do servidor anterior não valem para o novo
+            // as etiquetas ficam: quase sempre só a conexão caiu e o servidor (e os ids) é o mesmo — sem o id, o aviso
+            // antigo ("sessão expirada") não era substituído nem fechado ao entrar de novo. Id de um servidor novo não
+            // existe lá: replaces_id desconhecido vira notificação nova e CloseNotification é ignorado (especificação)
         }
         finally { _gate.Release(); }
     }

@@ -15,10 +15,8 @@ namespace CraftDriver.App;
 
 public partial class App : Application
 {
+    /// <summary>O host (null enquanto ele não existe — espera do chaveiro; teste com <c>Host?.</c>).</summary>
     public static AppHost Host { get; set; } = null!;
-
-    /// <summary>O host, ou null enquanto ele não existe (espera do chaveiro).</summary>
-    public static AppHost? HostOrNull => Host;
 
     /// <summary>Servidor IPC aberto pelo Program antes do Avalonia ("ainda iniciando"); o AppHost o assume.</summary>
     public static CraftDriver.Core.Ipc.IpcServer? EarlyIpc { get; set; }
@@ -62,7 +60,7 @@ public partial class App : Application
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
             _desktop = desktop;
-            CrashGuard.Install(() => HostOrNull?.Activity, ShowUnexpectedError);
+            CrashGuard.Install(() => Host?.Activity, ShowUnexpectedError);
             // SIGTERM/SIGINT/SIGHUP: o mesmo "Sair" da bandeja (desmonta, grava posição/configuração, apaga o socket)
             Program.OnShutdownSignal = () => Dispatcher.UIThread.Post(QuitFromSignal);
             var cfg = Host?.Config ?? StartupConfig ?? AppConfig.Load();
@@ -77,7 +75,7 @@ public partial class App : Application
     void ShowUnexpectedError(string text)
     {
         if (_vm != null && _window is { IsVisible: true }) _vm.ShowError(text);
-        else HostOrNull?.Notify("craftDriver — erro", text, []);
+        else Host?.Notify("craftDriver — erro", text, []);
     }
 
     void QuitFromSignal()
@@ -94,31 +92,62 @@ public partial class App : Application
     /// </summary>
     async Task StartAsync(IClassicDesktopStyleApplicationLifetime desktop, AppConfig cfg)
     {
-        var minimized = StartMinimized && cfg.Accounts.Count > 0;
-        _startup = new StartupCoordinator<AppHost>((status, skip) => HostFactory(cfg, status, skip));
-        var run = _startup.RunAsync(showSplash: !minimized);
-        var tray = true;
-        if (minimized)
+        try
         {
-            // no login o painel pode subir depois do craftDriver: espera um pouco por um host de bandeja
-            tray = await TrayHostProbe.WaitForHostAsync(DesktopNotifier.SessionBusAddress(), TimeSpan.FromSeconds(3));
-            if (tray && !run.IsCompleted) CreateTray(starting: true);
-            else if (!tray)
+            var minimized = StartMinimized && cfg.Accounts.Count > 0;
+            _startup = new StartupCoordinator<AppHost>((status, skip) => HostFactory(cfg, status, skip));
+            var run = _startup.RunAsync(showSplash: !minimized);
+            var tray = true;
+            if (minimized)
             {
-                _noTrayAtStart = true;
-                _startup?.ShowSplash();
+                // no login o painel pode subir depois do craftDriver: espera um pouco por um host de bandeja
+                tray = await TrayHostProbe.WaitForHostAsync(DesktopNotifier.SessionBusAddress(), TimeSpan.FromSeconds(3));
+                if (tray && !run.IsCompleted) CreateTray(starting: true);
+                else if (!tray)
+                {
+                    _noTrayAtStart = true;
+                    _startup?.ShowSplash();
+                }
             }
+            var host = await run;
+            _startup = null;
+            if (host == null)
+            {
+                if (_tray != null) _tray.IsVisible = false;
+                desktop.Shutdown();
+                return;
+            }
+            Host = host;
+            InitWithHost(StartupPlan.ShowWindowAtStart(StartMinimized, cfg.Accounts.Count, tray));
         }
-        var host = await run;
+        catch (Exception ex)
+        {
+            // chamada com "_ =": sem isto a exceção ficava presa na Task descartada (o OnUnobserved só a vê no GC) e o
+            // processo seguia vivo sem janela, segurando trava e socket ("ainda iniciando" para sempre)
+            await FailStartAsync(desktop, ex);
+        }
+    }
+
+    /// <summary>Falha depois da fábrica do AppHost (Start, janela, bandeja): registra, avisa, encerra o que subiu e sai.</summary>
+    async Task FailStartAsync(IClassicDesktopStyleApplicationLifetime desktop, Exception ex)
+    {
+        CrashGuard.Report(ex, "início");
+        _quitting = true;
         _startup = null;
-        if (host == null)
+        try
         {
             if (_tray != null) _tray.IsVisible = false;
-            desktop.Shutdown();
-            return;
+            _window?.Close();
+            var text = "O craftDriver não conseguiu iniciar: " + ex.GetBaseException().Message + " (detalhes no log)";
+            if (Host is { } h)
+            {
+                h.Notify("craftDriver não iniciou", text, []);
+                await h.ShutdownAsync(); // desmonta e fecha o IPC se o Start chegou a abri-los
+            }
+            else _ = DesktopIntegration.Notify("craftDriver não iniciou", text);
         }
-        Host = host;
-        InitWithHost(StartupPlan.ShowWindowAtStart(StartMinimized, cfg.Accounts.Count, tray));
+        catch (Exception again) { CrashGuard.Report(again, "início (encerrando)"); }
+        finally { desktop.Shutdown(); }
     }
 
     void InitWithHost(bool showWindow)
@@ -146,7 +175,7 @@ public partial class App : Application
                 () => TrayHostProbe.IsHostAvailableAsync(DesktopNotifier.SessionBusAddress(), TimeSpan.FromSeconds(1)),
                 (t, b) => Host.Notify(t, b, []),
                 w => CloseToTrayBehavior.AskWithDialog(w, Host.Config.MountPoint),
-                Quit);
+                QuitWithConfirmation);
 
             if (showWindow) ShowWindow();
         }
@@ -195,7 +224,7 @@ public partial class App : Application
         _pauseItem = new NativeMenuItem("Pausar sincronização");
         _pauseItem.Click += (_, _) => _vm.TogglePauseCommand.Execute(null);
         var quit = new NativeMenuItem("Sair");
-        quit.Click += (_, _) => Quit();
+        quit.Click += (_, _) => QuitWithConfirmation();
         menu.Items.Add(open);
         menu.Items.Add(folder);
         menu.Items.Add(sync);
@@ -245,15 +274,22 @@ public partial class App : Application
         });
     }
 
+    /// <summary>Cria a janela principal sem mostrar (ela é a dona dos diálogos de confirmação).</summary>
+    MainWindow EnsureWindow()
+    {
+        if (_window != null) return _window;
+        _window = new MainWindow { DataContext = _vm };
+        // fechar a janela mantém o app na bandeja, como no Windows; sem bandeja, pergunta
+        _closeBehavior!.Attach(_window, () => _quitting);
+        return _window;
+    }
+
     void ShowWindow()
     {
         if (_window == null)
         {
-            _window = new MainWindow { DataContext = _vm };
-            // fechar a janela mantém o app na bandeja, como no Windows; sem bandeja, pergunta
-            _closeBehavior!.Attach(_window, () => _quitting);
-            _window.Show();
-            _window.Activate();
+            EnsureWindow().Show();
+            _window!.Activate();
             return;
         }
         _window.Show();
@@ -306,6 +342,27 @@ public partial class App : Application
         _vm.QuitRequested -= Quit;
         _vm.Dispose();
         if (_desktop != null) _desktop.Exit -= OnExit;
+    }
+
+    bool _confirmingQuit;
+
+    /// <summary>
+    /// "Sair" da bandeja e "Encerrar" do aviso sem bandeja: a mesma confirmação do Ctrl+Q/botão quando há
+    /// transferências. Iniciado minimizado não há janela — e sem janela ninguém responde à confirmação (o "Sair" ficaria
+    /// sem efeito): ela é criada antes e aparece com o diálogo. Comandos de fora (IPC "quit", sinais) não perguntam.
+    /// </summary>
+    async void QuitWithConfirmation()
+    {
+        if (_quitting || _confirmingQuit) return;
+        _confirmingQuit = true;
+        try
+        {
+            if (!_vm.HasConfirmHandler) EnsureWindow();
+            if (!await _vm.ConfirmQuitAsync()) return;
+        }
+        catch (Exception ex) { CrashGuard.Report(ex, "confirmação de saída"); } // sair continua saindo
+        finally { _confirmingQuit = false; }
+        Quit();
     }
 
     async void Quit()
