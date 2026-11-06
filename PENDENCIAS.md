@@ -1063,6 +1063,13 @@ coverlet (134) e classes de UI que trocam `CRAFTDRIVER_HOME` fora da coleção s
   outros 3 runs e 15× seguidas aqui (x64). Não reproduzido; hipótese a testar: desmontagem com a thread de
   notificações (`fuse-notify`) ou um worker do `SlowOps` ainda dentro da sessão. Se repetir, pegar o dump do
   `--blame-hang` e o log do `FuseHost`; considerar o `Montado` desmontar com `fusermount -u` de novo antes de falhar.
+  **Repetiu** no run da tag v0.3.0 (42301905975, arm64) em `NamesAndDrivesTests.Chmod_em_pasta…` — 2 de 6 runs arm64
+  desde a rodada 3; nunca no x64. Os dois testes fazem setattr (utime/chmod) logo antes de desmontar. O loop só termina
+  depois de `_inflight == 0` (até 15 s) e de `KernelNotifications.Stop()` (até 15 s): o teste espera 15 s no total.
+  Próximo passo: expor no `FuseHost` um diagnóstico (inflight, fila de notificações, threads do `SlowOps`) e pô-lo na
+  mensagem do teste; suspeitas: resposta assíncrona perdida (modelo de memória do ARM no `SlowOps`) ou
+  `notify_inval_inode` preso numa página travada (modo cache de página da libfuse 3.14). Efeito no app: encerrar pode
+  demorar até 30 s no arm64 e a sessão ser vazada (o processo sai mesmo assim). Release v0.3.0 saiu com rerun do job.
 - [x] `DisplayScalingTests.Le_monitores…` (x64): servidor falso no ThreadPool demorava mais que os 500 ms do
   `HyprRequest` com o executor ocupado. **Feito:** prazo de 10 s só no teste (produção continua 500 ms e já trata o erro).
 
