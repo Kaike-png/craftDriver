@@ -5,10 +5,31 @@ Rodada 2 (seções 12–19): novo levantamento sobre a árvore atual (26 k LOC, 
 desde `fb03c53`). Ordenado por consequência. `arquivo:linha` conferidos na data; deslocam com edições. **HIPÓTESE** = não reproduzido.
 Marque `[x]` ao concluir.
 
-**Ainda abertos da rodada 1:** uploads paralelos (§3, ver §13.1); instalação em modo usuário das extensões Thunar/PCManFM/Nautilus (§6);
-bandeja com PNG em vez de ícone simbólico (§6); 2ª execução durante a espera do chaveiro abre outra instância (§8, ver §15.3);
-pacote Arch arm64 e app montando FUSE num ARM instalado (§9); Graph real: 416 em retry, SharePoint/conta de trabalho, Office×`O_APPEND`,
-link de compartilhamento, retomada de envio (§11).
+**Rodada 2 concluída em 2026-11-06** (notas "**Feito (rodada 2)**" ao fim de cada seção 12–19): os 88 itens tiveram a
+causa reproduzida com teste RED e foram corrigidos; 4 ficaram parciais (`[~]`): índice da `InodeTable` sem ganho no `rm -rf`
+real, delta por pasta sem Graph real, i18n, publicação no AUR (precisa do segredo).
+
+**Verificado com conta de trabalho real em 2026-11-06** (OneDrive novolare + "Setor - TI" só leitura, binário com trimming):
+login por código de dispositivo (vai para `/organizations`); 58 MB em 10 s com envios em paralelo; leitura por faixas
+(0,42 s/MB; 0,5 s/MB num .zip de 128 MB da biblioteca); 1 versão por gravação; restaurar e copiar versão; `mv` sobre destino
+existente (DELETE com If-Match + Move com `fail` aceitos pelo SharePoint); `rm`+recriar sem conflito; `.docx` com `O_APPEND`
+sem divergência; 6 arquivos Office da biblioteca com tamanho da Graph = bytes baixados; Lixeira lista (restaurar só pelo
+navegador, como documentado); envio de 150 MB interrompido por SIGKILL termina inteiro, 1 versão, sem duplicata.
+
+- [ ] **`craftdriver share` cria link "qualquer pessoa com o link" por padrão**, também em conta corporativa cujo tenant
+  permite (o de "organização" só entra se a política recusar). Para quem usa conta de trabalho o padrão deveria ser
+  "organização", com `--anyone` explícito para o anônimo; a interface deveria mostrar o escopo antes de criar.
+- [ ] Retomada de envio não registra o offset retomado: na verificação real não deu para distinguir "retomou" de
+  "recomeçou" (o resultado final está certo). Logar `Debug` com o offset de `NextExpectedOffsetAsync`.
+
+**Ainda abertos:** instalação em modo usuário das extensões Thunar/PCManFM/Nautilus (§6); bandeja com PNG em vez de ícone
+simbólico (§6); pacote Arch arm64 e app montando FUSE num ARM instalado (§9); Graph real: escrita numa biblioteca de equipe
+(só leitura testada), 416 em retry, `conflictBehavior=fail` num nome criado por outro dispositivo, sessão concluída, papéis
+`sp.*` (o único compartilhado da conta foi detectado como gravável — não conferido), delta por pasta (§11/§21); i18n (§18).
+**Teste instável a investigar:** `StreamingTests.Hash_final_divergente_nao_vira_cache_e_descarta_os_blocos` falhou 1× em ~9
+rodadas completas (só sob a suíte inteira; 30/30 isolado) e a mensagem não foi capturada. Não é a inscrição tardia na
+Atividade (descartado com atraso induzido de 1,5 s). Travamento do UiTests no CI da v0.2.0: o CI agora usa
+`--blame-hang-timeout`, que vai dizer qual teste é.
 
 ## 1. Bugs — perda/corrupção de dados
 
@@ -428,44 +449,54 @@ download e `open`, rename para nome local-only, hash divergente, falha de downlo
 
 ## 12. Bugs — perda/corrupção de dados
 
-- [ ] **Sweep da sub-drive compartilhada apaga o que foi criado localmente durante a listagem** — `SyncEngine.cs:1466-1519` + `RemoveLocal` :1299.
+- [x] **Sweep da sub-drive compartilhada apaga o que foi criado localmente durante a listagem** — `SyncEngine.cs:1466-1519` + `RemoveLocal` :1299.
   A BFS por `children` roda fora de `_mutate`; um upload/mkdir que termina nesse intervalo ganha `ItemId` que não está em
   `seen` → `Sweep` → `RemoveLocal` apaga item e cache (filhos `Dirty` reaparecem na raiz do compartilhamento como cópias).
   Janela = duração da listagem, a cada 300 s. Correção: capturar `Db.AllRemoteIds(DriveId)` ANTES da listagem e varrer só
   `conhecidos − seen`.
-- [ ] **Mesma corrida na drive principal em enumeração completa** — `RunDeltaAsync` solta `_mutate` entre páginas (:1146) e
+- [x] **Mesma corrida na drive principal em enumeração completa** — `RunDeltaAsync` solta `_mutate` entre páginas (:1146) e
   `Sweep` roda no fim (:1159). Dispara na carga inicial, no 410/resync e em `RestoreDeletesAsync` (:955, zera o deltaLink):
   "Restaurar" exclusões com envios em andamento apaga localmente o que acabou de subir. HIPÓTESE quanto à Graph incluir
   na enumeração em curso o item recém-criado; a lógica local não tem guarda. Mesma correção.
-- [ ] **Desmontar/encerrar com fd de escrita aberto → alteração nunca sobe** — `AppHost.cs:199-205`, `VirtualFs.cs:653-661`,
+- [x] **Desmontar/encerrar com fd de escrita aberto → alteração nunca sobe** — `AppHost.cs:199-205`, `VirtualFs.cs:653-661`,
   `SyncEngine.cs:64-70`. `fuse_session_exit` encerra sem `release`; `Write` já marcou `Dirty` (:527) mas o `Upload` só é
   enfileirado no `CommitWrite`; `Start()` não varre `Dirty` sem op (`AllDirty` foi removido na §4). Item fica "sincronizando"
   para sempre e o delta passa a ignorar versões remotas dele (:1249). Mesmo efeito em crash. Correção: no `Start()`, `Dirty &&
   !LocalOnly && sem Upload pendente → Enqueue`; no `UnmountAsync`, `CommitWrite` dos handles com `Wrote` antes do `Engine.Stop`.
-- [ ] **"Copiar link", "Versões" e "Baixar cópia" quebram em itens compartilhados/atalhos** — `ItemActions.cs:63,69,92,115-116,177,268`
+- [x] **"Copiar link", "Versões" e "Baixar cópia" quebram em itens compartilhados/atalhos** — `ItemActions.cs:63,69,92,115-116,177,268`
   passam `drive.DriveId` (chave interna `<drive>|atalho|…`) em vez de `drive.ApiDriveId` (`SyncEngine.cs:675`) → Graph 400.
   `VirtualPathOf` (:230) também monta `/Host: Nome/...` inexistente → "Baixar cópia" dá ENOENT. Contradiz
   `docs/compartilhados.md:46` ("ApiDriveId em todas as chamadas").
-- [ ] **`mv` local para nome que já existe na nuvem substitui o arquivo da nuvem** — `GraphClient.cs:464` `conflictBehavior=replace`
+- [x] **`mv` local para nome que já existe na nuvem substitui o arquivo da nuvem** — `GraphClient.cs:464` `conflictBehavior=replace`
   no Move; o VFS só confere o banco local. Arquivo criado por outro dispositivo após o último delta vai para a Lixeira sem
   aviso. Sugestão: `fail` + 409 tratado como no upload (`SyncEngine.cs:1794`). HIPÓTESE sobre suporte do SharePoint ao
   `conflictBehavior` em PATCH.
-- [ ] **Conflito de edição (412) com o arquivo aberto desvia as escritas seguintes para a cópia** — `HandleEditConflictAsync`
+- [x] **Conflito de edição (412) com o arquivo aberto desvia as escritas seguintes para a cópia** — `HandleEditConflictAsync`
   :1887 faz `File.Move` do arquivo do cache; o VFS escreve pelo `SafeFileHandle` (:516) → escritas posteriores caem na cópia já
   enviada, e o original fica `Dirty` sem arquivo ("voltou à versão da nuvem", :1741-1757). HIPÓTESE (SQLite/logs/OBS no
   instante do 412). Correção: `File.Copy` quando `IsOpen(lid)`.
-- [ ] **`Create` chama `Open` segurando `Db.Lock`** — `VirtualFs.cs:403-409`. Se o delta inserir o item entre o lookup e o
+- [x] **`Create` chama `Open` segurando `Db.Lock`** — `VirtualFs.cs:403-409`. Se o delta inserir o item entre o lookup e o
   create: (a) força `Trunc` mesmo sem `O_TRUNC` → perda do conteúdo; (b) em item só-online o download roda dentro do lock →
   monitor reentrante preso → montagem inteira trava. HIPÓTESE (corrida). Correção: sair do lock antes do `Open` e só passar
   `Trunc` se vier no `flags`.
-- [ ] **Retomada de sessão "expirada" (404) após o último pedaço ter sido aceito** — `GraphClient.cs:70-74` reenvia → 404/416 →
+- [x] **Retomada de sessão "expirada" (404) após o último pedaço ter sido aceito** — `GraphClient.cs:70-74` reenvia → 404/416 →
   :388-392 "expirou" → recomeço com `conflictBehavior=fail` (:335) → 409 → cópia de conflito local + duplicata na nuvem.
   HIPÓTESE (depende da resposta real da Graph à URL de sessão concluída). Conferir com `GetChildByNameAsync` + hash antes de
   recomeçar.
 
+**Feito (rodada 2, verificado em 2026-11-06):** todos os itens reproduzidos com teste RED antes da correção
+(`Section12Tests`, `Rodada2MotorTests`, `Rodada2FilaTests`, `FilaA2Tests`, `FrenteA1Tests`). Correções que divergiram da sugestão
+abaixo: 12.5 — o Move vai sempre com `fail`; sobrescrever um destino conhecido o exclui antes (com `If-Match`); 12.6 — os fds
+abertos passam para a cópia de conflito (o `File.Copy` sugerido sobrescrevia a versão do outro dispositivo); 12.1/12.2 — os
+"conhecidos" do início da enumeração ficam no banco (`delta_candidates`), o que também permite retomar após reinício.
+**Na integração:** a fila paralela deixava Move/mkdir/envio de item novo passarem à frente de uma exclusão que aguardava o
+período de silêncio — `mv` sobre destino virava conflito e `rm x` + criar `x` **perdia o arquivo novo na nuvem**; agora
+esperam a exclusão do mesmo nome na mesma pasta (`IntegracaoFilaTests`). Dependem da Graph real (simulados no FakeGraph):
+12.5 (`conflictBehavior` em PATCH no SharePoint), 12.8 (resposta da URL de sessão concluída).
+
 ## 13. Bugs — comportamento errado (motor)
 
-- [ ] **`_mutate` fica preso durante a transferência inteira do upload** — `OpsLoop` :1586-1591; `RunDeltaAsync` :1112,
+- [x] **`_mutate` fica preso durante a transferência inteira do upload** — `OpsLoop` :1586-1591; `RunDeltaAsync` :1112,
   `RefreshSharedWithMeAsync` :1412 e `RestoreDeletesAsync` :944 esperam. Num envio de GBs a drive não recebe nada da nuvem,
   "Sincronizar agora" não faz nada, "Restaurar" exclusões trava a UI (e o shutdown, `AppHost.cs:108`). O lock só precisa cobrir
   o commit (:1842-1868), tratando "delta já inseriu este id" (hoje viraria cópia de conflito em :1203-1217). **É o bloqueio
@@ -473,217 +504,262 @@ download e `open`, rename para nome local-only, hash divergente, falha de downlo
   sob `Db.Lock` (a coalescência de `Enqueue` :528-533 passa a excluir `running`); (b) dependências: `parent_lid` em `ops`, só
   reivindicar sem `mkdir` pendente/em execução no ancestral; serializar por `lid` (Upload→Move→SetTime); (c)
   `PendingDeleteFor` (:1696) assume ordem por id.
-- [ ] **Erro "transitório" persistente trava a fila para sempre** — `OpsLoop` :1598-1607 sem teto de tentativas;
+- [x] **Erro "transitório" persistente trava a fila para sempre** — `OpsLoop` :1598-1607 sem teto de tentativas;
   `Models.cs:113` classifica 423 (arquivo bloqueado/checked-out no SharePoint), 401 e 5xx como transitórios; backoff máx. 300 s.
   Um `.xlsx` aberto no Excel Online na cabeça da fila bloqueia todos os envios da drive indefinidamente, sem aparecer em
   Problemas. Correção: após N tentativas (ou 423 específico) → `FailPermanently`.
-- [ ] **"Descartar aviso" de um `mkdir` falho trava a fila** — `ParentRemoteId` :1658-1667: pai sem `ItemId`, sem op e sem
+- [x] **"Descartar aviso" de um `mkdir` falho trava a fila** — `ParentRemoteId` :1658-1667: pai sem `ItemId`, sem op e sem
   `failed_ops` (após `DismissFailure`, `StateDb.cs:667`) → `parentPending` 503 "transitório" → caso acima para cada filho.
   Correção: sem `PendingOpsFor(parent, Mkdir)` → reenfileirar o mkdir do pai ou falhar permanente.
-- [ ] **Parciais órfãos nunca são apagados e contam no limite do cache → LRU despeja tudo** — `Cache.Delete` (`Support.cs:292`)
+- [x] **Parciais órfãos nunca são apagados e contam no limite do cache → LRU despeja tudo** — `Cache.Delete` (`Support.cs:292`)
   e `DeleteDrive` (:297) não tocam `.partial/<drive>-<lid>-*` (`.partial`, `.stream`, `.blocks`); `DeleteOtherPartials` (:264)
   só limpa outras versões do mesmo lid. `ScanBytes` (:312-323) soma tudo; `EnforceCacheLimit` (`SyncEngine.cs:520-544`) só
   despeja linhas de `items`. Com órfãos ≥ 90 % do limite, a cada 2 min o LRU apaga TODO o cache não fixado (thrashing
   silencioso). Snapshots `.uploads` de ops removidas por `RemoveOpsForLid` também ficam até o próximo `CleanStale`.
-- [ ] **Limite de banda satura em ~8–16 MB/s qualquer que seja o valor** — `Graph/TransferBandwidth.cs:32,70`: fatia de 16 KiB
+- [x] **Limite de banda satura em ~8–16 MB/s qualquer que seja o valor** — `Graph/TransferBandwidth.cs:32,70`: fatia de 16 KiB
   + `Task.Delay(Clamp(…, 1 ms, …))`; acima de ~16 MB/s a espera devida (< 1 ms) vira ≥ 1 ms por fatia (granularidade do timer
   ~1–1,5 ms no Linux). Configurar 50 MB/s limita a ~10–16. HIPÓTESE no teto exato; medir. Correção: acumular dívida e dormir só
   quando ≥ ~5 ms, ou fatia maior em taxas altas.
-- [ ] Cópia de conflito desnecessária quando a nuvem só mudou metadados — 412 (:1812) vira cópia sempre; `HandleEditConflictAsync`
+- [x] Cópia de conflito desnecessária quando a nuvem só mudou metadados — 412 (:1812) vira cópia sempre; `HandleEditConflictAsync`
   já busca `remote` (:1875) mas não compara `remote.CTag == item.CTag` (rename/propriedade mudam eTag, não conteúdo).
-- [ ] Upload 409 de item novo nunca confere hash — :1794-1811: mesmo arquivo copiado de dois dispositivos vira "(conflito …)"
+- [x] Upload 409 de item novo nunca confere hash — :1794-1811: mesmo arquivo copiado de dois dispositivos vira "(conflito …)"
   em vez de adotar o id remoto (como `CreateFolderAsync` faz para pastas, `GraphClient.cs:440-446`).
-- [ ] `RetryFailure` perde `is_dir` — `StateDb.cs:692-694` (`failed_ops` não tem a coluna): exclusão de pasta que volta de Problemas
+- [x] `RetryFailure` perde `is_dir` — `StateDb.cs:692-694` (`failed_ops` não tem a coluna): exclusão de pasta que volta de Problemas
   aparece como arquivo em `HeldDeletes`/`trash`.
-- [ ] `ErrnoForDownload`/`HandleError` tratam ENOENT/EACCES do cache como "sem conexão" — `Errors.cs:11` (errno 2 ausente);
+- [x] `ErrnoForDownload`/`HandleError` tratam ENOENT/EACCES do cache como "sem conexão" — `Errors.cs:11` (errno 2 ausente);
   `FileNotFoundException` cai em `IOException` → `Offline=true` (`SyncEngine.cs:984`). Cache apagado mostra "Sem conexão".
-- [ ] Retry de métodos não idempotentes — `GraphClient.cs:70-74` reenvia até 3× após `HttpRequestException/TaskCanceled`:
+- [x] Retry de métodos não idempotentes — `GraphClient.cs:70-74` reenvia até 3× após `HttpRequestException/TaskCanceled`:
   `restoreVersion` (:588) pode restaurar duas vezes; PUT de arquivo vazio com `fail` (:298-305) pode dar 409 na 2ª.
-- [ ] `/permissions` sem paginação (:553) e `ParseCanWrite` (:563-571) só aceita `write`/`owner`: papéis `sp.*`/`fullcontrol` do
+- [x] `/permissions` sem paginação (:553) e `ParseCanWrite` (:563-571) só aceita `write`/`owner`: papéis `sp.*`/`fullcontrol` do
   SharePoint → compartilhamento tratado como somente leitura. HIPÓTESE (nunca testado em conta real).
-- [ ] `IsPolicyRefusal` (`ItemActions.cs:85`) inclui 400 genérico → qualquer 400 tenta `organization` e mostra o segundo erro.
-- [ ] `DeleteAsync` sem `If-Match` (:449-456): exclusão feita offline apaga versão editada por outro dispositivo nesse meio tempo
+- [x] `IsPolicyRefusal` (`ItemActions.cs:85`) inclui 400 genérico → qualquer 400 tenta `organization` e mostra o segundo erro.
+- [x] `DeleteAsync` sem `If-Match` (:449-456): exclusão feita offline apaga versão editada por outro dispositivo nesse meio tempo
   (recuperável da Lixeira). Precisa de `ops.etag`.
-- [ ] Throttling 429/503 honrado por pedido (:85-93), mas 4 downloads + blocos + delta + ops continuam batendo na janela.
+- [x] Throttling 429/503 honrado por pedido (:85-93), mas 4 downloads + blocos + delta + ops continuam batendo na janela.
   Sugestão: "throttled até T" compartilhado por conta.
+
+**Feito (rodada 2):** 13.1 em três etapas — o upload só pega `_mutate` no commit (que junta o id que o delta já tenha
+inserido, sem violar `ix_items_remote`), fila com reserva (`ops.state`, `ClaimOps`) que não trava pela cabeça, e
+**uploads paralelos** (`ParallelUploads`, padrão 3; metadados são barreiras curtas e não são ultrapassados para sempre).
+13.5 medido: 50 e 100 MiB/s entregam 90–110 % do limite (antes ~13 MiB/s qualquer que fosse o valor). 13.14: bloqueio de
+429/503 compartilhado por conta. 13.12: mantém a 2ª tentativa e mostra o 1º erro. 13.11: papéis `sp.*` são HIPÓTESE (a
+issue onedrive-api-docs#1484 diz que a API devolve `owner`); aceitos de qualquer forma.
 
 ## 14. Bugs — FUSE/VFS
 
-- [ ] **Renomear/mover na nuvem com dentry em cache → o nome novo lista mas não abre (ENOENT)** — `InodeTable.cs:166-180` +
+- [x] **Renomear/mover na nuvem com dentry em cache → o nome novo lista mas não abre (ENOENT)** — `InodeTable.cs:166-180` +
   `FuseHost.cs:254`. O delta troca `name`/`parent_lid` do lid L; o kernel ainda tem a dentry de `/a.txt` (ino L+1).
   `lookup("/b.txt")` → `GetOrAdd` acha `_byIno[L+1]` com `Path="/a.txt"` e não troca o Path (só adiciona alias) → todo request
   por inode (`open`, `opendir`, `getattr`, `xattr`) resolve `/a.txt` → ENOENT. Para pasta: `ls Docs2` dá ENOENT e os filhos
   ganham inodes virtuais. Dura até o kernel esquecer o inode (horas). Cenário: Dolphin aberto + rename no site/outro PC.
   Nenhum teste faz mudança remota com a montagem ativa. Correção: em `GetOrAdd` com `stable != null` e `existing.Path != path`,
   adotar o caminho novo como canônico; ou invalidação ativa (§18).
-- [ ] **Alias pendurado → `KeyNotFoundException` → EIO permanente no caminho** — `InodeTable.cs:96` vs :69/:107/:155. `Forget` só
+- [x] **Alias pendurado → `KeyNotFoundException` → EIO permanente no caminho** — `InodeTable.cs:96` vs :69/:107/:155. `Forget` só
   remove `_byPath[n.Path]`; o alias fica apontando para ino que saiu de `_byIno` → próximo `Lookup` lança → EIO até remontar.
   **Zero testes unitários de `InodeTable`.** Correção: guardar lista de aliases por nó e remover todos no `Forget`/`Detach`.
-- [ ] `getattr(ino)` de inode detached sem fh responde `EBADF` em vez de `ENOENT`/`ESTALE` — `FuseHost.cs:283-286` → `VirtualFs.cs:686`.
-- [ ] `readdirplus` com `path==null` grava `ino=0xffffffff` no `fuse_entry_param` (`FuseHost.cs:586`); "não ligado" é `ino=0`.
-- [ ] `open(O_RDONLY|O_TRUNC)` não trunca — `VirtualFs.cs:293-294` (`trunc = write && …`); com `ATOMIC_O_TRUNC` o kernel espera
+- [x] `getattr(ino)` de inode detached sem fh responde `EBADF` em vez de `ENOENT`/`ESTALE` — `FuseHost.cs:283-286` → `VirtualFs.cs:686`.
+- [x] `readdirplus` com `path==null` grava `ino=0xffffffff` no `fuse_entry_param` (`FuseHost.cs:586`); "não ligado" é `ino=0`.
+- [x] `open(O_RDONLY|O_TRUNC)` não trunca — `VirtualFs.cs:293-294` (`trunc = write && …`); com `ATOMIC_O_TRUNC` o kernel espera
   que o daemon trunque. HIPÓTESE quanto ao kernel.
-- [ ] `rmdir`/`mv` sobre pasta cujos únicos filhos são excluídos (sync seletiva) → `ENOTEMPTY` enquanto `ls` mostra vazia —
+- [x] `rmdir`/`mv` sobre pasta cujos únicos filhos são excluídos (sync seletiva) → `ENOTEMPTY` enquanto `ls` mostra vazia —
   `VirtualFs.cs:786`, :876 vs :194-195. Seguro, mas `rm -r` falha sem explicação.
-- [ ] mtime durante escrita: só o 1º `write` atualiza (`:524-528`), o `release` põe "agora" (`:645-651`); `SetAttr` trunca para ms
+- [x] mtime durante escrita: só o 1º `write` atualiza (`:524-528`), o `release` põe "agora" (`:645-651`); `SetAttr` trunca para ms
   (`FuseHost.cs:350`) → `make`/`cp -u` entre ext4 e a montagem podem ver "mais velho".
-- [ ] `link`/`symlink`/`mknod` → `ENOSYS` (não registrados em `BuildOps`); `EPERM` é o errno POSIX e `cp -a` trata melhor.
-- [ ] Raiz virtual: modo 0755 mas recusa create (`test -w` mente), mtime = agora a cada stat, entradas das drives no readdirplus com
+- [x] `link`/`symlink`/`mknod` → `ENOSYS` (não registrados em `BuildOps`); `EPERM` é o errno POSIX e `cp -a` trata melhor.
+- [x] Raiz virtual: modo 0755 mas recusa create (`test -w` mente), mtime = agora a cada stat, entradas das drives no readdirplus com
   mtime 0 (1970) (`VirtualFs.cs:174,188`) → `ls -l ~/OneDrive` mostra 1970. Correção: 0555 + mtime fixo + `AttrOf(raiz da drive)`.
-- [ ] Nome com UTF-8 inválido: `S()` (`FuseHost.cs:208`) substitui por U+FFFD → arquivo criado com nome diferente; dois nomes
+- [x] Nome com UTF-8 inválido: `S()` (`FuseHost.cs:208`) substitui por U+FFFD → arquivo criado com nome diferente; dois nomes
   inválidos distintos colidem. HIPÓTESE. `lookup` de nome > 255 bytes → `ENOENT` em vez de `ENAMETOOLONG`. `touch -d 1960` →
   `tv_nsec` negativo (`:173-177`).
-- [ ] Corridas (HIPÓTESE, janelas de ms): TOCTOU `Create`/`Mkdir`/`RenameLocked` com `dstParent` velho → item órfão cujo Upload cai
+- [x] Corridas (HIPÓTESE, janelas de ms): TOCTOU `Create`/`Mkdir`/`RenameLocked` com `dstParent` velho → item órfão cujo Upload cai
   em Problemas para sempre (`SyncEngine.cs:1660`); `readdirplus` concorrente do mesmo dir (`Peek`/`DropIfUnused`,
   `InodeTable.cs:48-52,86`) → referência do kernel que a tabela não conhece → `EBADF` até novo lookup; `Read` inline após
   `ReadNeedsNetwork=false` (`FuseHost.cs:452`) com blocos descartados entre a checagem e o `TryRead` → download na thread do loop.
-- [ ] SlowOps limite 256: > 256 reads presos na rede põem `fsync`/`rename`/`open` locais na fila atrás (inversão de prioridade).
+- [x] SlowOps limite 256: > 256 reads presos na rede põem `fsync`/`rename`/`open` locais na fila atrás (inversão de prioridade).
   Trabalhos de sessão vazada rodam contra o `_fs`/`_inodes` da montagem seguinte (`FuseHost.cs:827-828`), inofensivo.
+
+**Feito (rodada 2):** testes em `AnaliseFuseVfsTests`, `VfsRaceTests`, `VfsPerformanceTests`, `InodeTableTests` (FUSE real).
+14.1/14.2: o lookup confere o lid do caminho com o inode guardado e move a subárvore; alias nunca fica pendurado; mais a
+**invalidação ativa** do kernel (§18) a partir do delta (rename/exclusão/troca de conteúdo visíveis sem esperar timeout).
+14.3: `fstat` em arquivo apagado mas aberto responde pelo handle (a sugestão ENOENT/ESTALE estava errada). 14.6: mantém
+`ENOTEMPTY` (apagar levaria a subpasta excluída na nuvem) e explica na Atividade. 14.10: nome com UTF-8 inválido → `EILSEQ`.
+14.14: operações locais têm fila própria (não esperam atrás de 256 reads presos na rede). Corridas da 14.13: despacho
+conservador testado; a corrida do descarte de blocos não foi forçada. Estáticos de sessão FUSE vazada: não alterados (inofensivo).
 
 ## 15. Bugs — app, UI, integração
 
-- [ ] **"Entrar novamente" pela notificação com a janela na bandeja crasha o processo** — `MainViewModel.cs:610-614`:
+- [x] **"Entrar novamente" pela notificação com a janela na bandeja crasha o processo** — `MainViewModel.cs:610-614`:
   `Host.RequestShow()` só posta o `ShowWindow`; no mesmo callback `ReauthenticateAsync` → `MainWindow.axaml.cs:53-54`
   `ShowDialog(this)` com owner oculto → `InvalidOperationException("Cannot show window with non-visible owner.")` em
   `async void` → morte. O handler de `ConfirmRequested` (:81) já faz `if (!IsVisible) Show()`; o de login não. Com janela nunca
   criada (início minimizado) `AddAccountRequested` é null e o botão só abre a janela.
-- [ ] **Sem tratador global de exceções** (`UnhandledException`/`UnobservedTaskException` = 0 ocorrências): qualquer exceção em
+- [x] **Sem tratador global de exceções** (`UnhandledException`/`UnobservedTaskException` = 0 ocorrências): qualquer exceção em
   `AsyncRelayCommand`/`async void` (`AccountVm.Remove`→`SignOutAsync`; `DeleteAlertVm.Restore`; `App.Quit:291`→`Config.Save`
   com disco cheio; item acima) derruba o processo sem linha no `craftdriver.log`.
-- [ ] **2ª execução durante a espera do chaveiro** (pendência da §8): a 2ª instância cria outro `IpcServer` (`Ipc.cs:42` apaga o
+- [x] **2ª execução durante a espera do chaveiro** (pendência da §8): a 2ª instância cria outro `IpcServer` (`Ipc.cs:42` apaga o
   socket da 1ª) e tenta montar o mesmo ponto. Solução (~30 linhas): abrir o `IpcServer` em `Program.Main` antes do
   `StartWithClassicDesktopLifetime` com handler que delega a `App.Host?.HandleIpcAsync` quando existir e antes responde
   `ping`→ok, `show`→splash, demais→"ainda iniciando"; `AppHost.Start(IpcServer? existente)` reaproveita.
-- [ ] **SIGTERM não encerra limpo** — `Program.cs:230-240`: `ProcessExit` faz `stop.Set()` mas o runtime encerra ao retornar do
+- [x] **SIGTERM não encerra limpo** — `Program.cs:230-240`: `ProcessExit` faz `stop.Set()` mas o runtime encerra ao retornar do
   handler; `ShutdownAsync` (Engine.Stop, IPC, `Config.Save`) não roda; a montagem só cai pelo `auto_unmount`. Afeta
   `systemctl --user stop` (unit `DesktopIntegration.cs:121-135` sem `ExecStop`) e logout; no modo gráfico idem (sem
   `SavePlacement`). Correção: `PosixSignalRegistration.Create(SIGTERM, …)` + `ExecStop=craftdriver quit`.
-- [ ] **Thread de UI bloqueada por processos externos** — `OpenPath`→`ShowFolder` (`DesktopIntegration.cs:296-317`, `WaitForExit`
+- [x] **Thread de UI bloqueada por processos externos** — `OpenPath`→`ShowFolder` (`DesktopIntegration.cs:296-317`, `WaitForExit`
   10 s; ativação D-Bus do Dolphin fechado leva segundos) chamado de `App.axaml.cs:161`, `MainViewModel.cs:592,109,66`;
   `InstallUserLauncherAndMenus:246` (5 s) e `SetAutostart`→`RunCommand:158` (3× 5 s) via `SaveSettings`. Enquanto isso o IPC
   `add-account` (`RunOnMain`) espera. Contradiz parcialmente a nota da §2 (só o `notify-send` foi resolvido).
-- [ ] **Trocar/remontar a pasta com montagem ocupada deixa config e UI mentindo** — `AppHost.UnmountAsync:199-205` (`fusermount -u`
+- [x] **Trocar/remontar a pasta com montagem ocupada deixa config e UI mentindo** — `AppHost.UnmountAsync:199-205` (`fusermount -u`
   sem `-z`, `FuseHost.cs:922`); com EBUSY volta após 10 s com `Mounted` true; `MainViewModel.cs:775-776` grava o `MountPoint`
   novo e `Mount()` retorna calado (:184) → `MountText` mostra o novo "montado" enquanto o FUSE segue no antigo. HIPÓTESE no gatilho.
-- [ ] `ReadOnly` ignorado nos caminhos da instância — `AppConfig.Save:304` retorna calado; `RegisterAccount:240-248` responde
+- [x] `ReadOnly` ignorado nos caminhos da instância — `AppConfig.Save:304` retorna calado; `RegisterAccount:240-248` responde
   "Conta conectada" ao IPC e `SaveSettings:778` diz "Configurações salvas." sem gravar.
-- [ ] Aviso do autostart engolido — `MainViewModel.cs:770-771` grava em `Message`, :784-785 sobrescreve com "Configurações salvas.".
-- [ ] `AppHost.Mount:190`: `ContinueWith` em task falhada registra "desconectado", `MountError` fica null → "Não montado" sem motivo.
-- [ ] `AppRestart.cs:16`: espera limitada a 30 s; se o antigo demorar mais (unmount 10 s + envio em curso) o novo acha o socket vivo,
+- [x] Aviso do autostart engolido — `MainViewModel.cs:770-771` grava em `Message`, :784-785 sobrescreve com "Configurações salvas.".
+- [x] `AppHost.Mount:190`: `ContinueWith` em task falhada registra "desconectado", `MountError` fica null → "Não montado" sem motivo.
+- [x] `AppRestart.cs:16`: espera limitada a 30 s; se o antigo demorar mais (unmount 10 s + envio em curso) o novo acha o socket vivo,
   manda `show` (ignorado por `_quitting`) e sai → nenhuma instância fica. HIPÓTESE.
-- [ ] `DisplayScaling.Apply:70` grava `AVALONIA_SCREEN_SCALE_FACTORS` no ambiente do processo → herdado pelo relaunch do
+- [x] `DisplayScaling.Apply:70` grava `AVALONIA_SCREEN_SCALE_FACTORS` no ambiente do processo → herdado pelo relaunch do
   `AppRestart`, que então desliga o ajuste automático e congela a escala antiga.
-- [ ] `DesktopNotifier.cs:139`: `replaces_id` sempre 0 e nunca `CloseNotification` → "sessão expirada" fica na tela depois de entrar;
+- [x] `DesktopNotifier.cs:139`: `replaces_id` sempre 0 e nunca `CloseNotification` → "sessão expirada" fica na tela depois de entrar;
   `_callbacks` só limpa em `NotificationClosed`.
-- [ ] `ClipboardService.cs:57-64` só captura `Win32Exception`; `wl-copy` saindo antes do `WriteAsync` dá `IOException` (EPIPE) →
+- [x] `ClipboardService.cs:57-64` só captura `Win32Exception`; `wl-copy` saindo antes do `WriteAsync` dá `IOException` (EPIPE) →
   "Broken pipe" em vez de "instale wl-clipboard". HIPÓTESE de timing. Unit systemd sem `WAYLAND_DISPLAY` importado → `share`
   pelo Dolphin falha porque quem copia é a instância (`:17-18`); fallback: o CLI copia (tem o ambiente da sessão).
-- [ ] `MainViewModel.FreeAll:706-721` só percorre `Engine.Drives` (não `SharedDrives`). HIPÓTESE.
-- [ ] CLI `pin|unpin|free|status` sem argumentos (`AppHost.cs:453-479`) responde `Ok` com texto vazio. `Ipc.cs:65` `ReadLineAsync`
+- [x] `MainViewModel.FreeAll:706-721` só percorre `Engine.Drives` (não `SharedDrives`). HIPÓTESE.
+- [x] CLI `pin|unpin|free|status` sem argumentos (`AppHost.cs:453-479`) responde `Ok` com texto vazio. `Ipc.cs:65` `ReadLineAsync`
   sem limite nem timeout por conexão; fallback `/tmp/craftdriver-<user>` (`AppConfig.cs:35`) 0755 sem conferir dono.
-- [ ] `DesktopIntegration.cs:168-172` aplica ` --minimized` a todas as linhas `Exec=` do autostart, inclusive `[Desktop Action]`
+- [x] `DesktopIntegration.cs:168-172` aplica ` --minimized` a todas as linhas `Exec=` do autostart, inclusive `[Desktop Action]`
   (`DesktopFilesTests.cs:21` codifica o defeito como esperado). `Actions=` num autostart não tem função; falta `resume` no
   `.desktop` (`pause` duas vezes só repete "Pausado").
-- [ ] Nautilus `craftdriver.py:202-210`: `_poll_syncing` lê xattr no loop principal do GLib (bloqueia o Nautilus em FUSE lento);
+- [x] Nautilus `craftdriver.py:202-210`: `_poll_syncing` lê xattr no loop principal do GLib (bloqueia o Nautilus em FUSE lento);
   `update_file_info_full` enfileira todo arquivo de toda pasta (atalho pela tabela de montagens `fsname=craftdriver`); só API 4.0
   (Nautilus 42 do Ubuntu 22.04 falha no `require_version`); "Instalar atalho…" (`DesktopIntegration.cs:216-228`) ainda grava os
   Scripts → menu duplicado com a extensão.
-- [ ] Dolphin overlay relê todas as entradas em cache a cada 10 s enquanto o Dolphin viver (`craftdriveroverlayplugin.cpp:235-251`;
+- [x] Dolphin overlay relê todas as entradas em cache a cada 10 s enquanto o Dolphin viver (`craftdriveroverlayplugin.cpp:235-251`;
   até 4000 entradas ≈ 400 `getxattr`/s mesmo fora de vista) — limitar a `lastUsed` recente; plugin de ações lê xattr síncrono por
   item na thread de UI (`craftdriveractionplugin.cpp:340-351`); `craftdriver-dolphin/PKGBUILD.in:57` `arch=('x86_64')` só.
 
+**Feito (rodada 2):** testes em `Secao15Tests` e afins (UiTests, processos reais para sinal e 2ª instância). 15.3: `flock` em
+`run/craftdriver.lock` + IPC aberto antes do Avalonia ("ainda iniciando"). 15.4: SIGTERM/SIGINT/SIGHUP fazem o encerramento
+completo (saída 0). 15.6: montagem ocupada mostra erro e mantém a pasta antiga (não força `-uz`). 15.16–15.18: autostart sem
+`Actions=` e com `resume`; Nautilus sem xattr no laço do GLib, API 3.0, só arquivos da montagem, sem Scripts duplicados;
+Dolphin sem xattr síncrono e sem reler tudo a cada 10 s, PKGBUILD com aarch64. Não verificado: sinal no modo gráfico real,
+servidor de notificações real, Nautilus 42 e Dolphin reais.
+
 ## 16. Desempenho
 
-- [ ] `Counts` a cada 5 s = full scan de `items` por drive (`StateDb.cs:418-430`, `MainViewModel.cs:450`; `ix_items_remote` é
+- [x] `Counts` a cada 5 s = full scan de `items` por drive (`StateDb.cs:418-430`, `MainViewModel.cs:450`; `ix_items_remote` é
   parcial e não serve). Índice `items(drive_id)` ou cache por `ItemsVersion`.
-- [ ] `EnforceCacheLimit` N+1 — `SyncEngine.cs:526-529`: `CachedByLeastRecent` sem LIMIT (full scan + sort sem índice em
+- [x] `EnforceCacheLimit` N+1 — `SyncEngine.cs:526-529`: `CachedByLeastRecent` sem LIMIT (full scan + sort sem índice em
   `last_access`) e `IsEffectivelyPinned` (CTE) por item, a cada 2 min acima do limite.
-- [ ] `ApplyRemote` grava `Update` incondicional (:1271) → `ItemsVersion++` a cada lote de 32 → cache caminho→lid do FUSE invalidado
+- [x] `ApplyRemote` grava `Update` incondicional (:1271) → `ItemsVersion++` a cada lote de 32 → cache caminho→lid do FUSE invalidado
   continuamente durante a varredura de pasta compartilhada (50 k itens a cada 5 min, sem mudança). Comparar antes de gravar.
-- [ ] `RemoveLocal` de pasta grande = 1 transação sob `Db.Lock` com `RemoveOpsForLid` (`StateDb.cs:585`, sem índice `ops(lid)`) e
+- [x] `RemoveLocal` de pasta grande = 1 transação sob `Db.Lock` com `RemoveOpsForLid` (`StateDb.cs:585`, sem índice `ops(lid)`) e
   `HasPendingOp` (:704) por item → fila de 10 k × delta grande = milhões de linhas sob o lock; FUSE congela.
-- [ ] Alocações LOH: `GraphClient.cs:347` `buf` 10 MiB + :355 `.ToArray()` (cópia desnecessária) = 20 MiB/pedaço; `:220/:258`
+- [x] Alocações LOH: `GraphClient.cs:347` `buf` 10 MiB + :355 `.ToArray()` (cópia desnecessária) = 20 MiB/pedaço; `:220/:258`
   256 KiB por chamada; `Streaming.cs:336` 4 MiB por bloco. `ArrayPool`.
-- [ ] Token MSAL por requisição — `GraphClient.cs:55` chama `_token` em todo `SendAsync` → `AcquireTokenSilent` → `MsalCacheHelper`
+- [x] Token MSAL por requisição — `GraphClient.cs:55` chama `_token` em todo `SendAsync` → `AcquireTokenSilent` → `MsalCacheHelper`
   relê o chaveiro (D-Bus/libsecret). Um bloco de streaming = uma ida ao chaveiro. HIPÓTESE no custo; cachear até perto de expirar.
-- [ ] `InodeTable.Subtree` é varredura linear de `_byPath` (`InodeTable.cs:159-164`) por `unlink`/`rmdir`/`rename`: após um `find`
+- [~] `InodeTable.Subtree` é varredura linear de `_byPath` (`InodeTable.cs:159-164`) por `unlink`/`rmdir`/`rename`: após um `find`
   com 100 k caminhos, `rm -rf` de 10 k = 10 k × 100 k `StartsWith` sob o lock. Índice de filhos por diretório.
-- [ ] Lookup negativo não é cacheado — `FuseHost.cs:273-276` responde `ENOENT` em vez de `fuse_reply_entry` com `ino=0` +
+- [x] Lookup negativo não é cacheado — `FuseHost.cs:273-276` responde `ENOENT` em vez de `fuse_reply_entry` com `ino=0` +
   `entry_timeout` → `git status`, shells sondando PATH, Dolphin procurando `.directory` repetem o round-trip.
-- [ ] `readdirplus` refaz um SELECT por entrada para achar o lid que `ReadDir` já tinha (`FuseHost.cs:582` → `Peek` → `Resolve`;
+- [x] `readdirplus` refaz um SELECT por entrada para achar o lid que `ReadDir` já tinha (`FuseHost.cs:582` → `Peek` → `Resolve`;
   `VirtualFs.cs:194-195` tem `c.Lid`). Cada lookup = 2 `Resolve`; cada `getattr` de arquivo em cache = 3 `stat()` de disco
   (`AttrOf` :155-161).
-- [ ] xattr do Dolphin: `StatusOf` (`VirtualFs.cs:1070-1077`) = CTE + stat por arquivo + `Resolve` em cada `getxattr`/`listxattr`;
+- [x] xattr do Dolphin: `StatusOf` (`VirtualFs.cs:1070-1077`) = CTE + stat por arquivo + `Resolve` em cada `getxattr`/`listxattr`;
   KIO ainda pede `user.xdg.*`. Conjunto de fixados em memória (como `_excluded`).
-- [ ] `GetChildNoCase` para nome não-ASCII (`StateDb.cs:294-300`) carrega todos os irmãos não-ASCII e normaliza cada um: O(n) por
+- [x] `GetChildNoCase` para nome não-ASCII (`StateDb.cs:294-300`) carrega todos os irmãos não-ASCII e normaliza cada um: O(n) por
   `create`/`mkdir`/`rename` numa pasta com 10 k "Relatório…".
-- [ ] `Trash()`/`RemoveTrash` usam a conexão principal (`StateDb.cs:788-810`) → janela Lixeira espera `Db.Lock`.
+- [x] `Trash()`/`RemoveTrash` usam a conexão principal (`StateDb.cs:788-810`) → janela Lixeira espera `Db.Lock`.
+
+**Feito (rodada 2), com medição:** `ls -l` repetido de 10 k: 30.012 → 10.008 SELECTs (cache de caminhos LRU de 65.536);
+1.000 lookups negativos: 3.000 → 3 SELECTs (cache negativo do kernel); `GetChildNoCase` não-ASCII: 200 creates 10,6 s → 0,67 s;
+token MSAL reaproveitado até perto de expirar (antes 2 idas ao chaveiro por requisição); buffers do `ArrayPool`;
+`ApplyRemote` só grava o que mudou; Lixeira pela conexão de leitura. **Parcial:** índice de filhos na `InodeTable` — 10 k
+remoções numa tabela de 100 k: 16,7 s → 31 ms isolado, mas o `rm -rf` real não mudou (~30 s): o gargalo é outro.
+`Counts`/`EnforceCacheLimit`: só os índices da §17 (a medição mostrou que não valiam mais que isso).
 
 ## 17. Esquema, estado, remoções
 
-- [ ] Migrações por `try/catch SqliteException` (`StateDb.cs:141-148,159-163`) engolem qualquer erro (SQLITE_FULL, I/O, só-leitura)
+- [x] Migrações por `try/catch SqliteException` (`StateDb.cs:141-148,159-163`) engolem qualquer erro (SQLITE_FULL, I/O, só-leitura)
   como "já existe" → próximo SELECT quebra com "no such column". Usar `PRAGMA table_info`/`PRAGMA user_version`.
-- [ ] Órfãos: `DeleteDriveRows` (:447-456) não apaga `conflicts`, `trash`, `excluded` da drive (nem das sub-drives) → aba "Conflitos (N)"
+- [x] Órfãos: `DeleteDriveRows` (:447-456) não apaga `conflicts`, `trash`, `excluded` da drive (nem das sub-drives) → aba "Conflitos (N)"
   conta conflitos de conta removida; Lixeira lista itens de drive removida. `_excluded` em memória não é recarregado após
   `DeleteDriveData`.
-- [ ] Índices faltando: `ops(lid)`, `items(drive_id)`, `items(pinned) WHERE pinned=1`, `items(last_access) WHERE cached_ctag IS NOT
+- [x] Índices faltando: `ops(lid)`, `items(drive_id)`, `items(pinned) WHERE pinned=1`, `items(last_access) WHERE cached_ctag IS NOT
   NULL`, `failed_ops(drive_id)`, `conflicts(drive_id)`, `excluded(drive_id)`.
-- [ ] `FailPermanently` dedupe exige `lid != 0` (:597): exclusões com lid 0 (`SyncEngine.cs:1682,1848`) acumulam falhas repetidas.
-- [ ] **Estático mutável**: `SyncEngine.MaxDownloadResumes/DownloadAttempts`, `DriveSync.SharedPollSeconds/SharedMaxItems/
+- [x] `FailPermanently` dedupe exige `lid != 0` (:597): exclusões com lid 0 (`SyncEngine.cs:1682,1848`) acumulam falhas repetidas.
+- [x] **Estático mutável**: `SyncEngine.MaxDownloadResumes/DownloadAttempts`, `DriveSync.SharedPollSeconds/SharedMaxItems/
   DeleteQuietMs/UploadSettleMs/MassDeleteWindow/DeltaBatchSize/PinBatchSize` — mesma classe do `ChunkSize` que a §10 diagnosticou
   como causa de testes instáveis; 6 arquivos de teste os alteram em paralelo. Mover para `AppConfig`/instância.
-- [ ] Mortos: `Item.Clone` (`StateDb.cs:34`), `StateDb.ConflictCount` (:665), `ContentCache.TotalBytesAsync` (`Support.cs:308`;
+- [x] Mortos: `Item.Clone` (`StateDb.cs:34`), `StateDb.ConflictCount` (:665), `ContentCache.TotalBytesAsync` (`Support.cs:308`;
   a nota da §3 cita este método, mas o App usa `TotalBytes` via `CacheUsageSampler`), `GraphDrive.OwnerName` (`Models.cs:73`),
   `AppHost.RequestVersions/RequestTrash` (:506-507), `StartupCoordinator.Skipped` (:33), `AppHost.CreateAsync()` sem parâmetros
   (só testes), `LoginErrors.cs:50/:56` testam `AADSTS90094/90095` duas vezes, `RemoveLocal` :1332-1335 `if (IsOpen…) { }` vazio,
   `GraphClient.cs:177` e :534 duplicam a lista de campos, `craftdriver-symbolic.svg` em 5 lugares sem consumidor.
-- [ ] `Program.RunCli:124-127`: três cadeias de `if` por comando para montar `rest` → tabela comando→(resolve caminhos?, flags?).
+- [x] `Program.RunCli:124-127`: três cadeias de `if` por comando para montar `rest` → tabela comando→(resolve caminhos?, flags?).
   Estilos `h1/h2/muted/card` em `App.axaml` e o resto em `CraftDriverStyles.axaml`: uma fonte só.
+
+**Feito (rodada 2):** migrações por `PRAGMA table_info` (erro real sobe), órfãos de drive removida, os 7 índices
+(conferidos com `EXPLAIN QUERY PLAN`), estáticos mutáveis por instância/`AppConfig`, código morto removido (exceto o
+`craftdriver-symbolic.svg`, que é instalado no tema e pode ser usado pelo shell), `RunCli` por tabela, estilos numa fonte só.
 
 ## 18. Features e refinamentos
 
-- [ ] **Invalidação ativa a partir do delta**: `fuse_lowlevel_notify_inval_entry`/`notify_delete`/`notify_inval_inode` quando
+- [x] **Invalidação ativa a partir do delta**: `fuse_lowlevel_notify_inval_entry`/`notify_delete`/`notify_inval_inode` quando
   `ApplyRemote` renomeia/move/apaga/troca cTag — corrige §14.1 na origem, permite timeouts maiores e gera eventos inotify para o
   gerenciador de arquivos (HIPÓTESE). Não chamar de dentro de handler nem com `Db.Lock`.
-- [ ] Adotar em vez de conflitar quando o hash bate (409 novo item; 412 com `remote.CTag == item.CTag`).
-- [ ] Restaurar exclusões sem re-enumerar a drive: `RestoreDeletesAsync` faz `GetItemAsync` de cada `remote_id` e reinsere.
-- [ ] Persistir `nextLink` da enumeração inicial (`drives.delta_link` só no fim, :1162) para retomar após reinício em drives enormes.
-- [ ] Delta por pasta no OneDrive pessoal para sub-drives (doc já lista): `Kind=="personal"` → `/drives/{dono}/items/{id}/delta`,
+- [x] Adotar em vez de conflitar quando o hash bate (409 novo item; 412 com `remote.CTag == item.CTag`).
+- [x] Restaurar exclusões sem re-enumerar a drive: `RestoreDeletesAsync` faz `GetItemAsync` de cada `remote_id` e reinsere.
+- [x] Persistir `nextLink` da enumeração inicial (`drives.delta_link` só no fim, :1162) para retomar após reinício em drives enormes.
+- [~] Delta por pasta no OneDrive pessoal para sub-drives (doc já lista): `Kind=="personal"` → `/drives/{dono}/items/{id}/delta`,
   fallback para children em 400/404. Substituto da `sharedWithMe` obsoleta: HIPÓTESE Microsoft Search `POST /search/query`
   com `sharePointOneDriveOptions.includeContent:"sharedContent"`.
-- [ ] Painel de fila: `ops` já tem `attempts/last_error/next_try/created` — expor "o que está travando a cabeça da fila".
-- [ ] Cache negativo no lookup; `ReadDir` devolve lid → `Peek(path, lid)` sem SELECT; `link`/`symlink`/`mknod` → `EPERM`.
-- [ ] UI: `Show()` antes de `ShowDialog` em todos os handlers da `MainWindow`; `Ctrl+Q` confirmar com transferências ativas;
+- [x] Painel de fila: `ops` já tem `attempts/last_error/next_try/created` — expor "o que está travando a cabeça da fila".
+- [x] Cache negativo no lookup; `ReadDir` devolve lid → `Peek(path, lid)` sem SELECT; `link`/`symlink`/`mknod` → `EPERM`.
+- [~] UI: `Show()` antes de `ShowDialog` em todos os handlers da `MainWindow`; `Ctrl+Q` confirmar com transferências ativas;
   listas de fixados/contas (`MainWindow.axaml:153-173,233-245`) sem `ScrollViewer`; Problemas/Conflitos sem virtualização
   (`ListBox`); caminhos com `TextTrimming` sem `ToolTip` (:112,239,264,297); Atividade sem busca/filtro/copiar (teto 200);
   `NoTrayCloseWindow.axaml:12` com `IsDefault` em "Encerrar" (oposto à regra da `ConfirmWindow`); tema só aplica ao Salvar;
   glifos ☁✔⟳📁🗑 em texto dependem de fonte emoji (só "recommends") → ícones vetoriais; "Adicionar biblioteca" sem `CanExecute`
   (ativo sem conta corporativa); i18n por recursos (tudo pt-BR inline).
-- [ ] Plugin do Dolphin em `.deb/.rpm` para distros KF6 (Fedora, Ubuntu 24.10+, Debian 13) compilado em contêiner no CI;
+- [~] Plugin do Dolphin em `.deb/.rpm` para distros KF6 (Fedora, Ubuntu 24.10+, Debian 13) compilado em contêiner no CI;
   `aarch64` no PKGBUILD dele; publicação automática no AUR (segredo SSH); metainfo `<releases>` gerada do CHANGELOG.
+
+**Feito (rodada 2), exceto:** i18n por recursos (fora de escopo; tudo continua em pt-BR) e a publicação no AUR, que tem
+o job pronto mas só roda com o segredo `AUR_SSH_KEY` (sem ele, pula com aviso). Delta por pasta no OneDrive pessoal: feito
+com fallback para `children`, **Graph real não verificada**. Plugin do Dolphin em .deb/.rpm (Debian 13, Ubuntu 25.04,
+Fedora 41) compilado e testado (CTest) em contêiner; ARM não. Painel "Envio parado" mostra o que trava a cabeça da fila.
 
 ## 19. Empacotamento, CI e documentação
 
-- [ ] **`install.sh:30-31` ainda publica single-file** (`PublishSingleFile` + `IncludeNativeLibrariesForSelfExtract`) — contradiz a
+- [x] **`install.sh:30-31` ainda publica single-file** (`PublishSingleFile` + `IncludeNativeLibrariesForSelfExtract`) — contradiz a
   nota da §9 e o CHANGELOG; o modo usuário continua extraindo em `~/.net/CraftDriver.App/<hash>/` (e `RemoveLegacyLeftovers`
   só limpa `OneDriveLinux.App`). `--uninstall` (l.11-20) não remove SVGs em `scalable/symbolic`, a unit systemd nem `~/.net`.
-- [ ] **README "Limitações conhecidas" desatualizado** (l.172-176): ainda diz "sem streaming por faixas" e "atalhos e compartilhados
+- [x] **README "Limitações conhecidas" desatualizado** (l.172-176): ainda diz "sem streaming por faixas" e "atalhos e compartilhados
   ainda não aparecem" — os dois existem. `PENDENCIAS §1` nota do `nullpath_ok` obsoleta (na API low-level o mecanismo é
   `Detach` + fh); `docs/desempenho-fuse.md` não lista `copy_file_range` entre os SlowOps.
-- [ ] Metainfo `<releases>` só tem 0.1.4 (`metainfo.xml:76-78`), sem `<description>`/`<screenshots>`, e `build.sh` não a
+- [x] Metainfo `<releases>` só tem 0.1.4 (`metainfo.xml:76-78`), sem `<description>`/`<screenshots>`, e `build.sh` não a
   templatiza → a tag `v0.1.5` sai dizendo que a última é 0.1.4. `csproj` `<Version>0.1.4</Version>` não é bumpado (o CI injeta
   a tag). `checks` não confere tag ↔ `<Version>` ↔ `<release>` ↔ data do CHANGELOG, nem roda `actionlint`/`appstreamcli
   validate`/`desktop-file-validate`; "0 avisos" não é imposto (`-warnaserror`); cobertura sem limiar; `release:212-215` baixa todos
   os artefatos com `merge-multiple` (HTML/PNGs para `art/`); `dolphin-plugin` faz `pacman -Syu` sem cache.
-- [ ] Pré-requisitos do runtime .NET ausentes dos pacotes: `libssl3|libssl1.1`, `libgssapi-krb5-2`, `libstdc++6`, `zlib1g` (deb);
+- [x] Pré-requisitos do runtime .NET ausentes dos pacotes: `libssl3|libssl1.1`, `libgssapi-krb5-2`, `libstdc++6`, `zlib1g` (deb);
   `openssl-libs`, `krb5-libs` (rpm); `openssl`, `krb5` (Arch) — o smoke nunca faz TLS. HIPÓTESE: base sem `libssl` → login falha
   com `DllNotFoundException`. `PKGBUILD.in:10` `libgcc`/`libstdc++` (nomes do split do gcc 16) quebram em Manjaro
   estável; o PKGBUILD do dolphin usa `gcc-libs`.
-- [ ] `CraftDriver.Fuse.csproj` fora da análise de trimming (`IsTrimmable`/`EnableTrimAnalyzer` ausentes; só o smoke cobre).
-- [ ] Unit systemd (`DesktopIntegration.cs:121-135`): sem `ExecStop`, sem `After=`, ambiente sem `WAYLAND_DISPLAY`.
-- [ ] Tarball sem script de (des)instalação em modo usuário (`install.sh` exige SDK).
-- [ ] **46 arquivos modificados + 110 novos sem commit desde `fb03c53`** (6,5 k linhas): risco de perda; commitar por tema quando
+- [x] `CraftDriver.Fuse.csproj` fora da análise de trimming (`IsTrimmable`/`EnableTrimAnalyzer` ausentes; só o smoke cobre).
+- [x] Unit systemd (`DesktopIntegration.cs:121-135`): sem `ExecStop`, sem `After=`, ambiente sem `WAYLAND_DISPLAY`.
+- [x] Tarball sem script de (des)instalação em modo usuário (`install.sh` exige SDK).
+- [x] **46 arquivos modificados + 110 novos sem commit desde `fb03c53`** (6,5 k linhas): risco de perda; commitar por tema quando
   decidir (o repositório é público — conferir que nada em `tests/`/`docs/` cita conta ou caminho pessoal antes).
+
+**Feito (rodada 2):** 19.4 conferido com os pacotes instalados em debian:12-slim, ubuntu:24.04 e fedora:41 (login chega
+ao código de dispositivo; antes: core dump por falta de libssl no Debian e `UntrustedRoot` no Ubuntu); o smoke agora testa
+TLS. `install.sh` sem single-file e tarball com instalador em modo usuário (sem SDK). O CI confere tag ↔ `<Version>` ↔
+metainfo ↔ CHANGELOG, roda actionlint/appstreamcli/desktop-file-validate, compila com `-warnaserror` e usa
+`--blame-hang-timeout` (o travamento do UiTests na release v0.2.0 passa a dizer qual teste). Cobertura sem limiar (só
+informativa). Não verificado: o CI novo só roda no próximo push.
 
 ## 20. Lacunas de testes (rodada 2)
 

@@ -63,9 +63,9 @@ funcionam com qualquer ponto de montagem, e chamam `craftdriver pin|unpin|status
 
 | Gerenciador | Emblemas | Menu só dentro do craftDriver | Como instalar |
 |---|---|---|---|
-| Dolphin (plugin KF6) | sim | sim | AUR `craftdriver-dolphin`, ou compile: `cmake -S extensions/dolphin -B build -DCMAKE_INSTALL_PREFIX=/usr && cmake --build build && sudo cmake --install build` (precisa de `extra-cmake-modules` e dos headers do KIO 6) |
+| Dolphin (plugin KF6) | sim | sim | AUR `craftdriver-dolphin`, ou pacote separado `.deb` (Debian 13 / Ubuntu 25.04) e `.rpm` (Fedora 41) da release, específico da distro; para compilar: `cmake -S extensions/dolphin -B build -DCMAKE_INSTALL_PREFIX=/usr && cmake --build build && sudo cmake --install build` (precisa de `extra-cmake-modules` e dos headers do KIO 6) |
 | Dolphin (servicemenu, já vem nos pacotes) | não | não: aparece em qualquer arquivo | instalado pelo pacote/app; o plugin acima o esconde (`/etc/xdg/kservicemenurc`) |
-| Nautilus 43+ | sim | sim | pacotes instalam em `/usr/share/nautilus-python/extensions/`; manual: copie `extensions/nautilus/craftdriver.py` para `~/.local/share/nautilus-python/extensions/`. Precisa de `python-nautilus` (Debian/Ubuntu: `python3-nautilus`; Fedora: `nautilus-python`). Depois `nautilus -q` |
+| Nautilus 42+ (API 4.0; fallback 3.0) | sim | sim | pacotes instalam em `/usr/share/nautilus-python/extensions/`; manual: copie `extensions/nautilus/craftdriver.py` para `~/.local/share/nautilus-python/extensions/`. Precisa de `python-nautilus` (Debian/Ubuntu: `python3-nautilus`; Fedora: `nautilus-python`). Depois `nautilus -q` |
 | PCManFM / PCManFM-Qt | não | sim (`ShowIfTrue` + `getfattr`, pacote `attr`) | pacotes instalam em `/usr/share/file-manager/actions/`; manual: copie `extensions/pcmanfm/*.desktop` para `~/.local/share/file-manager/actions/` |
 | Thunar | não | não: o Thunar só filtra por nome/tipo | `python3 /usr/share/craftdriver/thunar/install-uca.py` (ou `extensions/thunar/install-uca.py`); `--remove` desfaz |
 
@@ -122,7 +122,7 @@ src/
     Vfs/VirtualFs.cs           semântica POSIX → banco + fila (independente do FUSE; testável)
     Ipc/Ipc.cs                 socket Unix para CLI e menus do gerenciador de arquivos
   CraftDriver.Fuse/
-    FuseHost.cs                binding P/Invoke da libfuse3 (fuse_new/fuse_mount/fuse_loop_mt), sem dependências
+    FuseHost.cs                binding P/Invoke low-level da libfuse3 (fuse_session_new/fuse_session_mount/fuse_session_loop_mt), sem dependências
   CraftDriver.App/           Avalonia 12: janela, bandeja, diálogos de login e SharePoint, integração com o desktop
 tests/
   CraftDriver.Tests/         Graph falso em memória + testes do motor + montagem FUSE real com bash/sed/cp/mv/rm
@@ -167,11 +167,15 @@ e mantém os tokens salvos no chaveiro (não é preciso entrar de novo).
 
 [MIT](LICENSE)
 
+Tarball: extraia **a pasta inteira** e rode `./install-user.sh` para instalar em `~/.local` (binário, atalho,
+ícones e menus; sem SDK e sem sudo). `./install-user.sh --uninstall` remove a instalação e mantém os seus dados.
+Não remova `lib/`: o executável não é single-file. Para compilar a fonte, `./install.sh` exige SDK .NET 10.
+
 ## Limitações conhecidas
 
 - Emblemas de status só no Dolphin (com o plugin `craftdriver-dolphin`) e no Nautilus (com `python-nautilus`); nos outros, use `getfattr` ou "Status no craftDriver" no menu de contexto
-- Abrir um arquivo somente online baixa o arquivo inteiro antes de liberar a leitura (sem streaming por faixas)
+- Streaming por faixas existe, mas libfuse < 3.17.3 (ou kernel sem `FUSE_CAP_DIRECT_IO_ALLOW_MMAP`) usa o cache de páginas em vez de `direct_io`: erros de leitura podem chegar como `EIO`; veja [streaming](docs/streaming.md)
 - Mover entre drives diferentes vira copiar+apagar (`EXDEV`), como entre discos
-- Atalhos "Adicionar a Meus arquivos" e pastas compartilhadas comigo ainda não aparecem
+- Atalhos e “Compartilhados comigo” existem; a integração Graph com SharePoint/conta de trabalho e as permissões reais desses itens ainda não foram verificadas ponta a ponta com uma conta real
 - Blocos de anotações do OneNote (pacotes) são ignorados
 - Permissões/proprietário POSIX não são sincronizados (tudo `0644`/`0755` do usuário atual)

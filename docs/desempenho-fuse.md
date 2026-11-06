@@ -38,7 +38,7 @@ https://libfuse.github.io/doxygen/ . Na de alto nível a resposta ao kernel só 
 ## Como ficou (API de baixo nível)
 
 - `FuseHost` usa `fuse_session_new`/`fuse_session_loop_mt` e responde com `fuse_reply_*`, que pode ser chamado de
-  qualquer thread. `open`, `setattr` com tamanho (truncate), `rename` e `fsync` — os únicos que podem baixar ou ir ao
+  qualquer thread. `open`, `setattr` com tamanho (truncate), `rename`, `fsync` e `copy_file_range` — os que podem baixar ou ir ao
   servidor — rodam em `SlowOps` (e o `read` de um bloco ainda não baixado da leitura por faixas, ver `streaming.md`) (threads próprias, sob demanda, até 256) e respondem quando terminam; a thread do
   loop volta na hora. O resto é local e responde na própria thread.
 - O `fuse_file_info` da libfuse fica na pilha do loop: o `open` assíncrono responde com uma cópia.
@@ -46,7 +46,9 @@ https://libfuse.github.io/doxygen/ . Na de alto nível a resposta ao kernel só 
 - `InodeTable` traduz inodes ↔ caminhos para o `VirtualFs` (que continua por caminho): contagem de lookups por
   resposta de entrada (lookup, mkdir, create, readdirplus — só entradas que couberam no buffer) e `forget`; `rename`
   move a subárvore; `unlink`/`rmdir`/rename por cima soltam o inode do caminho, e os fds abertos seguem pelo `fh`
-  (o que `hard_remove` + `nullpath_ok` faziam). Números não são reaproveitados.
+  via `InodeTable.Detach` (não há `nullpath_ok` na API low-level; o caminho de um inode removido não é mais
+  necessário para I/O por `fh`). Números não são reaproveitados. A nota histórica de `nullpath_ok` na §1 do
+  `PENDENCIAS.md` descreve a API de alto nível anterior, não o mecanismo atual.
 - Reproduzido da API de alto nível: prazos de cache de 1 s (entry/attr), `auto_cache` (mantém as páginas entre
   opens só se mtime e tamanho não mudaram) e `default_permissions`/`auto_unmount`.
 - Ctrl-C: `fuse_req_interrupted(req)` por requisição (a API de baixo nível não descarta o `FUSE_INTERRUPT`, nem

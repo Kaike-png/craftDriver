@@ -6,6 +6,32 @@ acrescentada automaticamente.
 
 ## [Não lançado]
 
+### Correções
+- **Pacotes .deb**: faltavam `libssl3` e `ca-certificates` — num Debian 12 ou Ubuntu 24.04 mínimo o login falhava.
+- **Edições que nunca subiam**: arquivo ainda aberto para escrita ao encerrar (ou numa queda) e escritas feitas depois
+  de um conflito de edição com o arquivo aberto agora são enviadas.
+- Arquivos criados durante uma sincronização completa ou de pasta compartilhada não são mais apagados localmente.
+- `mv` sobre um nome que outro dispositivo acabou de criar não substitui mais o arquivo dele; apagar e recriar com o
+  mesmo nome não vira cópia de conflito.
+- A fila de envios não trava mais com um arquivo bloqueado no SharePoint (Excel Online) nem depois de descartar o aviso
+  de uma pasta que não pôde ser criada; o painel mostra o que está segurando a fila.
+- Arquivo renomeado ou apagado na nuvem com o gerenciador de arquivos aberto: o nome novo abre na hora (antes dava
+  "arquivo não encontrado" e, depois, erro de E/S até remontar).
+- Nomes com caracteres inválidos não sobrescrevem mais outro arquivo; `fstat` em arquivo apagado mas aberto funciona.
+- "Entrar novamente" pela notificação com a janela na bandeja não fecha mais o app; erros inesperados vão para o log
+  em vez de derrubar o processo.
+- Abrir o app de novo enquanto ele espera o chaveiro não derruba mais a montagem da primeira instância.
+- `systemctl --user stop`, logout e SIGTERM encerram limpo (desmonta, salva a configuração).
+- Limite de banda acima de ~13 MB/s agora é respeitado; cópias de conflito desnecessárias (só metadados mudaram,
+  ou conteúdo idêntico) não são mais criadas.
+
+### Novidades
+- **Envios em paralelo** (3 por padrão), sem deixar a sincronização da nuvem esperando um envio grande.
+- Pastas grandes listam mais rápido; menos idas ao chaveiro do sistema.
+- Atividade com busca, filtro de erros e copiar; tema aplicado na hora; ícones vetoriais (sem depender de fonte emoji).
+- Plugin do Dolphin também em .deb/.rpm (Debian 13, Ubuntu 25.04, Fedora 41); Nautilus 42 (Ubuntu 22.04) suportado.
+- O tarball traz um instalador em modo usuário (sem precisar do SDK do .NET).
+
 ## [0.2.0] - 2026-11-05
 
 ### Novidades
