@@ -24,6 +24,32 @@ acrescentada automaticamente.
 - `systemctl --user stop`, logout e SIGTERM encerram limpo (desmonta, salva a configuração).
 - Limite de banda acima de ~13 MB/s agora é respeitado; cópias de conflito desnecessárias (só metadados mudaram,
   ou conteúdo idêntico) não são mais criadas.
+- **Arquivo recriado sumindo**: apagar um arquivo durante o envio (ou renomear para temporário) e recriá-lo com o mesmo
+  nome não apaga mais o novo; nomes com acento em maiúsculas/minúsculas (`Ação`/`AÇÃO`) não viram cópia de conflito.
+- Exclusão recusada pela nuvem (412) não deixa mais dois arquivos com o mesmo nome: a versão da nuvem volta como
+  "nome (conflito - data)".
+- Erro de servidor que nunca passa (5xx, 429…) num item vai para Problemas após 50 tentativas em vez de ficar oculto;
+  uma exclusão em Problemas segura o envio do mesmo nome até você tentar de novo ou descartar, e o painel diz isso.
+- `rm -rf` de pasta não espera mais o envio de um arquivo dela terminar; desligar/religar ou remover uma biblioteca
+  com envio em andamento não envia duas vezes nem deixa exclusão órfã.
+- Valores inválidos no `config.json` (lotes ou tentativas ≤ 0) são corrigidos ao carregar em vez de travar o delta.
+- Mudar o limite de envio vale na hora, também para o pedaço em andamento.
+- A montagem não deixa mais uma operação (open/fsync/rename) sem resposta numa corrida rara da fila interna;
+  `rm -rf`, enumeração de pastas grandes e cópia de arquivos grandes fazem bem menos consultas ao banco.
+- Nome de arquivo inexistente com bytes inválidos responde "não encontrado" (antes, erro de codificação).
+- "Reiniciar agora" cancelado não reabre mais o app sozinho depois; disco cheio ou sem permissão em `/run` mostra o
+  erro real em vez de "já está em execução"; um 2º Ctrl+C/SIGTERM durante o encerramento força a saída.
+- "Sair" da bandeja pede a mesma confirmação com transferências ativas; Ctrl+S só salva na aba Configurações.
+- `craftdriver quit` espera o app terminar; o `install-user.sh` não deixa mais o app fechado ao atualizar com ele
+  aberto, e `--uninstall` remove as ações do Thunar.
+- Pasta do craftDriver atrás de um link simbólico: menus e emblemas do Nautilus/Dolphin e o CLI funcionam.
+- Dolphin: emblemas aparecem em pastas vistas antes da montagem, não lê atributos fora do craftDriver e não aborta ao
+  fechar com a montagem travada. Nautilus não fica relendo para sempre um item preso em "sincronizando".
+- Notificação "sessão expirada" diz onde entrar de novo quando o servidor de notificações não mostra botões.
+
+### Mudanças de comportamento
+- Uma 2ª instância `--headless` sai com código 3 (antes 0); duas configurações com a mesma pasta não montam juntas.
+- O serviço systemd usa `graphical-session.target` quando a sessão o oferece (GNOME/KDE/uwsm).
 
 ### Novidades
 - **Envios em paralelo** (3 por padrão), sem deixar a sincronização da nuvem esperando um envio grande.

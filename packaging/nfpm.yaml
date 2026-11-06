@@ -45,6 +45,7 @@ overrides:
     suggests:
       - python3-nautilus   # extensão do Nautilus (emblemas + menu)
       - attr               # getfattr, usado pelas ações do PCManFM
+      - python3            # /usr/share/craftdriver/thunar/install-uca.py (ações do Thunar)
   rpm:
     depends:
       - fuse3
@@ -69,6 +70,7 @@ overrides:
     suggests:
       - nautilus-python    # extensão do Nautilus (emblemas + menu)
       - attr               # getfattr, usado pelas ações do PCManFM
+      - python3            # /usr/share/craftdriver/thunar/install-uca.py (ações do Thunar)
 
 contents:
   # o app inteiro (apphost "craftdriver" + DLLs + .so); "tree" preserva os modos dos arquivos

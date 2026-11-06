@@ -52,7 +52,7 @@ else
   cat > "$TOP/SPECS/craftdriver-dolphin.spec" <<EOF
 Name: craftdriver-dolphin
 Version: $VERSION
-Release: 1
+Release: 1%{?dist}
 Summary: Plugins KF6 do Dolphin para o craftDriver
 License: MIT
 Requires: craftdriver >= $VERSION

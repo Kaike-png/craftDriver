@@ -18,10 +18,11 @@ echo "== headless + FUSE"
 su tester -c "XDG_RUNTIME_DIR=/tmp/rt CRAFTDRIVER_HOME=$H sh -c 'mkdir -p /tmp/rt; craftdriver --headless > /tmp/hl.log 2>&1 &'"
 sleep 6
 su tester -c "XDG_RUNTIME_DIR=/tmp/rt CRAFTDRIVER_HOME=$H craftdriver status"
-grep craftdriver /proc/mounts | awk '{print "montado:", $1, $2, $3}'
+# set -e não para em pipeline (vale o status do awk) nem em '! cmd': conferir com if/|| explícitos
+grep -q craftdriver /proc/mounts || { echo "FALHA: FUSE não montado"; exit 1; }; grep craftdriver /proc/mounts | awk '{print "montado:", $1, $2, $3}'
 su tester -c "XDG_RUNTIME_DIR=/tmp/rt CRAFTDRIVER_HOME=$H craftdriver quit"
-sleep 3
-grep -c craftdriver /proc/mounts || echo "desmontado"
+i=0; while grep -q craftdriver /proc/mounts && [ $i -lt 30 ]; do i=$((i + 1)); sleep 1; done
+if grep -q craftdriver /proc/mounts; then echo "FALHA: montagem continua após quit"; exit 1; fi; echo "desmontado"
 echo "== interface gráfica (Xvfb)"
 # a janela precisa aparecer: sem xwininfo não há como conferir, então é falha (antes passava calado)
 # casa título ("craftDriver") ou WM_CLASS ("craftdriver" "CraftDriver.App"), sem diferenciar maiúsculas: logo ao
