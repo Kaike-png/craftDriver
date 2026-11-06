@@ -2,7 +2,7 @@
 
 Rodada 1 (seções 1–11): levantamento sobre a v0.1.4 (7,5 k LOC, 40 testes) — quase tudo feito, notas "**Feito:**" em cada item.
 Rodada 2 (seções 12–21): novo levantamento sobre a árvore atual (26 k LOC, 0 avisos, 238 + 118 testes verdes, nada commitado
-desde `fb03c53`). Rodada 3 (seções 22–27; **concluída em 2026-11-06** — notas "**Feito (rodada 3)**" ao fim das seções 22–25; abertos: §24.9, §24.10 e o 1º push para o CI): verificação das notas "Feito" da rodada 2 + mecanismos novos (33 k LOC, 0 avisos,
+desde `fb03c53`). Rodada 3 (seções 22–27; **concluída em 2026-11-06** — notas "**Feito (rodada 3)**" ao fim das seções 22–25; abertos: §24.9 e §24.10): verificação das notas "Feito" da rodada 2 + mecanismos novos (33 k LOC, 0 avisos,
 361 + 171 testes verdes, HEAD `933f0fa`, 5 commits ainda não enviados → o CI novo nunca rodou).
 Ordenado por consequência. `arquivo:linha` conferidos na data; deslocam com edições. **HIPÓTESE** = não reproduzido.
 Marque `[x]` ao concluir.
@@ -1003,7 +1003,7 @@ Insert, exclusão seletiva e rollback; fixados com geração própria. 24.6: `Se
 - [x] `.rpm` do plugin Dolphin sem o nome da distro no arquivo (`craftdriver-dolphin-0.2.0-1.x86_64.rpm`; o `.deb` tem) → um 2º
   Fedora na matriz sobrescreveria o asset (`ci.yml:274`). Falta `python3` em *suggests* deb/rpm para o script do Thunar.
   `publish-aur.sh:14` `ssh-keyscan` em TOFU — pinar a fingerprint do AUR.
-- [~] **CI novo nunca rodou**: 5 commits locais (`0420769`…`933f0fa`) não enviados; `-warnaserror` em `dotnet test CraftDriver.slnx`
+- [x] **CI novo nunca rodou**: 5 commits locais (`0420769`…`933f0fa`) não enviados; `-warnaserror` em `dotnet test CraftDriver.slnx`
   (`ci.yml:103`) não foi provado — testes usam `Task.Run(...).GetAwaiter().GetResult()` em `[AvaloniaFact]`
   (`Secao15ContinuacaoTests.cs:27,134`); se xUnit1031 for emitido, o primeiro push cai. Rodar `dotnet build CraftDriver.slnx -c
   Release -warnaserror` antes do push.
@@ -1020,7 +1020,9 @@ minimizado); Ctrl+S só na aba Configurações. 25.11: `GetCapabilities`; sem `a
 `WantedBy=graphical-session.target` só se o alvo está ativo ao habilitar. 25.13: Dolphin relê vazio, filtra por
 montagem, vaza a thread presa (sem teste: exige FUSE travado). 25.14: Nautilus com recuo e expiração (30 min).
 25.15: smoke falha de verdade (montagem ausente e presente). 25.16: `%{?dist}`, `python3` em suggests, chave do AUR
-fixada. 25.17: `dotnet build -c Release -warnaserror` limpo localmente; **falta enviar os commits para o CI rodar.**
+fixada. 25.17: CI verde em x64 e arm64 (testes, Dolphin nativo, pacotes) após 3 correções de ambiente: AppArmor
+bloqueando `unshare` sem privilégio (o CI libera via sysctl), `XDG_RUNTIME_DIR` inexistente abortando o filho sob
+coverlet (134) e classes de UI que trocam `CRAFTDRIVER_HOME` fora da coleção serial.
 
 ## 26. Lacunas de testes (rodada 3)
 
@@ -1054,7 +1056,7 @@ fixada. 25.17: `dotnet build -c Release -warnaserror` limpo localmente; **falta 
   `ExecStop` com socket "ainda iniciando", Nautilus (fila única, API 3.0/4.0, mountinfo), pacotes Dolphin deb/rpm,
   deps .NET por distro, `metainfo.py --check`, job AUR sem força.
 
-## Ordem sugerida (rodada 3 — concluída, exceto §24.9/§24.10 e o envio para o CI)
+## Ordem sugerida (rodada 3 — concluída, exceto §24.9/§24.10)
 
 1. §24.1 (SlowOps — syscall pendurada), §25.1–25.3 (relaunch órfão, `.lock` em disco cheio, `install-user.sh` com app aberto)
    e §25.16 (rodar `-warnaserror` local e enviar os 5 commits para o CI).
