@@ -5,6 +5,7 @@ using CraftDriver.App.Services;
 using CraftDriver.Core.Config;
 using CraftDriver.Core.State;
 using CraftDriver.Core.Sync;
+using CraftDriver.Core.Updates;
 
 namespace CraftDriver.App.ViewModels;
 
@@ -338,6 +339,10 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
         MassDeleteThreshold = c.MassDeleteThreshold;
         ThemeIndex = ThemeService.IndexOf(c.Theme);
         _themeLoaded = true;
+        CheckForUpdates = c.CheckForUpdates;
+        _updatesLoaded = true;
+        host.Updates.Changed += OnUpdatesChanged;
+        RefreshUpdate();
 
         RebuildAccounts();
         RebuildPinned();
@@ -446,6 +451,7 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
         Host.Activity.Changed -= OnActivityChanged;
         Host.AccountsChanged -= OnAccountsChanged;
         Host.ReauthRequested -= OnReauthRequested;
+        Host.Updates.Changed -= OnUpdatesChanged;
         Refreshed = null;
     }
 
@@ -751,6 +757,133 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
             "continuam na próxima vez que o craftDriver abrir; até lá, a pasta sincronizada fica indisponível.", "Sair"));
     }
     [RelayCommand] void OpenLog() => DesktopIntegration.OpenPath(AppPaths.LogFile);
+
+    // ---------- atualizações (docs/atualizacoes.md) ----------
+
+    /// <summary>Painel da versão nova na Visão geral (aviso, progresso, erro).</summary>
+    [ObservableProperty] public partial bool UpdateVisible { get; set; }
+    [ObservableProperty] public partial string UpdateTitle { get; set; } = "";
+    /// <summary>Resumo das notas da release (texto simples).</summary>
+    [ObservableProperty] public partial string UpdateNotes { get; set; } = "";
+    [ObservableProperty] public partial string UpdateStatus { get; set; } = "";
+    [ObservableProperty] public partial bool UpdateStatusIsError { get; set; }
+    [ObservableProperty] public partial double UpdateProgress { get; set; }
+    [ObservableProperty] public partial bool UpdateShowProgress { get; set; }
+    /// <summary>"Atualizar agora"/"Ignorar" disponíveis (há versão e nada em andamento).</summary>
+    [ObservableProperty] public partial bool UpdateCanStart { get; set; }
+    /// <summary>Pacote instalado, falta reiniciar: o painel troca "Atualizar agora" por "Reiniciar agora".</summary>
+    [ObservableProperty] public partial bool UpdateInstalled { get; set; }
+    /// <summary>Instalado ou instalador do usuário rodando: sem "Atualizar agora"/"Ignorar".</summary>
+    [ObservableProperty] public partial bool UpdateDone { get; set; }
+    /// <summary>Item da bandeja ("Atualizar para X"); null = escondido.</summary>
+    [ObservableProperty] public partial string? UpdateTrayText { get; set; }
+    /// <summary>Configurações: procurar automaticamente (grava na hora).</summary>
+    [ObservableProperty] public partial bool CheckForUpdates { get; set; }
+    /// <summary>Configurações: resultado da última verificação.</summary>
+    [ObservableProperty] public partial string UpdateCheckText { get; set; } = "";
+    [ObservableProperty] public partial bool CheckingForUpdates { get; set; }
+    public string CurrentVersionText => "Versão instalada: " + Host.Updates.CurrentVersion;
+
+    bool _updatesLoaded;
+
+    /// <summary>Caixa das Configurações: vale na hora (o timer confere a cada disparo) e fica gravada.</summary>
+    partial void OnCheckForUpdatesChanged(bool value)
+    {
+        if (!_updatesLoaded || Host.Config.CheckForUpdates == value) return;
+        Host.Config.CheckForUpdates = value;
+        Host.TrySaveConfig("Procurar atualizações");
+    }
+
+    /// <summary>Estado do serviço mudou (qualquer thread): atualiza o painel na thread de UI.</summary>
+    void OnUpdatesChanged()
+    {
+        if (Avalonia.Threading.Dispatcher.UIThread.CheckAccess()) RefreshUpdate();
+        else Avalonia.Threading.Dispatcher.UIThread.Post(RefreshUpdate);
+    }
+
+    void RefreshUpdate()
+    {
+        if (_disposed) return;
+        var u = Host.Updates;
+        var release = u.Available;
+        UpdateVisible = release != null || u.Phase != UpdatePhase.Idle;
+        UpdateTitle = release == null ? "Atualização"
+            : u.Phase switch
+            {
+                UpdatePhase.Downloading or UpdatePhase.Installing => $"Atualizando para a versão {release.Version}",
+                UpdatePhase.Installed => $"Versão {release.Version} instalada",
+                UpdatePhase.Restarting => $"Instalando a versão {release.Version}",
+                _ => $"Nova versão {release.Version} disponível",
+            };
+        UpdateNotes = release == null || u.Phase is UpdatePhase.Installed or UpdatePhase.Restarting ? "" : UpdateCheck.Summarize(release.Notes);
+        UpdateStatus = u.StatusText ?? (release != null ? $"Você usa a versão {u.CurrentVersion}." : "");
+        UpdateStatusIsError = u.Phase == UpdatePhase.Failed;
+        UpdateShowProgress = u.Phase is UpdatePhase.Downloading or UpdatePhase.Installing;
+        UpdateProgress = u.Progress;
+        UpdateCanStart = release != null && !u.IsBusy && u.Phase is UpdatePhase.Idle or UpdatePhase.Failed;
+        UpdateInstalled = u.Phase == UpdatePhase.Installed;
+        UpdateDone = u.Phase is UpdatePhase.Installed or UpdatePhase.Restarting;
+        UpdateTrayText = release != null && u.Phase is not (UpdatePhase.Installed or UpdatePhase.Restarting) ? $"Atualizar para {release.Version}" : null;
+        if (u.LastCheckText != null && !CheckingForUpdates) UpdateCheckText = u.LastCheckText;
+    }
+
+    /// <summary>
+    /// "Atualizar agora" (painel, bandeja, notificação, CLI). Pacote do sistema: instala com o app aberto e, dando certo,
+    /// pergunta se reinicia — "sim" segue o mesmo fluxo do "Reiniciar agora" (ConfirmQuitAsync + relançamento). Instalação
+    /// do usuário: confirma a saída antes (o install-user.sh encerra e reabre o app).
+    /// </summary>
+    [RelayCommand]
+    async Task UpdateNow()
+    {
+        if (Host.Updates.Available is not { } release) return;
+        UpdateCanStart = false;
+        var outcome = await Host.Updates.InstallAsync(ConfirmQuitAsync);
+        RefreshUpdate();
+        switch (outcome.Kind)
+        {
+            case UpdateOutcomeKind.Installed:
+                if (await ConfirmAsync(new ConfirmRequest("Atualização instalada",
+                        $"A versão {release.Version} do craftDriver foi instalada. Reiniciar agora para usar a nova versão?", "Reiniciar agora")))
+                    await Restart();
+                if (!_disposed && Host.Updates.Phase == UpdatePhase.Installed)
+                {
+                    // não reiniciou agora: o "Reiniciar agora" da barra fica disponível
+                    RestartNeeded = true;
+                    Message = $"A versão {release.Version} foi instalada. Reinicie o craftDriver para usar a nova versão.";
+                }
+                break;
+            // cancelado, erro, "rode no terminal", reabrindo: o próprio painel mostra (sem repetir na barra)
+            case UpdateOutcomeKind.Busy:
+                Message = outcome.Message;
+                break;
+        }
+    }
+
+    [RelayCommand]
+    void OpenReleaseNotes()
+    {
+        if (Host.Updates.Available is { } r) Host.OpenUrl(r.HtmlUrl);
+    }
+
+    [RelayCommand] void SkipUpdate() => Host.Updates.Skip();
+
+    /// <summary>"Procurar agora" (Configurações): verifica mesmo com a automática desligada.</summary>
+    [RelayCommand]
+    async Task CheckForUpdatesNow()
+    {
+        CheckingForUpdates = true;
+        UpdateCheckText = "Procurando…";
+        try
+        {
+            await Host.Updates.CheckAsync(manual: true);
+        }
+        finally
+        {
+            CheckingForUpdates = false;
+            RefreshUpdate();
+        }
+        UpdateCheckText = Host.Updates.LastCheckText ?? "";
+    }
 
     [RelayCommand]
     async Task AddAccount()

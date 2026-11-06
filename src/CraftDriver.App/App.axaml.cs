@@ -46,6 +46,8 @@ public partial class App : Application
     MainWindow? _window;
     TrayIcon? _tray;
     NativeMenuItem? _pauseItem;
+    /// <summary>"Atualizar para X" (só aparece com versão nova).</summary>
+    NativeMenuItem? _updateItem;
     EngineStatus? _lastStatus;
     IClassicDesktopStyleApplicationLifetime? _desktop;
     bool _quitting;
@@ -162,10 +164,12 @@ public partial class App : Application
             Host.QuitRequested += OnQuitRequested;
             Host.VersionsRequested += OnVersionsRequested;
             Host.TrashRequested += OnTrashRequested;
+            Host.UpdateNowRequested += OnUpdateNowRequested;
             _vm.QuitRequested += Quit;
             CreateTray(starting: false);
             _lastStatus = null;
             _vm.Refreshed += UpdateTray;
+            _vm.PropertyChanged += OnVmPropertyChanged;
             UpdateTray();
             desktop.Exit += OnExit;
             if (ScalingNote != null) Host.Activity.Add(ActivityKind.Info, ScalingNote);
@@ -223,6 +227,8 @@ public partial class App : Application
         trash.Click += (_, _) => OnTrashRequested();
         _pauseItem = new NativeMenuItem("Pausar sincronização");
         _pauseItem.Click += (_, _) => _vm.TogglePauseCommand.Execute(null);
+        _updateItem = new NativeMenuItem("Atualizar") { IsVisible = false };
+        _updateItem.Click += (_, _) => OnUpdateNowRequested();
         var quit = new NativeMenuItem("Sair");
         quit.Click += (_, _) => QuitWithConfirmation();
         menu.Items.Add(open);
@@ -230,6 +236,7 @@ public partial class App : Application
         menu.Items.Add(sync);
         menu.Items.Add(trash);
         menu.Items.Add(_pauseItem);
+        menu.Items.Add(_updateItem);
         menu.Items.Add(new NativeMenuItemSeparator());
         menu.Items.Add(quit);
 
@@ -261,6 +268,11 @@ public partial class App : Application
         _tray.ToolTipText = $"craftDriver — {AppHost.StatusText(st)}" +
                             (pending + transfers > 0 ? $"\n{pending} alterações na fila, {transfers} transferências" : "");
         if (_pauseItem != null) _pauseItem.Header = Host.Engine.Paused ? "Retomar sincronização" : "Pausar sincronização";
+        if (_updateItem != null)
+        {
+            _updateItem.IsVisible = _vm.UpdateTrayText != null;
+            if (_vm.UpdateTrayText != null) _updateItem.Header = _vm.UpdateTrayText;
+        }
         if (st == _lastStatus) return;
         _lastStatus = st;
         _tray.Icon = LoadIcon(st switch
@@ -330,6 +342,24 @@ public partial class App : Application
         _trashWindow.Activate();
     });
 
+    /// <summary>Versão nova encontrada/instalada: o item da bandeja muda na hora (sem esperar o próximo segundo).</summary>
+    void OnVmPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(MainViewModel.UpdateTrayText)) UpdateTray();
+    }
+
+    /// <summary>
+    /// "Atualizar agora" da notificação, da bandeja ou do CLI (IPC "update"): a janela aparece (é dona das
+    /// confirmações) na Visão geral, com o painel da atualização, e o fluxo do botão começa.
+    /// </summary>
+    void OnUpdateNowRequested() => Dispatcher.UIThread.Post(() =>
+    {
+        if (_quitting) return;
+        ShowWindow();
+        _vm.SelectedTab = 0;
+        if (_vm.UpdateNowCommand.CanExecute(null)) _vm.UpdateNowCommand.Execute(null);
+    });
+
     void OnExit(object? sender, ControlledApplicationLifetimeExitEventArgs e) => StopUpdates();
 
     void StopUpdates()
@@ -338,7 +368,9 @@ public partial class App : Application
         Host.QuitRequested -= OnQuitRequested;
         Host.VersionsRequested -= OnVersionsRequested;
         Host.TrashRequested -= OnTrashRequested;
+        Host.UpdateNowRequested -= OnUpdateNowRequested;
         _vm.Refreshed -= UpdateTray;
+        _vm.PropertyChanged -= OnVmPropertyChanged;
         _vm.QuitRequested -= Quit;
         _vm.Dispose();
         if (_desktop != null) _desktop.Exit -= OnExit;

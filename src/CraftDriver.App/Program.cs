@@ -48,11 +48,12 @@ sealed class Program
 
         if (args.Length > 0 && CliCommands.ContainsKey(args[0]))
             return RunCli(args).GetAwaiter().GetResult();
+        // atualização: --check funciona sem instância; sem --check, pede à instância ou instala aqui no terminal
+        if (args is ["update", ..])
+            return UpdateCli.RunAsync(args, Console.Out, Console.Error).GetAwaiter().GetResult();
         if (args.Contains("--version") || args.Contains("-V"))
         {
-            Console.WriteLine("craftdriver " + (typeof(Program).Assembly
-                .GetCustomAttributes(typeof(System.Reflection.AssemblyInformationalVersionAttribute), false)
-                .OfType<System.Reflection.AssemblyInformationalVersionAttribute>().FirstOrDefault()?.InformationalVersion.Split('+')[0] ?? "?"));
+            Console.WriteLine("craftdriver " + AppVersion.Current);
             return 0;
         }
         // diagnóstico do sistema (TLS: libssl + ca-certificates), usado pelo smoke dos pacotes
@@ -208,6 +209,9 @@ sealed class Program
               craftdriver --version       mostra a versão
               craftdriver diagnose --tls  confere OpenSSL, certificados raiz e HTTPS (sem conta)
               craftdriver login [--personal|--work]   adiciona conta pelo terminal
+              craftdriver update --check  procura versão nova (0 = atualizado, 10 = há versão nova, 1 = erro)
+              craftdriver update          atualiza: com o app aberto, pela janela dele; senão, aqui (pede a senha
+                                          de administrador para pacotes do sistema)
 
             Com o app em execução:
               craftdriver status [arquivos…]   status geral ou de itens

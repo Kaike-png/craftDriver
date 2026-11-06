@@ -91,8 +91,35 @@
         <TabControl Margin="12,4,12,0" SelectedIndex="{Binding SelectedTab}">
             <!-- ===================== VISÃO GERAL ===================== -->
             <TabItem Header="Visão geral">
-                <Grid RowDefinitions="Auto,Auto,Auto,Auto,*" Margin="4">
-                    <Border Grid.Row="0" Classes="card">
+                <Grid RowDefinitions="Auto,Auto,Auto,Auto,Auto,*" Margin="4">
+                    <!-- versão nova disponível; durante a atualização, progresso/erro no mesmo painel -->
+                    <Border x:Name="UpdatePanel" Grid.Row="0" Classes="card" Classes.danger="{Binding UpdateStatusIsError}" IsVisible="{Binding UpdateVisible}">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <StackPanel Spacing="4">
+                                <TextBlock Text="{Binding UpdateTitle}" FontWeight="SemiBold" FontSize="15" TextWrapping="Wrap" />
+                                <ScrollViewer MaxHeight="150" IsVisible="{Binding UpdateNotes, Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
+                                    <TextBlock Classes="muted" Text="{Binding UpdateNotes}" TextWrapping="Wrap" />
+                                </ScrollViewer>
+                                <ProgressBar Value="{Binding UpdateProgress}" Maximum="100" IsVisible="{Binding UpdateShowProgress}"
+                                             AutomationProperties.Name="Progresso da atualização" />
+                                <TextBlock Text="{Binding UpdateStatus}" TextWrapping="Wrap" Classes.error="{Binding UpdateStatusIsError}"
+                                           IsVisible="{Binding UpdateStatus, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
+                                           AutomationProperties.LiveSetting="Polite" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="1" Spacing="6" VerticalAlignment="Top" Margin="12,0,0,0">
+                                <Button Classes="accent" Content="Atualizar agora" Command="{Binding UpdateNowCommand}" IsEnabled="{Binding UpdateCanStart}"
+                                        IsVisible="{Binding !UpdateDone}" HorizontalAlignment="Stretch"
+                                        ToolTip.Tip="Baixa o pacote desta instalação, confere o SHA256 e instala" />
+                                <Button Classes="accent" Content="Reiniciar agora" Command="{Binding RestartCommand}" IsVisible="{Binding UpdateInstalled}"
+                                        HorizontalAlignment="Stretch" />
+                                <Button Content="Ver novidades" Command="{Binding OpenReleaseNotesCommand}" HorizontalAlignment="Stretch" />
+                                <Button Content="Ignorar esta versão" Command="{Binding SkipUpdateCommand}" IsEnabled="{Binding UpdateCanStart}"
+                                        IsVisible="{Binding !UpdateDone}" HorizontalAlignment="Stretch" />
+                            </StackPanel>
+                        </Grid>
+                    </Border>
+
+                    <Border Grid.Row="1" Classes="card">
                         <Grid ColumnDefinitions="*,Auto">
                             <StackPanel>
                                 <TextBlock Text="Pasta sincronizada" FontWeight="SemiBold" />
@@ -102,7 +129,7 @@
                         </Grid>
                     </Border>
 
-                    <Border Grid.Row="1" Classes="card" IsVisible="{Binding !HasAccounts}">
+                    <Border Grid.Row="2" Classes="card" IsVisible="{Binding !HasAccounts}">
                         <StackPanel Spacing="8">
                             <TextBlock Classes="h2" Text="Bem-vindo!" />
                             <TextBlock TextWrapping="Wrap" Text="Conecte sua conta Microsoft (pessoal, corporativa ou de estudante). Seus arquivos do OneDrive e do SharePoint aparecem na pasta sincronizada sem ocupar espaço: eles são baixados quando você os abre." />
@@ -111,7 +138,7 @@
                     </Border>
 
                     <!-- falhas esperando nova tentativa; "Envio parado" só quando alguma segura alterações que dependem dela -->
-                    <Border Grid.Row="2" Classes="card" Classes.danger="{Binding QueueStalled}" Padding="12" Margin="0,0,0,8" IsVisible="{Binding HasQueueBlocked}">
+                    <Border Grid.Row="3" Classes="card" Classes.danger="{Binding QueueStalled}" Padding="12" Margin="0,0,0,8" IsVisible="{Binding HasQueueBlocked}">
                         <StackPanel Spacing="4">
                             <TextBlock Text="{Binding QueueHeader}" FontWeight="SemiBold" />
                             <ItemsControl ItemsSource="{Binding QueueBlocked}">
@@ -124,7 +151,7 @@
                         </StackPanel>
                     </Border>
 
-                    <StackPanel Grid.Row="3" IsVisible="{Binding HasTransfers}">
+                    <StackPanel Grid.Row="4" IsVisible="{Binding HasTransfers}">
                         <TextBlock Classes="h2" Text="Transferências" />
                         <ItemsControl ItemsSource="{Binding Transfers}">
                             <ItemsControl.ItemTemplate>
@@ -146,7 +173,7 @@
                         </ItemsControl>
                     </StackPanel>
 
-                    <DockPanel Grid.Row="4">
+                    <DockPanel Grid.Row="5">
                         <Grid DockPanel.Dock="Top" ColumnDefinitions="*,Auto,Auto,Auto">
                             <TextBlock Classes="h2" Text="Atividade recente" VerticalAlignment="Center" />
                             <TextBox Grid.Column="1" Width="220" Text="{Binding ActivityFilter}" PlaceholderText="Buscar na atividade"
@@ -369,6 +396,15 @@
                             </ComboBox>
                         </StackPanel>
                         <Button Content="Instalar atalho no menu e itens no menu de contexto (Dolphin / Nautilus / Nemo)" Command="{Binding InstallIntegrationCommand}" />
+
+                        <TextBlock Classes="h2" Text="Atualizações" />
+                        <TextBlock Text="{Binding CurrentVersionText}" />
+                        <CheckBox Content="Procurar atualizações automaticamente" IsChecked="{Binding CheckForUpdates}"
+                                  ToolTip.Tip="Consulta o GitHub 2 minutos depois de abrir e uma vez por dia; nada é instalado sem você pedir" />
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <Button Content="Procurar agora" Command="{Binding CheckForUpdatesNowCommand}" IsEnabled="{Binding !CheckingForUpdates}" />
+                            <TextBlock Classes="muted" Text="{Binding UpdateCheckText}" VerticalAlignment="Center" TextWrapping="Wrap" />
+                        </StackPanel>
 
                         <TextBlock Classes="h2" Text="Pastas e cache" />
                         <TextBlock x:Name="MountLabel" Text="Pasta sincronizada (precisa estar vazia; muda na hora ao salvar):" />

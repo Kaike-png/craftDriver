@@ -4,6 +4,7 @@ using CraftDriver.Core.Graph;
 using CraftDriver.Core.Ipc;
 using CraftDriver.Core.State;
 using CraftDriver.Core.Sync;
+using CraftDriver.Core.Updates;
 using CraftDriver.Core.Vfs;
 using CraftDriver.Fuse;
 
@@ -23,6 +24,15 @@ public sealed class AppHost
 
     /// <summary>Link de compartilhamento, versões anteriores e Lixeira.</summary>
     public ItemActions Actions { get; }
+
+    /// <summary>Verificação e instalação de versões novas (docs/atualizacoes.md).</summary>
+    public UpdateService Updates { get; }
+
+    /// <summary>
+    /// "Atualizar agora" pedido de fora da janela (notificação, IPC "update" do CLI). Disparado em qualquer thread: o
+    /// assinante (App) mostra a janela e inicia o mesmo fluxo do botão. Sem assinante (--headless), não é oferecido.
+    /// </summary>
+    public event Action? UpdateNowRequested;
 
     /// <summary>Troca a Graph das drives (testes: Graph falsa). Lido quando o motor cria cada drive.</summary>
     internal Func<DriveConfig, IGraphApi>? GraphFactory { get; set; }
@@ -95,7 +105,28 @@ public sealed class AppHost
             ShowRequested?.Invoke();
         };
         Engine.ConflictDetected += OnConflict;
+        Updates = new UpdateService(cfg, Activity, () => TrySaveConfig("Atualizações"));
+        Updates.Discovered += OnUpdateDiscovered;
     }
+
+    /// <summary>Etiqueta da notificação de versão nova (a de uma versão mais nova substitui a anterior).</summary>
+    internal const string UpdateTag = "atualizacao";
+
+    /// <summary>Versão nova encontrada (uma vez por versão): notificação com "Atualizar agora" e "Ver novidades".</summary>
+    internal void OnUpdateDiscovered(ReleaseInfo release)
+    {
+        const string hint = "Para atualizar: abra o craftDriver (aba Visão geral) ou rode \"craftdriver update\" no terminal.";
+        var notes = new NotificationAction("notes", "Ver novidades", () => OpenUrl(release.HtmlUrl)) { HintWithoutButtons = hint };
+        NotificationAction[] actions = UpdateNowRequested == null
+            ? [notes]
+            : [new(NotificationAction.Default, "Atualizar agora", RequestUpdateNow) { HintWithoutButtons = hint },
+               new("update", "Atualizar agora", RequestUpdateNow) { HintWithoutButtons = hint }, notes];
+        NotifyTagged(UpdateTag, "craftDriver — nova versão " + release.Version,
+            $"A versão {release.Version} do craftDriver está disponível (você usa a {Updates.CurrentVersion}).", actions);
+    }
+
+    /// <summary>Mesmo fluxo do botão "Atualizar agora" (janela).</summary>
+    public void RequestUpdateNow() => UpdateNowRequested?.Invoke();
 
     /// <summary>Pede para mostrar a janela (ex.: ação de notificação tratada pelo ViewModel).</summary>
     public void RequestShow() => ShowRequested?.Invoke();
@@ -211,6 +242,7 @@ public sealed class AppHost
         Activity.Add(ActivityKind.Info, $"Iniciado. Tokens em: {Auth.CacheStorage}");
         Engine.Start();
         Mount();
+        Updates.Start();
         _sessionTimer = new Timer(_ =>
         {
             try { RunOnMain(CheckSessions).ContinueWith(t => _ = t.Exception, TaskContinuationOptions.OnlyOnFaulted); }
@@ -311,6 +343,7 @@ public sealed class AppHost
             catch (Exception ex) { Activity.Add(ActivityKind.Error, $"Ao encerrar ({what}): {ex.Message}"); }
         }
         await Step("timer", async () => { if (_sessionTimer != null) await _sessionTimer.DisposeAsync(); });
+        await Step("atualizações", () => { Updates.Dispose(); return Task.CompletedTask; });
         await Step("desmontar", UnmountAsync);
         await Step("motor", () => { Engine.Stop(); return Task.CompletedTask; });
         await Step("IPC", () => { _ipc?.Dispose(); return Task.CompletedTask; });
@@ -518,6 +551,8 @@ public sealed class AppHost
             case "quit":
                 QuitRequested?.Invoke();
                 return new(true, "encerrando");
+            case "update":
+                return await UpdateFromCliAsync();
             case "sync":
                 Engine.SyncNow();
                 return new(true, "Sincronização solicitada");
@@ -613,6 +648,24 @@ public sealed class AppHost
             default:
                 return new(false, "Comando desconhecido: " + req.Cmd);
         }
+    }
+
+    /// <summary>
+    /// IPC "update" (craftdriver update com o app aberto): procura a versão nova se ainda não souber e inicia o mesmo
+    /// fluxo do botão na janela. Sem janela (--headless), devolve <see cref="UpdateCli.HeadlessReply"/>: o CLI atualiza
+    /// no terminal (pkexec sem agente gráfico não pediria a senha).
+    /// </summary>
+    async Task<IpcResponse> UpdateFromCliAsync()
+    {
+        if (UpdateNowRequested == null) return new(false, UpdateCli.HeadlessReply);
+        if (Updates.IsBusy) return new(false, "Já há uma atualização em andamento na janela do craftDriver.");
+        var release = Updates.Available ?? await Updates.CheckAsync(manual: true);
+        if (release == null)
+            return Updates.LastCheckFailed
+                ? new(false, Updates.LastCheckText ?? "Não foi possível procurar atualizações.")
+                : new(true, $"O craftDriver já está na versão mais recente ({Updates.CurrentVersion}).");
+        RequestUpdateNow();
+        return new(true, $"Atualização para a versão {release.Version} iniciada na janela do craftDriver.");
     }
 
     // ---------- link de compartilhamento, versões e Lixeira ----------
