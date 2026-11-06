@@ -84,13 +84,13 @@ public class BehaviorTests
         var text = new string('y', 10_000);
         h.Remote.RemoteCreate("/", "g.txt", text);
         h.Settle();
-        SyncEngine.MaxDownloadResumes = 0; // simula queda sem retomada imediata (ex.: app fechado)
+        h.Engine.MaxDownloadResumes = 0; // simula queda sem retomada imediata (ex.: app fechado)
         try
         {
             h.Remote.DropDownloadAfter = 2500;
             Assert.Equal(-Errno.EHOSTUNREACH, h.Fs.Open(h.P("/g.txt"), 0, 0, out _));
         }
-        finally { SyncEngine.MaxDownloadResumes = 5; }
+        finally { h.Engine.MaxDownloadResumes = 5; }
         Assert.Equal(text, h.ReadFile("/g.txt"));
         Assert.Equal([0L, 2500L], h.Remote.DownloadOffsets);
         Assert.Empty(Directory.EnumerateFiles(h.Engine.Cache.PartialDir));
@@ -120,7 +120,7 @@ public class BehaviorTests
     public void Itens_fixados_alem_do_lote_nao_esperam_5_minutos()
     {
         using var h = new Harness();
-        DriveSync.PinBatchSize = 2;
+        h.Drive.PinBatchSize = 2;
         try
         {
             h.Remote.RemoteCreate("/", "Fotos", null, folder: true);
@@ -129,7 +129,7 @@ public class BehaviorTests
             h.Engine.SetPinned(Get(h, "/Fotos").Lid, true);
             Harness.WaitUntil(() => h.Remote.Downloads == 5, "baixar os 5 fixados", 10_000);
         }
-        finally { DriveSync.PinBatchSize = 500; }
+        finally { h.Drive.PinBatchSize = 500; }
     }
 
     [Fact]

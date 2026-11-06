@@ -16,3 +16,8 @@ internal sealed partial class ConfigJsonContext : JsonSerializerContext;
 [JsonSerializable(typeof(IpcResponse))]
 [JsonSerializable(typeof(AddAccountRequest))]
 internal sealed partial class IpcJsonContext : JsonSerializerContext;
+
+/// <summary>Filhos cujo pai ainda não apareceu na enumeração inicial; persistidos com o nextLink para retomada.</summary>
+[JsonSerializable(typeof(List<CraftDriver.Core.Graph.RemoteItem>))]
+[JsonSerializable(typeof(CraftDriver.Core.Graph.RemoteItem))]
+internal sealed partial class DeltaJsonContext : JsonSerializerContext;

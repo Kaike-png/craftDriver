@@ -287,7 +287,13 @@ public sealed class AuthService
         };
     }
 
-    public async Task<string> GetTokenAsync(string accountId, bool forceRefresh, CancellationToken ct)
+    /// <summary>Tokens em memória até perto de expirar (evita reler o chaveiro a cada pedido).</summary>
+    readonly AccessTokenCache _tokens = new();
+
+    public Task<string> GetTokenAsync(string accountId, bool forceRefresh, CancellationToken ct) =>
+        _tokens.GetAsync(accountId, forceRefresh, (force, token) => AcquireTokenAsync(accountId, force, token), ct);
+
+    async Task<(string Token, DateTimeOffset ExpiresOn)> AcquireTokenAsync(string accountId, bool forceRefresh, CancellationToken ct)
     {
         var acc = await _app.GetAccountAsync(accountId);
         // Logo após o login na sessão, a carteira (KWallet) pode estar terminando de abrir e a primeira
@@ -307,7 +313,7 @@ public sealed class AuthService
             var builder = _app.AcquireTokenSilent(ScopesFor(IsPersonalTenant(acc.HomeAccountId.TenantId)), acc).WithForceRefresh(forceRefresh);
             if (!string.IsNullOrEmpty(acc.HomeAccountId.TenantId)) builder = builder.WithTenantId(acc.HomeAccountId.TenantId);
             var r = await builder.ExecuteAsync(ct);
-            return r.AccessToken;
+            return (r.AccessToken, r.ExpiresOn);
         }
         catch (MsalUiRequiredException ex)
         {
@@ -317,6 +323,7 @@ public sealed class AuthService
 
     public async Task SignOutAsync(string accountId)
     {
+        _tokens.Invalidate(accountId);
         var acc = await _app.GetAccountAsync(accountId);
         if (acc != null) await _app.RemoveAsync(acc);
     }

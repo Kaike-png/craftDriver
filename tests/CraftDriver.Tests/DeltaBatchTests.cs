@@ -34,8 +34,8 @@ public class DeltaBatchTests
     public void Lotes_pequenos_aplicam_a_pagina_inteira()
     {
         using var h = new Harness();
-        var old = DriveSync.DeltaBatchSize;
-        DriveSync.DeltaBatchSize = 3;
+        var old = h.Drive.DeltaBatchSize;
+        h.Drive.DeltaBatchSize = 3;
         try
         {
             h.Remote.RemoteCreate("/", "P", null, folder: true);
@@ -43,6 +43,6 @@ public class DeltaBatchTests
             h.Settle();
             for (var i = 0; i < 20; i++) Assert.NotNull(h.Fs.Resolve(h.P($"/P/{i}.txt")));
         }
-        finally { DriveSync.DeltaBatchSize = old; }
+        finally { h.Drive.DeltaBatchSize = old; }
     }
 }

@@ -24,11 +24,11 @@ sealed class TwoDrives : IDisposable
     /// <param name="kind2">A segunda é uma biblioteca do SharePoint por padrão (sem "Compartilhados comigo").</param>
     public TwoDrives(string name1, string name2, string kind1 = "personal", string kind2 = "documentLibrary")
     {
-        DriveSync.UploadSettleMs = 1000;
         Directory.CreateDirectory(Dir);
         var path = Path.Combine(Dir, "config.json");
         new AppConfig
         {
+            UploadSettleMs = 1000,
             CacheDir = Path.Combine(Dir, "cache"),
             PollIntervalSeconds = 5,
             Accounts = [new AccountConfig { Id = "acc", Username = "teste@exemplo.com" }],
@@ -210,9 +210,9 @@ public class NamesAndDrivesTests
             Assert.Equal("EACCES", Py(mnt, "create", "solto.txt"));
             Assert.Equal("EACCES", Py(mnt, "mkdir", "Nova pasta"));
             Assert.Equal("EACCES", Py(mnt, "rename", $"{d1}/a.txt", "a.txt"));
-            Assert.Equal("EPERM", Py(mnt, "rmdir", d2));
-            Assert.Equal("EPERM", Py(mnt, "rename", d1, "Outro nome"));
-            Assert.Equal("EPERM", Py(mnt, "rename", d1, $"{d2}/{d1}"));
+            Assert.Equal("EACCES", Py(mnt, "rmdir", d2)); // raiz 0555: o kernel recusa antes do handler
+            Assert.Equal("EACCES", Py(mnt, "rename", d1, "Outro nome")); // raiz 0555: o kernel recusa antes do handler
+            Assert.Equal("EACCES", Py(mnt, "rename", d1, $"{d2}/{d1}")); // raiz 0555: o kernel recusa antes do handler
             Assert.Equal("EPERM", Py(mnt, "chmod", ".", "700"));
             Assert.Equal($"{d2}\n{d1}\n{d1}{SyncEngine.SharedContainerSuffix}", Sh("LC_ALL=C ls -1", mnt).output);
             Assert.Equal("A", Py(mnt, "read", $"{d1}/a.txt"));

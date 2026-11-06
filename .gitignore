@@ -6,3 +6,4 @@ dist/
 coverage/
 .tools/
 TestResults/
+__pycache__/

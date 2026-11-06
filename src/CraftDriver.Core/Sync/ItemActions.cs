@@ -60,14 +60,24 @@ public sealed class ItemActions(SyncEngine engine, VirtualFs fs)
         {
             try
             {
-                var link = await drive.Api.CreateLinkAsync(drive.DriveId, item.ItemId!, type, "anonymous", ct);
+                var link = await drive.Api.CreateLinkAsync(drive.ApiDriveId, item.ItemId!, type, "anonymous", ct);
                 return new ShareResult(link.WebUrl, link.Type, link.Scope, false);
             }
             catch (GraphException g) when (drive.Config.Kind != "personal" && IsPolicyRefusal(g))
             {
                 engine.Activity.Debug($"Link anônimo recusado para {item.Name} ({g.Message}); usando escopo da organização");
-                var link = await drive.Api.CreateLinkAsync(drive.DriveId, item.ItemId!, type, "organization", ct);
-                return new ShareResult(link.WebUrl, link.Type, link.Scope, true);
+                try
+                {
+                    var link = await drive.Api.CreateLinkAsync(drive.ApiDriveId, item.ItemId!, type, "organization", ct);
+                    return new ShareResult(link.WebUrl, link.Type, link.Scope, true);
+                }
+                catch (GraphException second)
+                {
+                    // o 400 genérico também cai aqui (o código de "política" não é documentado): se a 2ª tentativa
+                    // também falha, o motivo que interessa é o do pedido original
+                    engine.Activity.Debug($"Link da organização também recusado para {item.Name}: {second.Message}");
+                    throw g;
+                }
             }
         }
         catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
@@ -89,7 +99,7 @@ public sealed class ItemActions(SyncEngine engine, VirtualFs fs)
     public async Task<IReadOnlyList<DriveItemVersion>> ListVersionsAsync(long lid, CancellationToken ct)
     {
         var (item, drive) = Remote(lid, fileOnly: true);
-        try { return await drive.Api.ListVersionsAsync(drive.DriveId, item.ItemId!, ct); }
+        try { return await drive.Api.ListVersionsAsync(drive.ApiDriveId, item.ItemId!, ct); }
         catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
         {
             throw Friendly("Não foi possível listar as versões", ex);
@@ -112,8 +122,8 @@ public sealed class ItemActions(SyncEngine engine, VirtualFs fs)
         RemoteItem? fresh;
         try
         {
-            await drive.Api.RestoreVersionAsync(drive.DriveId, item.ItemId!, versionId, ct);
-            fresh = await drive.Api.GetItemAsync(drive.DriveId, item.ItemId!, ct);
+            await drive.Api.RestoreVersionAsync(drive.ApiDriveId, item.ItemId!, versionId, ct);
+            fresh = await drive.Api.GetItemAsync(drive.ApiDriveId, item.ItemId!, ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
         {
@@ -174,7 +184,7 @@ public sealed class ItemActions(SyncEngine engine, VirtualFs fs)
             try
             {
                 await using (var dst = new FileStream(temp, FileMode.Create, FileAccess.ReadWrite, FileShare.None, 1 << 16, true))
-                    await drive.Api.DownloadVersionAsync(drive.DriveId, item.ItemId!, version.Id, dst, ct);
+                    await drive.Api.DownloadVersionAsync(drive.ApiDriveId, item.ItemId!, version.Id, dst, ct);
             }
             catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
             {
@@ -213,21 +223,24 @@ public sealed class ItemActions(SyncEngine engine, VirtualFs fs)
         finally { try { File.Delete(temp); } catch { } }
     }
 
-    /// <summary>Caminho no <see cref="VirtualFs"/> ("/Nome da drive/pasta/…") de um item.</summary>
+    /// <summary>
+    /// Caminho no <see cref="VirtualFs"/> ("/Nome da drive/pasta/…") de um item. Itens de atalho/compartilhado (sub-drive)
+    /// sobem pela raiz deles até a árvore da drive hospedeira (ou a pasta virtual "Compartilhados comigo").
+    /// </summary>
     string? VirtualPathOf(long lid)
     {
         var parts = new List<string>();
         var cur = Db.Get(lid);
-        if (cur == null) return null;
-        var drive = engine.GetDrive(cur.DriveId);
-        if (drive == null) return null;
-        while (cur != null && cur.Lid != drive.RootLid)
+        for (var guard = 0; cur != null && cur.ParentLid != 0 && guard < 4096; guard++)
         {
             parts.Add(cur.Name);
             cur = Db.Get(cur.ParentLid);
         }
         if (cur == null) return null;
-        parts.Add(drive.Config.DisplayName.Replace('/', '-'));
+        var top = engine.Drives.FirstOrDefault(d => d.Ready && d.RootLid == cur.Lid)?.Config.DisplayName
+                  ?? engine.SharedContainers.Where(c => c.Lid == cur.Lid).Select(c => c.Name).FirstOrDefault();
+        if (top == null) return null;
+        parts.Add(top.Replace('/', '-'));
         parts.Reverse();
         return "/" + string.Join('/', parts);
     }
@@ -265,7 +278,7 @@ public sealed class ItemActions(SyncEngine engine, VirtualFs fs)
                 $"Restaurar pela API só é possível no OneDrive pessoal. Abra a Lixeira de \"{drive.Config.DisplayName}\" no navegador: {RecycleBinUrl(drive.Config)}");
         try
         {
-            await drive.Api.RestoreDeletedAsync(drive.DriveId, rec.ItemId, ct);
+            await drive.Api.RestoreDeletedAsync(drive.ApiDriveId, rec.ItemId, ct);
         }
         catch (GraphException g) when (g.Status == HttpStatusCode.NotFound)
         {

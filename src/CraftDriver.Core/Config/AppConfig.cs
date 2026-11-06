@@ -82,8 +82,39 @@ public static class AppPaths
 
     public static void EnsureDirs()
     {
-        foreach (var d in new[] { ConfigDir, StateDir, RuntimeDir })
+        foreach (var d in new[] { ConfigDir, StateDir })
             Directory.CreateDirectory(d);
+        // XDG_RUNTIME_DIR já é do usuário e 0700 (especificação XDG); o fallback em /tmp e o CRAFTDRIVER_HOME não
+        if (Override == null && Environment.GetEnvironmentVariable("XDG_RUNTIME_DIR") is { Length: > 0 }) Directory.CreateDirectory(RuntimeDir);
+        else EnsurePrivateDir(RuntimeDir);
+    }
+
+    /// <summary>Trava de instância única (flock): quem a segura é a instância em execução (ou iniciando).</summary>
+    public static string LockFile => Path.Combine(RuntimeDir, AppName + ".lock");
+
+    /// <summary>
+    /// Cria (ou confere) uma pasta só do usuário, 0700. Necessário no fallback sem XDG_RUNTIME_DIR
+    /// (/tmp/craftdriver-&lt;usuário&gt;): em /tmp outro usuário poderia criar a pasta antes, ou um link para outro
+    /// lugar, e receber o socket de comandos. Só o dono consegue mudar o modo (chmod), então o chmod é a
+    /// conferência do dono; link simbólico é recusado.
+    /// </summary>
+    public static void EnsurePrivateDir(string dir)
+    {
+        var info = new DirectoryInfo(dir);
+        if (info.LinkTarget != null)
+            throw new IOException($"{dir} é um link simbólico; o craftDriver precisa de uma pasta própria aqui.");
+        if (!info.Exists)
+        {
+            Directory.CreateDirectory(dir, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            info.Refresh();
+        }
+        const UnixFileMode privateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute;
+        if (info.UnixFileMode == privateMode) return;
+        try { File.SetUnixFileMode(dir, privateMode); }
+        catch (UnauthorizedAccessException)
+        {
+            throw new IOException($"{dir} pertence a outro usuário; o craftDriver não vai usá-la (socket de comandos).");
+        }
     }
 }
 
@@ -146,6 +177,27 @@ public sealed class AppConfig
     public int PollIntervalSeconds { get; set; } = 30;
     /// <summary>Downloads simultâneos por drive (sob demanda + fixados). 1–32; mudanças valem na hora (SyncEngine.ApplyTransferLimits).</summary>
     public int DownloadConcurrency { get; set; } = 4;
+    /// <summary>Envios simultâneos por drive (1–16). Só uploads são paralelos; metadados/exclusões são serializados.</summary>
+    public int ParallelUploads { get; set; } = 3;
+    /// <summary>Ajuste do motor por instância: MaxDownloadResumes (sem estado global entre motores/testes).</summary>
+    public int MaxDownloadResumes { get; set; } = 5;
+    /// <summary>Ajuste do motor por instância: DownloadAttempts (sem estado global entre motores/testes).</summary>
+    public int DownloadAttempts { get; set; } = 3;
+    /// <summary>Ajuste do motor por instância: SharedPollSeconds (sem estado global entre motores/testes).</summary>
+    public int SharedPollSeconds { get; set; } = 300;
+    /// <summary>Ajuste do motor por instância: SharedMaxItems (sem estado global entre motores/testes).</summary>
+    public int SharedMaxItems { get; set; } = 50_000;
+    /// <summary>Ajuste do motor por instância: DeleteQuietMs (sem estado global entre motores/testes).</summary>
+    public int DeleteQuietMs { get; set; } = 3000;
+    /// <summary>Ajuste do motor por instância: UploadSettleMs (sem estado global entre motores/testes).</summary>
+    public int UploadSettleMs { get; set; } = 3000;
+    /// <summary>Ajuste do motor por instância: MassDeleteWindow (sem estado global entre motores/testes).</summary>
+    public TimeSpan MassDeleteWindow { get; set; } = TimeSpan.FromMinutes(2);
+    /// <summary>Ajuste do motor por instância: DeltaBatchSize (sem estado global entre motores/testes).</summary>
+    public int DeltaBatchSize { get; set; } = 32;
+    /// <summary>Ajuste do motor por instância: PinBatchSize (sem estado global entre motores/testes).</summary>
+    public int PinBatchSize { get; set; } = 500;
+
     /// <summary>Banda de download agregada por drive, em bytes/s. 0 (ou negativo) = ilimitado.</summary>
     public long DownloadBytesPerSecond { get; set; }
     /// <summary>Banda de upload por drive, em bytes/s. 0 (ou negativo) = ilimitado.</summary>
@@ -298,10 +350,12 @@ public sealed class AppConfig
     /// <summary>
     /// Grava atomicamente (temporário + rename) com permissão 0600: o arquivo tem os ids das contas e o
     /// Client ID, e o temporário já nasce 0600, sem janela legível por outros usuários.
+    /// Devolve false (sem gravar) quando a configuração é somente leitura (<see cref="ReadOnly"/>); erros de
+    /// disco (cheio, sem permissão) lançam — quem chama decide como avisar.
     /// </summary>
-    public void Save(string? path = null)
+    public bool Save(string? path = null)
     {
-        if (ReadOnly) return;
+        if (ReadOnly) return false;
         path ??= AppPaths.ConfigFile;
         lock (SaveLock)
         {
@@ -318,6 +372,7 @@ public sealed class AppConfig
                 w.Write(JsonSerializer.Serialize(this, ConfigJsonContext.Default.AppConfig));
             File.Move(tmp, path, true);
         }
+        return true;
     }
 
     // ---- janela principal e bandeja (acrescentados no fim: menos conflito com outras mudanças) ----

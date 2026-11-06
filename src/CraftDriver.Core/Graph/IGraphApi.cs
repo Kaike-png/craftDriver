@@ -50,6 +50,7 @@ public interface IGraphApi
 
     Task<RemoteItem> CreateFolderAsync(string driveId, string parentId, string name, CancellationToken ct);
     Task DeleteAsync(string driveId, string itemId, CancellationToken ct);
+    /// <summary>Move/renomeia; falha com 409 se já houver item com o nome no destino (ver a sobrecarga com <c>replace</c>).</summary>
     Task<RemoteItem> MoveAsync(string driveId, string itemId, string newParentId, string newName, CancellationToken ct);
     Task<RemoteItem> SetModifiedAsync(string driveId, string itemId, DateTimeOffset modified, CancellationToken ct);
 
@@ -99,4 +100,23 @@ public interface IGraphApi
     /// </summary>
     Task<RemoteItem> RestoreDeletedAsync(string driveId, string itemId, CancellationToken ct) =>
         throw new NotSupportedException("Restaurar da Lixeira não é suportado por esta implementação.");
+
+    // ---------- conflitos sem perda (PENDENCIAS §12/§13) ----------
+
+    /// <summary>
+    /// Move/renomeia com <c>conflictBehavior</c> explícito: <paramref name="replace"/> = substitui o que houver com esse nome
+    /// no destino (só quando o usuário sobrescreveu um item que conhecia); senão 409.
+    /// </summary>
+    Task<RemoteItem> MoveAsync(string driveId, string itemId, string newParentId, string newName, bool replace, CancellationToken ct) =>
+        MoveAsync(driveId, itemId, newParentId, newName, ct);
+
+    /// <summary>Exclui; com <paramref name="ifMatchETag"/> a nuvem recusa (412) se o item mudou depois desse eTag.</summary>
+    Task DeleteAsync(string driveId, string itemId, string? ifMatchETag, CancellationToken ct) => DeleteAsync(driveId, itemId, ct);
+
+    /// <summary>
+    /// Delta de uma pasta (GET /drives/{d}/items/{id}/delta): só existe no OneDrive pessoal. <paramref name="link"/> é o
+    /// nextLink/deltaLink anterior (null = enumeração completa da pasta). Sem suporte: 400/404 ou NotSupportedException.
+    /// </summary>
+    Task<DeltaPage> GetFolderDeltaAsync(string driveId, string itemId, string? link, CancellationToken ct) =>
+        throw new NotSupportedException("Delta por pasta não suportado por esta implementação.");
 }

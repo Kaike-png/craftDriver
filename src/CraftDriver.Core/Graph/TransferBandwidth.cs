@@ -3,11 +3,24 @@ using System.Net;
 
 namespace CraftDriver.Core.Graph;
 
-/// <summary>Orçamento agregado por drive/direção, sem crédito acumulado nem rajada inicial.</summary>
+/// <summary>
+/// Orçamento agregado por drive/direção, sem crédito acumulado nem rajada inicial. Agenda absoluta: cada pedaço
+/// avança o horário previsto (início + bytes/taxa) e só se dorme quando se está adiantado em pelo menos
+/// <see cref="MinSleep"/> — dormir a cada fatia de 16 KiB arredondava para ≥ 1 ms por fatia (timer do Linux) e
+/// saturava em ~13 MiB/s qualquer que fosse o limite.
+/// </summary>
 internal sealed class TransferBandwidth(long bytesPerSecond)
 {
-    readonly SemaphoreSlim _gate = new(1, 1);
+    /// <summary>Menor espera que vale a pena pedir ao timer; adiantamentos menores ficam para o próximo pedaço.</summary>
+    public static readonly TimeSpan MinSleep = TimeSpan.FromMilliseconds(5);
+
+    /// <summary>Atraso em relação à agenda que ainda é recuperado; acima disso a transferência é tratada como ociosa.</summary>
+    public static readonly TimeSpan CatchUpWindow = TimeSpan.FromMilliseconds(100);
+
+    readonly Lock _lock = new();
     long _rate = bytesPerSecond;
+    /// <summary>Horário (Stopwatch) em que o último byte agendado "pode" ter sido entregue.</summary>
+    long _due;
 
     /// <summary>Limite atual (0 = ilimitado). Pode mudar com transferências em andamento: vale do próximo pedaço em diante.</summary>
     public long BytesPerSecond
@@ -22,29 +35,49 @@ internal sealed class TransferBandwidth(long bytesPerSecond)
     public async ValueTask WaitAsync(int bytes, CancellationToken ct)
     {
         if (!Enabled || bytes == 0) return;
-        await _gate.WaitAsync(ct);
+        ct.ThrowIfCancellationRequested();
+        long target;
+        lock (_lock)
+        {
+            var now = Stopwatch.GetTimestamp();
+            // Ocioso: recomeça a agenda agora — sem crédito acumulado para uma rajada depois. Atraso curto (o tempo
+            // entre um pedaço e o próximo: resposta do servidor, leitura do disco) é recuperado, senão a sobrecarga
+            // de cada pedido saía do limite.
+            if (_due < now - (long)(CatchUpWindow.TotalSeconds * Stopwatch.Frequency)) _due = now;
+            _due += (long)(SecondsFor(bytes) * Stopwatch.Frequency);
+            target = _due;
+        }
         try
         {
-            // Tempo monotônico: Task.Delay pode arredondar frações de milissegundo para baixo.
-            var duration = TimeSpan.FromSeconds(SecondsFor(bytes));
-            var start = Stopwatch.GetTimestamp();
-            while (duration - Stopwatch.GetElapsedTime(start) is var remaining && remaining > TimeSpan.Zero)
-                await Task.Delay(TimeSpan.FromMilliseconds(Math.Clamp(remaining.TotalMilliseconds, 1, 60_000)), ct);
+            // paga antes de entregar (sem rajada inicial); tempo monotônico, e o atraso do timer não se acumula
+            // porque o alvo é absoluto
+            while (Stopwatch.GetElapsedTime(Stopwatch.GetTimestamp(), target) is var ahead && ahead >= MinSleep)
+                await Task.Delay(ahead < TimeSpan.FromSeconds(60) ? ahead : TimeSpan.FromSeconds(60), ct);
         }
-        finally { _gate.Release(); }
+        catch (OperationCanceledException)
+        {
+            // cancelado: devolve à agenda o que não foi entregue, para não atrasar a próxima transferência
+            lock (_lock)
+            {
+                var now = Stopwatch.GetTimestamp();
+                var unused = Math.Min(target - now, (long)(SecondsFor(bytes) * Stopwatch.Frequency));
+                if (unused > 0) _due -= unused;
+            }
+            throw;
+        }
     }
 }
 
-internal sealed class BandwidthContent(byte[] bytes, TransferBandwidth bandwidth) : HttpContent
+internal sealed class BandwidthContent(byte[] bytes, int count, TransferBandwidth bandwidth) : HttpContent
 {
-    public double PacingSeconds => bandwidth.SecondsFor(bytes.Length);
-    protected override bool TryComputeLength(out long length) { length = bytes.Length; return true; }
+    public double PacingSeconds => bandwidth.SecondsFor(count);
+    protected override bool TryComputeLength(out long length) { length = count; return true; }
     protected override Task SerializeToStreamAsync(Stream stream, TransportContext? context) =>
         SerializeToStreamAsync(stream, context, CancellationToken.None);
     protected override async Task SerializeToStreamAsync(Stream stream, TransportContext? context, CancellationToken ct)
     {
         using var destination = new BandwidthWriteStream(stream, bandwidth);
-        await destination.WriteAsync(bytes.AsMemory(), ct);
+        await destination.WriteAsync(bytes.AsMemory(0, count), ct);
     }
 }
 

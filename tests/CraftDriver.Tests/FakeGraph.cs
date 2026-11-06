@@ -190,19 +190,32 @@ public sealed class FakeGraph : IGraphApi
         lock (_lock) return Task.FromResult(Child(parentId, name) is { } n ? ToRemote(n) : null);
     }
 
-    public Task<DeltaPage> GetDeltaAsync(string driveId, string? link, CancellationToken ct)
+    /// <summary>Página capturada no servidor, antes de entregá-la ao motor (janela enumeração × commit).</summary>
+    public Func<DeltaPage, CancellationToken, Task<DeltaPage>>? AfterDelta;
+
+    public async Task<DeltaPage> GetDeltaAsync(string driveId, string? link, CancellationToken ct)
     {
-        if (Route(driveId) is { } o) return o.GetDeltaAsync(driveId, link, ct);
+        var page = await GetDeltaCoreAsync(driveId, link, ct);
+        return AfterDelta is { } after ? await after(page, ct) : page;
+    }
+
+    async Task<DeltaPage> GetDeltaCoreAsync(string driveId, string? link, CancellationToken ct)
+    {
+        if (Route(driveId) is { } o) return await o.GetDeltaAsync(driveId, link, ct);
         Check();
+        DeltaPage result;
         lock (_lock)
         {
+            if (link == null) FullDeltaCalls++;
             long since = link == null ? 0 : long.Parse(link.Split(':')[1]);
             IEnumerable<Node> nodes = _nodes.Values.Where(n => n.Seq > since && (since > 0 || !n.Deleted));
             // pais antes dos filhos
             int Depth(Node n) => n.ParentId == null ? 0 : 1 + Depth(_nodes[n.ParentId]);
             var items = nodes.OrderBy(n => since == 0 ? Depth(n) : 0).ThenBy(n => n.Seq).Select(ToRemote).ToList();
-            return Task.FromResult(new DeltaPage(items, null, "delta:" + _seq));
+            result = new DeltaPage(items, null, "delta:" + _seq);
         }
+        if (AfterDeltaPage is { } after) await after(ct);
+        return result;
     }
 
     /// <summary>Último limite de envio configurado por drive (bytes/s).</summary>
@@ -314,14 +327,25 @@ public sealed class FakeGraph : IGraphApi
     /// <summary>Executado no início de cada envio (nome do arquivo, token), ex.: segurar até cancelar.</summary>
     public Func<string, CancellationToken, Task>? BeforeUpload;
 
+    /// <summary>Resposta do servidor retida depois de gravar o arquivo (janela upload × delta).</summary>
+    public Func<RemoteItem, CancellationToken, Task>? AfterUpload;
+
     public async Task<RemoteItem> UploadAsync(string driveId, string parentId, string name, string? itemId, string? ifMatchETag,
         string localFile, DateTimeOffset modified, Action<long>? progress, CancellationToken ct, IUploadSessionStore? session = null)
+    {
+        var result = await UploadCoreAsync(driveId, parentId, name, itemId, ifMatchETag, localFile, modified, progress, ct, session);
+        if (AfterUpload is { } after) await after(result, ct);
+        return result;
+    }
+
+    async Task<RemoteItem> UploadCoreAsync(string driveId, string parentId, string name, string? itemId, string? ifMatchETag,
+        string localFile, DateTimeOffset modified, Action<long>? progress, CancellationToken ct, IUploadSessionStore? session)
     {
         if (Route(driveId) is { } o) return await o.UploadAsync(driveId, parentId, name, itemId, ifMatchETag, localFile, modified, progress, ct, session);
         CheckWrite(itemId ?? parentId);
         if (BeforeUpload is { } before) await before(name, ct);
         Check();
-        UploadSessionsSeen.Add(session?.Url);
+        lock (_lock) UploadSessionsSeen.Add(session?.Url);
         if (FailUploadAfterSession is { } fakeUrl)
         {
             FailUploadAfterSession = null;
@@ -380,31 +404,43 @@ public sealed class FakeGraph : IGraphApi
         }
     }
 
-    public Task DeleteAsync(string driveId, string itemId, CancellationToken ct)
+    public Task DeleteAsync(string driveId, string itemId, CancellationToken ct) => DeleteAsync(driveId, itemId, null, ct);
+
+    public Task DeleteAsync(string driveId, string itemId, string? ifMatchETag, CancellationToken ct)
     {
-        if (Route(driveId) is { } o) return o.DeleteAsync(driveId, itemId, ct);
+        if (Route(driveId) is { } o) return o.DeleteAsync(driveId, itemId, ifMatchETag, ct);
         CheckWrite(itemId);
         Check();
         lock (_lock)
         {
+            if (ifMatchETag != null && _nodes.TryGetValue(itemId, out var cur) && !cur.Deleted && cur.ETag != ifMatchETag)
+                throw new GraphException(HttpStatusCode.PreconditionFailed, "resourceModified", "eTag não confere");
             Deletes++;
             if (_nodes.TryGetValue(itemId, out var n) && !n.Deleted) MarkDeleted(n);
         }
         return Task.CompletedTask;
     }
 
-    public Task<RemoteItem> MoveAsync(string driveId, string itemId, string newParentId, string newName, CancellationToken ct)
+    public Task<RemoteItem> MoveAsync(string driveId, string itemId, string newParentId, string newName, CancellationToken ct) =>
+        MoveAsync(driveId, itemId, newParentId, newName, replace: false, ct);
+
+    public Task<RemoteItem> MoveAsync(string driveId, string itemId, string newParentId, string newName, bool replace, CancellationToken ct)
     {
-        if (Route(driveId) is { } o) return o.MoveAsync(driveId, itemId, newParentId, newName, ct);
+        if (Route(driveId) is { } o) return o.MoveAsync(driveId, itemId, newParentId, newName, replace, ct);
         CheckWrite(itemId);
         CheckWrite(newParentId);
         Check();
         lock (_lock)
         {
             CheckPathLength(newParentId, newName);
-            Moves++;
             var n = _nodes[itemId];
-            if (Child(newParentId, newName) is { } clash && clash.Id != itemId) MarkDeleted(clash); // conflictBehavior=replace
+            if (Child(newParentId, newName) is { } clash && clash.Id != itemId)
+            {
+                if (!replace) throw new GraphException(HttpStatusCode.Conflict, "nameAlreadyExists", "já existe"); // conflictBehavior=fail
+                MarkDeleted(clash); // conflictBehavior=replace
+                MovesReplacing++;
+            }
+            Moves++;
             n.ParentId = newParentId;
             n.Name = newName;
             n.MetaVersion++;
@@ -544,10 +580,11 @@ public sealed class FakeGraph : IGraphApi
         return Task.FromResult(list);
     }
 
-    public Task<DeltaPage> GetChildrenAsync(string driveId, string itemId, string? next, CancellationToken ct)
+    public async Task<DeltaPage> GetChildrenAsync(string driveId, string itemId, string? next, CancellationToken ct)
     {
-        if (Route(driveId) is { } o) return o.GetChildrenAsync(driveId, itemId, next, ct);
+        if (Route(driveId) is { } o) return await o.GetChildrenAsync(driveId, itemId, next, ct);
         Check();
+        DeltaPage result;
         lock (_lock)
         {
             ChildrenCalls++;
@@ -557,8 +594,10 @@ public sealed class FakeGraph : IGraphApi
             var start = next == null ? 0 : int.Parse(next.Split(':')[2]);
             var page = all.Skip(start).Take(ChildrenPageSize).Select(ToRemote).ToList();
             var end = start + page.Count;
-            return Task.FromResult(new DeltaPage(page, end < all.Count ? $"children:{itemId}:{end}" : null, null));
+            result = new DeltaPage(page, end < all.Count ? $"children:{itemId}:{end}" : null, null);
         }
+        if (AfterChildrenPage is { } after) await after(ct);
+        return result;
     }
 
     public Task<bool> CanWriteAsync(string driveId, string itemId, CancellationToken ct)
@@ -588,11 +627,14 @@ public sealed class FakeGraph : IGraphApi
 
     public Task<SharingLink> CreateLinkAsync(string driveId, string itemId, string type, string scope, CancellationToken ct)
     {
+        if (Route(driveId) is { } o) return o.CreateLinkAsync(driveId, itemId, type, scope, ct);
+        CheckDriveId(driveId);
         Check();
         lock (_lock)
         {
             LinkRequests.Add((itemId, type, scope));
             Existing(itemId);
+            if (LinkError?.Invoke(scope) is { } linkError) throw linkError;
             if (scope == "anonymous" && RefuseAnonymousLinks)
                 throw new GraphException(HttpStatusCode.Forbidden, "accessDenied", "Sharing links of type anonymous are disabled by policy");
             return Task.FromResult(new SharingLink($"https://1drv.ms/fake/{itemId}?{type}&{scope}", type, scope));
@@ -601,6 +643,8 @@ public sealed class FakeGraph : IGraphApi
 
     public Task<IReadOnlyList<DriveItemVersion>> ListVersionsAsync(string driveId, string itemId, CancellationToken ct)
     {
+        if (Route(driveId) is { } o) return o.ListVersionsAsync(driveId, itemId, ct);
+        CheckDriveId(driveId);
         Check();
         lock (_lock)
         {
@@ -614,6 +658,8 @@ public sealed class FakeGraph : IGraphApi
 
     public Task RestoreVersionAsync(string driveId, string itemId, string versionId, CancellationToken ct)
     {
+        if (Route(driveId) is { } o) return o.RestoreVersionAsync(driveId, itemId, versionId, ct);
+        CheckDriveId(driveId);
         Check();
         lock (_lock)
         {
@@ -632,6 +678,8 @@ public sealed class FakeGraph : IGraphApi
 
     public Task DownloadVersionAsync(string driveId, string itemId, string versionId, Stream destination, CancellationToken ct)
     {
+        if (Route(driveId) is { } o) return o.DownloadVersionAsync(driveId, itemId, versionId, destination, ct);
+        CheckDriveId(driveId);
         Check();
         byte[] data;
         lock (_lock)
@@ -696,7 +744,7 @@ public sealed class FakeGraph : IGraphApi
     public bool RealUploadSessions;
     /// <summary>Bytes de partes aceitas pelo servidor de sessões (soma de todos os PUTs gravados).</summary>
     public long SessionBytesReceived;
-    public int SessionsCreated, SessionStatusQueries;
+    public int SessionsCreated, SessionStatusQueries, SessionCreatesAttempted;
     /// <summary>Offset de cada parte que chegou ao servidor de sessões (aceita ou não).</summary>
     public readonly List<long> ChunkOffsets = [];
     /// <summary>Executado antes de gravar cada parte (offset, token do pedido), ex.: segurar até o motor parar.</summary>
@@ -743,6 +791,7 @@ public sealed class FakeGraph : IGraphApi
             var url = req.RequestUri!.OriginalString;
             if (url.EndsWith("/createUploadSession", StringComparison.Ordinal) && req.Method == HttpMethod.Post)
             {
+                Interlocked.Increment(ref g.SessionCreatesAttempted);
                 using var doc = System.Text.Json.JsonDocument.Parse(await req.Content!.ReadAsStringAsync(ct));
                 var modified = doc.RootElement.GetProperty("item").GetProperty("fileSystemInfo").GetProperty("lastModifiedDateTime").GetDateTimeOffset();
                 var rest = url[(url.IndexOf("/items/", StringComparison.Ordinal) + 7)..^"/createUploadSession".Length];
@@ -768,7 +817,31 @@ public sealed class FakeGraph : IGraphApi
                     return Json(HttpStatusCode.OK, $$"""{"uploadUrl":"{{id}}"}""");
                 }
             }
-            if (!url.StartsWith(UploadBase, StringComparison.Ordinal)) return Error(HttpStatusCode.NotFound, "itemNotFound");
+            if (!url.StartsWith(UploadBase, StringComparison.Ordinal))
+            {
+                if (req.Method == HttpMethod.Get && url.Contains("/items/", StringComparison.Ordinal))
+                {
+                    var rest = url[(url.IndexOf("/items/", StringComparison.Ordinal) + 7)..];
+                    var colon = rest.IndexOf(":/", StringComparison.Ordinal);
+                    lock (g._lock)
+                    {
+                        Node? n = colon >= 0
+                            ? g.Child(Uri.UnescapeDataString(rest[..colon]), Uri.UnescapeDataString(rest[(colon + 2)..^1]))
+                            : g._nodes.GetValueOrDefault(Uri.UnescapeDataString(rest));
+                        if (n == null || n.Deleted) return Error(HttpStatusCode.NotFound, "itemNotFound");
+                        var body = new System.Text.Json.Nodes.JsonObject
+                        {
+                            ["id"] = n.Id, ["name"] = n.Name, ["size"] = n.Content.Length, ["eTag"] = n.ETag, ["cTag"] = n.CTag,
+                            ["file"] = new System.Text.Json.Nodes.JsonObject
+                            {
+                                ["hashes"] = new System.Text.Json.Nodes.JsonObject { ["quickXorHash"] = QuickXorHash.Compute(n.Content) },
+                            },
+                        };
+                        return Json(HttpStatusCode.OK, body.ToJsonString());
+                    }
+                }
+                return Error(HttpStatusCode.NotFound, "itemNotFound");
+            }
             if (req.Method == HttpMethod.Get)
             {
                 lock (g._lock)
@@ -817,8 +890,71 @@ public sealed class FakeGraph : IGraphApi
                 n.Modified = s.Modified;
                 n.Seq = ++g._seq;
                 g.RecordVersion(n);
+                if (g.LoseResponseAfterUploadComplete)
+                {
+                    // o servidor gravou o arquivo, mas a resposta não chega ao cliente
+                    g.LoseResponseAfterUploadComplete = false;
+                    throw new HttpRequestException("conexão caiu depois da última parte (simulado)");
+                }
                 return Json(HttpStatusCode.Created, $$$"""{"id":"{{{n.Id}}}","name":"{{{n.Name}}}","size":{{{n.Content.Length}}},"file":{}}""");
             }
+        }
+    }
+
+    // ---------- costuras dos testes da seção 12 (PENDENCIAS.md) ----------
+
+    /// <summary>
+    /// A próxima sessão de upload que terminar grava o arquivo no servidor, mas a resposta da última parte se perde
+    /// (conexão cai): o cliente não sabe que o envio terminou.
+    /// </summary>
+    public bool LoseResponseAfterUploadComplete;
+
+    /// <summary>Como a Graph: id de drive que não existe (ex.: a chave interna de sub-drive com '|') → 400.</summary>
+    void CheckDriveId(string driveId)
+    {
+        if (driveId != _driveId)
+            throw new GraphException(HttpStatusCode.BadRequest, "invalidRequest", $"Invalid drive id '{driveId}'");
+    }
+
+    // ---------- costuras da frente A1 (rodada 2: §12/§13/§18) ----------
+
+    /// <summary>Enumerações completas (delta sem link) pedidas a esta drive.</summary>
+    public int FullDeltaCalls;
+    /// <summary>Página já materializada (snapshot da listagem): permite atrasar a entrega sem depender de _mutate.</summary>
+    public Func<CancellationToken, Task>? AfterDeltaPage, AfterChildrenPage;
+    /// <summary>Moves que substituíram (conflictBehavior=replace) um item existente no destino.</summary>
+    public int MovesReplacing;
+    /// <summary>Erro a lançar no createLink, pelo escopo pedido (anonymous/organization).</summary>
+    public Func<string, Exception?>? LinkError;
+    /// <summary>
+    /// Delta por pasta (/items/{id}/delta) como o OneDrive pessoal (HIPÓTESE); false (padrão) = responde 400 como o
+    /// OneDrive for Business/SharePoint e o motor cai para children. Pedidos contados em <see cref="FolderDeltaCalls"/>.
+    /// </summary>
+    public bool SupportsFolderDelta;
+    public int FolderDeltaCalls;
+
+    bool InSubtree(Node n, string rootId)
+    {
+        for (Node? cur = n; cur != null; cur = cur.ParentId != null && _nodes.TryGetValue(cur.ParentId, out var p) ? p : null)
+            if (cur.Id == rootId) return true;
+        return false;
+    }
+
+    public Task<DeltaPage> GetFolderDeltaAsync(string driveId, string itemId, string? link, CancellationToken ct)
+    {
+        if (Route(driveId) is { } o) return o.GetFolderDeltaAsync(driveId, itemId, link, ct);
+        Check();
+        lock (_lock)
+        {
+            FolderDeltaCalls++;
+            if (!SupportsFolderDelta) throw new GraphException(HttpStatusCode.BadRequest, "invalidRequest", "delta só na raiz (simulado)");
+            if (!_nodes.TryGetValue(itemId, out var folder) || folder.Deleted || ShareOf(folder) == null)
+                throw new GraphException(HttpStatusCode.NotFound, "itemNotFound", "não existe");
+            long since = link == null ? 0 : long.Parse(link.Split(':')[2]);
+            int Depth(Node n) => n.ParentId == null ? 0 : 1 + Depth(_nodes[n.ParentId]);
+            var items = _nodes.Values.Where(n => n.Seq > since && (since > 0 || !n.Deleted) && InSubtree(n, itemId))
+                .OrderBy(n => since == 0 ? Depth(n) : 0).ThenBy(n => n.Seq).Select(ToRemote).ToList();
+            return Task.FromResult(new DeltaPage(items, null, $"fdelta:{itemId}:{_seq}"));
         }
     }
 }

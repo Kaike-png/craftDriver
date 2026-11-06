@@ -173,7 +173,7 @@ public class SharedTests
 
         Harness.WaitUntil(() => sub.DeleteHold, "retenção na sub-drive");
         Assert.Equal(EngineStatus.DeleteConfirmation, h.Engine.Status); // aparece para o usuário confirmar
-        Thread.Sleep(DriveSync.DeleteQuietMs + 500);
+        Thread.Sleep(h.Drive.DeleteQuietMs + 500);
         Assert.Equal(0, o.Deletes);
 
         sub.ConfirmDeletes();

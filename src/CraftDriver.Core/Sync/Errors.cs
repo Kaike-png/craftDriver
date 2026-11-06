@@ -17,6 +17,8 @@ public static class Errors
     public static bool IsLocalDiskError(Exception ex) => ex switch
     {
         UnauthorizedAccessException => true,
+        // arquivo/pasta do cache sumiu (apagado por fora, limpeza): problema local, não falta de conexão
+        FileNotFoundException or DirectoryNotFoundException => true,
         HttpIOException => false,
         IOException io when io.InnerException is SocketException => false,
         IOException io => LocalErrnos.Contains(io.HResult),

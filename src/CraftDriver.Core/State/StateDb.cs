@@ -50,6 +50,8 @@ public sealed class Op
     public string? Name;
     /// <summary>Exclusão de pasta (gravado desde a sincronização seletiva; ops antigas ficam false).</summary>
     public bool IsDir;
+    /// <summary>Exclusão de arquivo: eTag que o item tinha aqui (If-Match: não apaga versão mais nova de outro dispositivo).</summary>
+    public string? ETag;
     public long Created;
     /// <summary>Envio grande em andamento: sessão de upload, cópia congelada do conteúdo e geração dela.</summary>
     public string? UploadUrl;
@@ -97,7 +99,7 @@ public static class SharedSource
 /// Estado persistente em SQLite. Uma conexão única protegida por lock
 /// (chamado tanto pelas threads do FUSE quanto pelo motor de sync).
 /// </summary>
-public sealed class StateDb : IDisposable
+public sealed partial class StateDb : IDisposable
 {
     readonly SqliteConnection _c;
     /// <summary>
@@ -105,6 +107,7 @@ public sealed class StateDb : IDisposable
     /// último estado confirmado sem esperar o <see cref="Lock"/>, que o FUSE e o motor seguram em transações.
     /// </summary>
     readonly SqliteConnection _ro;
+    readonly string _path;
     readonly object _roLock = new();
     public object Lock { get; } = new();
     /// <summary>Geração para caches de resolução; ler sob Lock. Inclui rollback.</summary>
@@ -112,6 +115,7 @@ public sealed class StateDb : IDisposable
 
     public StateDb(string path)
     {
+        _path = path;
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
         _c = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = path, Pooling = false }.ToString());
         _c.Open();
@@ -137,15 +141,15 @@ public sealed class StateDb : IDisposable
               next_try INTEGER NOT NULL DEFAULT 0, last_error TEXT, created INTEGER NOT NULL);
             CREATE INDEX IF NOT EXISTS ix_ops_drive ON ops(drive_id, id);
             """);
-        // migrações de esquema
-        foreach (var col in new[] { "parent_remote TEXT", "name TEXT", "upload_url TEXT", "upload_snap TEXT", "upload_gen INTEGER NOT NULL DEFAULT 0", "is_dir INTEGER NOT NULL DEFAULT 0" })
-        {
-            try { Exec($"ALTER TABLE ops ADD COLUMN {col}"); }
-            catch (SqliteException) { /* já existe */ }
-        }
+        // migrações de esquema: a coluna é conferida antes (PRAGMA table_info); qualquer erro do ALTER (disco cheio,
+        // banco só-leitura, E/S) sobe — engolir como "já existe" só adiava a falha para o primeiro SELECT
+        foreach (var col in new[] { "parent_remote TEXT", "name TEXT", "upload_url TEXT", "upload_snap TEXT", "upload_gen INTEGER NOT NULL DEFAULT 0", "is_dir INTEGER NOT NULL DEFAULT 0", "etag TEXT" })
+            AddColumnIfMissing("ops", col);
         Exec("CREATE INDEX IF NOT EXISTS ix_ops_remote ON ops(drive_id, kind, remote_id)");
-        try { Exec("ALTER TABLE items ADD COLUMN mode INTEGER NOT NULL DEFAULT 0"); }
-        catch (SqliteException) { /* já existe */ }
+        // reserva persistente da fila (uploads paralelos): 'pending' ou 'running'
+        AddColumnIfMissing("ops", "state TEXT NOT NULL DEFAULT 'pending'");
+        Exec("CREATE INDEX IF NOT EXISTS ix_ops_claim ON ops(drive_id,state,next_try,id)");
+        AddColumnIfMissing("items", "mode INTEGER NOT NULL DEFAULT 0");
         Exec("""
             CREATE TABLE IF NOT EXISTS excluded(lid INTEGER PRIMARY KEY, drive_id TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS conflicts(
@@ -156,11 +160,22 @@ public sealed class StateDb : IDisposable
               remote_id TEXT, parent_remote TEXT, name TEXT, error TEXT NOT NULL, at INTEGER NOT NULL);
             CREATE INDEX IF NOT EXISTS ix_failed_lid ON failed_ops(lid);
             """);
+        AddColumnIfMissing("failed_ops", "is_dir INTEGER NOT NULL DEFAULT 0");
+        AddColumnIfMissing("failed_ops", "etag TEXT");
         foreach (var col in new[] { "delete_hold INTEGER NOT NULL DEFAULT 0", "held_count INTEGER NOT NULL DEFAULT 0" })
-        {
-            try { Exec($"ALTER TABLE drives ADD COLUMN {col}"); }
-            catch (SqliteException) { /* já existe */ }
-        }
+            AddColumnIfMissing("drives", col);
+        // índices das consultas frequentes (fila por item, contagens por drive, fixados, LRU do cache, Problemas/Conflitos)
+        Exec("""
+            CREATE INDEX IF NOT EXISTS ix_ops_lid ON ops(lid, kind);
+            CREATE INDEX IF NOT EXISTS ix_items_drive ON items(drive_id);
+            CREATE INDEX IF NOT EXISTS ix_items_pinned ON items(pinned) WHERE pinned=1;
+            CREATE INDEX IF NOT EXISTS ix_items_lru ON items(last_access) WHERE cached_ctag IS NOT NULL;
+            CREATE INDEX IF NOT EXISTS ix_failed_drive ON failed_ops(drive_id);
+            CREATE INDEX IF NOT EXISTS ix_conflicts_drive ON conflicts(drive_id);
+            CREATE INDEX IF NOT EXISTS ix_excluded_drive ON excluded(drive_id);
+            """);
+        EnsureTrash(); // aqui (e não sob demanda): a Lixeira é lida pela conexão só de leitura, que não cria tabela
+        InicializarVfs();
         LoadExcluded();
         Exec("""
             CREATE TABLE IF NOT EXISTS shared_roots(
@@ -168,6 +183,12 @@ public sealed class StateDb : IDisposable
               remote_drive TEXT NOT NULL, remote_item TEXT NOT NULL, root_lid INTEGER NOT NULL,
               writable INTEGER NOT NULL DEFAULT 0);
             CREATE INDEX IF NOT EXISTS ix_shared_host ON shared_roots(host_drive);
+            """);
+        Exec("""
+            CREATE TABLE IF NOT EXISTS upload_delta(drive_id TEXT NOT NULL,lid INTEGER NOT NULL,item_id TEXT NOT NULL,data TEXT NOT NULL,PRIMARY KEY(drive_id,lid,item_id));
+            CREATE TABLE IF NOT EXISTS delta_progress(drive_id TEXT PRIMARY KEY,next_link TEXT,deferred TEXT NOT NULL DEFAULT '[]');
+            CREATE TABLE IF NOT EXISTS delta_seen(drive_id TEXT NOT NULL,item_id TEXT NOT NULL,PRIMARY KEY(drive_id,item_id));
+            CREATE TABLE IF NOT EXISTS delta_candidates(drive_id TEXT NOT NULL,lid INTEGER NOT NULL,PRIMARY KEY(drive_id,lid));
             """);
         _ro = new SqliteConnection(new SqliteConnectionStringBuilder
         {
@@ -183,6 +204,15 @@ public sealed class StateDb : IDisposable
     }
 
     // ---------- helpers ----------
+
+    void AddColumnIfMissing(string table, string columnDef)
+    {
+        var name = columnDef.Split(' ')[0];
+        var exists = false;
+        using (var cmd = Cmd($"SELECT 1 FROM pragma_table_info('{table}') WHERE name=$n", [("$n", name)]))
+            exists = cmd.ExecuteScalar() != null;
+        if (!exists) Exec($"ALTER TABLE {table} ADD COLUMN {columnDef}");
+    }
 
     void Exec(string sql, params (string, object?)[] args)
     {
@@ -255,7 +285,7 @@ public sealed class StateDb : IDisposable
 
     static (string, object?)[] Params(Item i) =>
     [
-        ("$lid", i.Lid), ("$drive", i.DriveId), ("$item", i.ItemId), ("$parent", i.ParentLid), ("$name", i.Name),
+        ("$lid", i.Lid), ("$drive", i.DriveId), ("$item", i.ItemId), ("$parent", i.ParentLid), ("$name", i.Name), ("$namekey", ChaveNome(i.Name)),
         ("$dir", i.IsDir ? 1 : 0), ("$size", i.Size), ("$mtime", i.MTime), ("$ctime", i.CTime), ("$etag", i.ETag),
         ("$ctag", i.CTag), ("$hash", i.Hash), ("$cached", i.CachedCTag), ("$dirty", i.Dirty ? 1 : 0),
         ("$gen", i.DirtyGen), ("$pinned", i.Pinned ? 1 : 0), ("$local", i.LocalOnly ? 1 : 0), ("$access", i.LastAccess), ("$mode", (long)i.Mode),
@@ -271,7 +301,12 @@ public sealed class StateDb : IDisposable
                 action();
                 tx.Commit();
             }
-            finally { ItemsVersion++; } // caminhos vistos dentro de uma transação abortada não sobrevivem
+            catch
+            {
+                ItemsVersion++; // caminhos vistos dentro de uma transação abortada não sobrevivem
+                throw;
+            }
+            // confirmada: cada Insert/Update/Delete de items já incrementou; sem mudança, o cache de caminhos continua válido
         }
     }
 
@@ -292,10 +327,8 @@ public sealed class StateDb : IDisposable
     /// ASCII ("AÇÃO" = "ação"; o NOCASE do SQLite só dobra A–Z), e com NFC/NFD equivalentes. O nome exato tem prioridade.
     /// </summary>
     public Item? GetChildNoCase(long parentLid, string name) =>
-        Items(System.Text.Ascii.IsValid(name)
-                ? $"SELECT {Cols} FROM items WHERE parent_lid=$p AND name=$n COLLATE NOCASE"
-                : $"SELECT {Cols} FROM items WHERE parent_lid=$p AND (name=$n COLLATE NOCASE OR name GLOB '*[^ -~]*')",
-                ("$p", parentLid), ("$n", name))
+        Items($"SELECT {Cols} FROM items WHERE parent_lid=$p AND name_key=$k",
+                ("$p", parentLid), ("$k", ChaveNome(name)))
             .OrderByDescending(i => i.Name == name).FirstOrDefault(i => SameCloudName(i.Name, name));
 
     /// <summary>Nomes que a nuvem trataria como o mesmo: maiúsculas e normalização Unicode (NFC/NFD) não contam.</summary>
@@ -318,26 +351,45 @@ public sealed class StateDb : IDisposable
         lock (Lock)
         {
             using var cmd = Cmd("""
-                INSERT INTO items(drive_id,item_id,parent_lid,name,is_dir,size,mtime,ctime,etag,ctag,hash,cached_ctag,dirty,dirty_gen,pinned,local_only,last_access,mode)
-                VALUES($drive,$item,$parent,$name,$dir,$size,$mtime,$ctime,$etag,$ctag,$hash,$cached,$dirty,$gen,$pinned,$local,$access,$mode);
+                INSERT INTO items(drive_id,item_id,parent_lid,name,is_dir,size,mtime,ctime,etag,ctag,hash,cached_ctag,dirty,dirty_gen,pinned,local_only,last_access,mode,name_key)
+                VALUES($drive,$item,$parent,$name,$dir,$size,$mtime,$ctime,$etag,$ctag,$hash,$cached,$dirty,$gen,$pinned,$local,$access,$mode,$namekey);
                 SELECT last_insert_rowid();
                 """, Params(i));
             ItemsVersion++;
             i.Lid = (long)cmd.ExecuteScalar()!;
+            AvisarItem(null, i);
             return i.Lid;
         }
     }
 
-    public void Update(Item i) => Exec("""
+    public void Update(Item i)
+    {
+        lock (Lock)
+        {
+            var antes = !DeveNotificar ? null : Get(i.Lid);
+            Exec("""
         UPDATE items SET drive_id=$drive,item_id=$item,parent_lid=$parent,name=$name,is_dir=$dir,size=$size,mtime=$mtime,
           ctime=$ctime,etag=$etag,ctag=$ctag,hash=$hash,cached_ctag=$cached,dirty=$dirty,dirty_gen=$gen,pinned=$pinned,
-          local_only=$local,last_access=$access,mode=$mode WHERE lid=$lid
+          local_only=$local,last_access=$access,mode=$mode,name_key=$namekey WHERE lid=$lid
         """, Params(i));
+            if (DeveNotificar && (antes == null || antes.ParentLid != i.ParentLid || antes.Name != i.Name
+                || antes.CTag != i.CTag || antes.Size != i.Size || antes.MTime != i.MTime)) AvisarItem(antes, i);
+        }
+    }
 
     public void Touch(long lid) =>
         Exec("UPDATE items SET last_access=$t WHERE lid=$l", ("$t", DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()), ("$l", lid));
 
-    public void Delete(long lid) => Exec("DELETE FROM items WHERE lid=$l", ("$l", lid));
+    public void Delete(long lid)
+    {
+        lock (Lock)
+        {
+            var antes = !DeveNotificar ? null : Get(lid);
+            Exec("DELETE FROM items WHERE lid=$l", ("$l", lid));
+            DefinirFracaoMtime(lid, 0, 0);
+            if (antes != null) AvisarItem(antes, null);
+        }
+    }
 
     /// <summary>Item e todos os descendentes (pré-ordem).</summary>
     public List<Item> GetSubtree(long lid) => Items($"""
@@ -441,7 +493,17 @@ public sealed class StateDb : IDisposable
         }
     }
 
-    public void DeleteDriveData(string driveId) => InTransaction(() => DeleteDriveRows(driveId));
+    public void DeleteDriveData(string driveId) => InTransaction(() =>
+    {
+        // sub-drives e pasta virtual pertencem à drive hospedeira: não deixar metadados nem avisos órfãos
+        foreach (var sr in SharedRoots(driveId))
+        {
+            DeleteDriveRows(sr.Key);
+            DeleteSharedRoot(sr.Key);
+        }
+        DeleteDriveRows(driveId + "|comigo");
+        DeleteDriveRows(driveId);
+    });
 
     /// <summary>Como <see cref="DeleteDriveData"/>, mas dentro da transação de quem chama.</summary>
     public void DeleteDriveRows(string driveId)
@@ -451,7 +513,14 @@ public sealed class StateDb : IDisposable
             Exec("DELETE FROM items WHERE drive_id=$d", ("$d", driveId));
             Exec("DELETE FROM ops WHERE drive_id=$d", ("$d", driveId));
             Exec("DELETE FROM failed_ops WHERE drive_id=$d", ("$d", driveId));
+            ClearDeltaProgress(driveId);
+            Exec("DELETE FROM upload_delta WHERE drive_id=$d", ("$d", driveId));
             Exec("DELETE FROM drives WHERE drive_id=$d", ("$d", driveId));
+            Exec("DELETE FROM conflicts WHERE drive_id=$d", ("$d", driveId));
+            Exec("DELETE FROM trash WHERE drive_id=$d", ("$d", driveId));
+            Exec("DELETE FROM excluded WHERE drive_id=$d", ("$d", driveId));
+            LoadExcluded();
+            ItemsVersion++;
         }
     }
 
@@ -511,29 +580,120 @@ public sealed class StateDb : IDisposable
         }
     }
 
-    public void SetDeltaLink(string driveId, string? link) =>
-        Exec("UPDATE drives SET delta_link=$l WHERE drive_id=$d", ("$l", link), ("$d", driveId));
+    public void SetDeltaLink(string driveId, string? link)
+    {
+        InTransaction(() =>
+        {
+            Exec("UPDATE drives SET delta_link=$l WHERE drive_id=$d", ("$l", link), ("$d", driveId));
+            ClearDeltaProgress(driveId);
+        });
+    }
+
+    /// <summary>Enumeração completa em andamento: nextLink opaco, filhos adiados, ids já vistos e candidatos ao Sweep.</summary>
+    public (string? Link, List<CraftDriver.Core.Graph.RemoteItem> Deferred, HashSet<string> Seen, HashSet<long> Candidates)? DeltaProgress(string driveId)
+    {
+        lock (Lock)
+        {
+            string? link;
+            string deferred;
+            using (var cmd = Cmd("SELECT next_link,deferred FROM delta_progress WHERE drive_id=$d", [("$d", driveId)]))
+            using (var r = cmd.ExecuteReader())
+            {
+                if (!r.Read()) return null;
+                link = r.IsDBNull(0) ? null : r.GetString(0);
+                deferred = r.GetString(1);
+            }
+            var seen = new HashSet<string>();
+            using (var cmd = Cmd("SELECT item_id FROM delta_seen WHERE drive_id=$d", [("$d", driveId)]))
+            using (var r = cmd.ExecuteReader()) while (r.Read()) seen.Add(r.GetString(0));
+            var candidates = new HashSet<long>();
+            using (var cmd = Cmd("SELECT lid FROM delta_candidates WHERE drive_id=$d", [("$d", driveId)]))
+            using (var r = cmd.ExecuteReader()) while (r.Read()) candidates.Add(r.GetInt64(0));
+            return (link, System.Text.Json.JsonSerializer.Deserialize(deferred, CraftDriver.Core.Config.DeltaJsonContext.Default.ListRemoteItem) ?? [], seen, candidates);
+        }
+    }
+
+    /// <summary>Inicia uma enumeração completa e congela os candidatos ao Sweep (uploads novos não são ausências).</summary>
+    public void BeginDeltaProgress(string driveId)
+    {
+        InTransaction(() =>
+        {
+            ClearDeltaProgress(driveId);
+            Exec("INSERT INTO delta_progress(drive_id) VALUES($d)", ("$d", driveId));
+            Exec("INSERT INTO delta_candidates(drive_id,lid) SELECT drive_id,lid FROM items WHERE drive_id=$d AND item_id IS NOT NULL", ("$d", driveId));
+        });
+    }
+
+    public void SaveDeltaProgress(string driveId, string? link, IEnumerable<string> seen, List<CraftDriver.Core.Graph.RemoteItem> deferred)
+    {
+        InTransaction(() =>
+        {
+            foreach (var id in seen)
+                Exec("INSERT OR IGNORE INTO delta_seen(drive_id,item_id) VALUES($d,$i)", ("$d", driveId), ("$i", id));
+            var text = System.Text.Json.JsonSerializer.Serialize(deferred, CraftDriver.Core.Config.DeltaJsonContext.Default.ListRemoteItem);
+            Exec("UPDATE delta_progress SET next_link=$n,deferred=$f WHERE drive_id=$d", ("$n", link), ("$f", text), ("$d", driveId));
+        });
+    }
+
+    /// <summary>Delta recebido durante um upload: guarda antes de avançar o deltaLink (sobrevive a reinício).</summary>
+    public void DeferUploadDelta(string driveId, long lid, CraftDriver.Core.Graph.RemoteItem remote)
+    {
+        var data = System.Text.Json.JsonSerializer.Serialize(remote, CraftDriver.Core.Config.DeltaJsonContext.Default.RemoteItem);
+        Exec("INSERT INTO upload_delta(drive_id,lid,item_id,data) VALUES($d,$l,$i,$j) ON CONFLICT(drive_id,lid,item_id) DO UPDATE SET data=excluded.data",
+            ("$d", driveId), ("$l", lid), ("$i", remote.Id), ("$j", data));
+    }
+
+    public List<(long Lid, CraftDriver.Core.Graph.RemoteItem Remote)> DeferredUploadDeltas(string driveId, long? lid = null)
+    {
+        lock (Lock)
+        {
+            using var cmd = Cmd("SELECT lid,data FROM upload_delta WHERE drive_id=$d" + (lid != null ? " AND lid=$l" : ""), [("$d", driveId), ("$l", lid)]);
+            using var reader = cmd.ExecuteReader();
+            var result = new List<(long, CraftDriver.Core.Graph.RemoteItem)>();
+            while (reader.Read())
+                result.Add((reader.GetInt64(0), System.Text.Json.JsonSerializer.Deserialize(reader.GetString(1), CraftDriver.Core.Config.DeltaJsonContext.Default.RemoteItem)!));
+            return result;
+        }
+    }
+
+    public void CompleteUploadDelta(string driveId, long lid, string itemId) =>
+        Exec("DELETE FROM upload_delta WHERE drive_id=$d AND lid=$l AND item_id=$i", ("$d", driveId), ("$l", lid), ("$i", itemId));
+
+    /// <summary>Item confirmado por upload durante a enumeração: não é candidato à limpeza daquela enumeração.</summary>
+    public void ProtectDeltaUpload(string driveId, long lid) =>
+        Exec("DELETE FROM delta_candidates WHERE drive_id=$d AND lid=$l", ("$d", driveId), ("$l", lid));
+
+    void ClearDeltaProgress(string driveId)
+    {
+        Exec("DELETE FROM delta_progress WHERE drive_id=$d", ("$d", driveId));
+        Exec("DELETE FROM delta_seen WHERE drive_id=$d", ("$d", driveId));
+        Exec("DELETE FROM delta_candidates WHERE drive_id=$d", ("$d", driveId));
+    }
 
     // ---------- fila de operações ----------
 
     /// <param name="isDir">Exclusão de pasta (para a lista de exclusões retidas).</param>
     /// <param name="runningOp">Operação em execução que não conta para a coalescência: ela já leu o estado do item e
     /// sai da fila ao terminar (ex.: o arquivo mudou durante o envio — precisa de outro envio depois deste).</param>
+    /// <param name="etag">Exclusão: eTag para o If-Match; sem ele, o de um arquivo ainda no banco (pasta não leva: o eTag dela
+    /// muda com os filhos).</param>
     public void Enqueue(string driveId, string kind, long lid, string? remoteId = null, string? parentRemote = null, string? name = null, bool isDir = false,
-        long runningOp = 0)
+        long runningOp = 0, string? etag = null)
     {
         lock (Lock)
         {
+            if (kind == OpKind.Delete && etag == null && lid != 0 && remoteId != null)
+                etag = Scalar<string>("SELECT etag FROM items WHERE lid=$l AND is_dir=0 AND item_id=$r", ("$l", lid), ("$r", remoteId));
             // coalescência: não duplica upload/mkdir/move/settime pendente para o mesmo item
             if (kind is OpKind.Upload or OpKind.Mkdir or OpKind.Move or OpKind.SetTime)
             {
-                var exists = Scalar<long>("SELECT COUNT(*) FROM ops WHERE drive_id=$d AND kind=$k AND lid=$l AND attempts=0 AND id<>$r",
+                var exists = Scalar<long>("SELECT COUNT(*) FROM ops WHERE drive_id=$d AND kind=$k AND lid=$l AND attempts=0 AND state='pending' AND id<>$r",
                     ("$d", driveId), ("$k", kind), ("$l", lid), ("$r", runningOp));
                 if (exists > 0) return;
             }
-            Exec("INSERT INTO ops(drive_id,kind,lid,remote_id,created,parent_remote,name,is_dir) VALUES($d,$k,$l,$r,$t,$p,$n,$i)",
+            Exec("INSERT INTO ops(drive_id,kind,lid,remote_id,created,parent_remote,name,is_dir,etag) VALUES($d,$k,$l,$r,$t,$p,$n,$i,$e)",
                 ("$d", driveId), ("$k", kind), ("$l", lid), ("$r", remoteId), ("$t", DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()),
-                ("$p", parentRemote), ("$n", name), ("$i", isDir ? 1 : 0));
+                ("$p", parentRemote), ("$n", name), ("$i", isDir ? 1 : 0), ("$e", kind == OpKind.Delete ? etag : null));
         }
     }
 
@@ -541,7 +701,7 @@ public sealed class StateDb : IDisposable
     {
         lock (Lock)
         {
-            using var cmd = Cmd("SELECT id,drive_id,kind,lid,remote_id,attempts,next_try,last_error,parent_remote,name,created,upload_url,upload_snap,upload_gen,is_dir FROM ops WHERE drive_id=$d ORDER BY id LIMIT 1", [("$d", driveId)]);
+            using var cmd = Cmd("SELECT id,drive_id,kind,lid,remote_id,attempts,next_try,last_error,parent_remote,name,created,upload_url,upload_snap,upload_gen,is_dir,etag FROM ops WHERE drive_id=$d ORDER BY id LIMIT 1", [("$d", driveId)]);
             using var r = cmd.ExecuteReader();
             if (!r.Read()) return null;
             return new Op
@@ -551,10 +711,102 @@ public sealed class StateDb : IDisposable
                 LastError = r.IsDBNull(7) ? null : r.GetString(7), ParentRemote = r.IsDBNull(8) ? null : r.GetString(8),
                 Name = r.IsDBNull(9) ? null : r.GetString(9), Created = r.GetInt64(10),
                 UploadUrl = r.IsDBNull(11) ? null : r.GetString(11), UploadSnapshot = r.IsDBNull(12) ? null : r.GetString(12),
-                UploadGen = r.GetInt64(13), IsDir = r.GetInt64(14) != 0,
+                UploadGen = r.GetInt64(13), IsDir = r.GetInt64(14) != 0, ETag = r.IsDBNull(15) ? null : r.GetString(15),
             };
         }
     }
+
+    /// <summary>Reserva até <paramref name="count"/> operações prontas, sem ultrapassar dependências.</summary>
+    public List<Op> ClaimOps(string driveId, int count, long now, long uploadBefore = long.MaxValue,
+        long deleteBefore = long.MaxValue, bool allowDeletes = true)
+    {
+        lock (Lock)
+        {
+            var picked = new List<Op>();
+            // Só uploads são paralelos. Operações de metadados/exclusões são barreiras curtas: não podem excluir
+            // uma pasta enquanto um upload ainda a usa, nem mover um pai no meio do envio de um filho.
+            var running = Scalar<long>("SELECT COUNT(*) FROM ops WHERE drive_id=$d AND state='running'", ("$d", driveId));
+            if (Scalar<long>("SELECT COUNT(*) FROM ops WHERE drive_id=$d AND state='running' AND kind<>'upload'", ("$d", driveId)) > 0)
+                return picked;
+            var candidates = new List<long>();
+            using (var cmd = Cmd("""
+                SELECT o.id FROM ops o WHERE o.drive_id=$d AND o.state='pending' AND o.next_try<=$t
+                AND (o.kind<>'upload' OR o.created<=$u)
+                AND (o.kind<>'delete' OR ($allow=1 AND o.created<=$del))
+                AND NOT EXISTS(SELECT 1 FROM ops prev WHERE prev.drive_id=o.drive_id AND prev.lid=o.lid
+                    AND o.lid<>0 AND prev.id<o.id)
+                ORDER BY o.id
+                """, [("$d", driveId), ("$t", now), ("$u", uploadBefore), ("$allow", allowDeletes ? 1 : 0), ("$del", deleteBefore)]))
+            using (var r = cmd.ExecuteReader()) while (r.Read()) candidates.Add(r.GetInt64(0));
+            foreach (var id in candidates)
+            {
+                if (picked.Count >= count) break;
+                var op = ReadOp(id);
+                if (op == null) continue;
+                if (op.Lid != 0 && op.Kind != OpKind.Delete)
+                {
+                    // Ancestrais sem id remoto esperam o mkdir pendente/em execução. Se o mkdir foi descartado,
+                    // deixa o filho entrar: ParentRemoteId o reenfileira (ou falha se estiver em Problemas).
+                    var item = Get(op.Lid);
+                    var visited = new HashSet<long>();
+                    var blocked = false;
+                    for (var lid = item?.ParentLid ?? 0; lid != 0 && visited.Add(lid);)
+                    {
+                        var parent = Get(lid);
+                        if (parent == null) break;
+                        if (parent.ItemId == null && PendingOpsFor(lid, OpKind.Mkdir)) { blocked = true; break; }
+                        lid = parent.ParentLid;
+                    }
+                    if (blocked) continue;
+                    // Ocupa um nome que uma exclusão anterior ainda vai liberar (mv sobre destino; rm + criar de novo):
+                    // espera ela. Move/mkdir/envio de item novo vão com conflictBehavior=fail — passar à frente da
+                    // exclusão (que aguarda o período de silêncio) virava 409 e cópia de conflito.
+                    if (op.Kind == OpKind.Move || op.Kind == OpKind.Mkdir || (op.Kind == OpKind.Upload && item?.ItemId == null))
+                        if (item != null && Get(item.ParentLid)?.ItemId is { } parentRemote
+                            && Scalar<long>("""
+                                SELECT EXISTS(SELECT 1 FROM ops WHERE drive_id=$d AND kind='delete' AND id<$i
+                                  AND parent_remote=$p AND name=$n COLLATE NOCASE)
+                                """, ("$d", driveId), ("$i", op.Id), ("$p", parentRemote), ("$n", item.Name)) != 0)
+                            continue;
+                }
+                if (op.Kind != OpKind.Upload)
+                {
+                    // Barreira justa: drena uploads já iniciados, sem deixar uploads mais novos ultrapassarem
+                    // indefinidamente um metadado pronto (rename/mkdir/delete).
+                    if (running + picked.Count > 0) break;
+                    Exec("UPDATE ops SET state='running' WHERE id=$i", ("$i", id));
+                    picked.Add(op);
+                    break;
+                }
+                Exec("UPDATE ops SET state='running' WHERE id=$i", ("$i", id));
+                picked.Add(op);
+            }
+            return picked;
+        }
+    }
+
+    Op? ReadOp(long id)
+    {
+        using var cmd = Cmd("SELECT id,drive_id,kind,lid,remote_id,attempts,next_try,last_error,parent_remote,name,created,upload_url,upload_snap,upload_gen,is_dir,etag FROM ops WHERE id=$i", [("$i", id)]);
+        using var r = cmd.ExecuteReader();
+        if (!r.Read()) return null;
+        return new Op
+        {
+            Id = r.GetInt64(0), DriveId = r.GetString(1), Kind = r.GetString(2), Lid = r.GetInt64(3),
+            RemoteId = r.IsDBNull(4) ? null : r.GetString(4), Attempts = (int)r.GetInt64(5), NextTry = r.GetInt64(6),
+            LastError = r.IsDBNull(7) ? null : r.GetString(7), ParentRemote = r.IsDBNull(8) ? null : r.GetString(8),
+            Name = r.IsDBNull(9) ? null : r.GetString(9), Created = r.GetInt64(10),
+            UploadUrl = r.IsDBNull(11) ? null : r.GetString(11), UploadSnapshot = r.IsDBNull(12) ? null : r.GetString(12),
+            UploadGen = r.GetInt64(13), IsDir = r.GetInt64(14) != 0, ETag = r.IsDBNull(15) ? null : r.GetString(15),
+        };
+    }
+
+    /// <summary>Reinício da drive: operações interrompidas voltam para pendentes (sessões e snapshots permanecem).</summary>
+    public void ResetRunningOps(string driveId) =>
+        Exec("UPDATE ops SET state='pending' WHERE drive_id=$d AND state='running'", ("$d", driveId));
+
+    /// <summary>Devolve uma reserva à fila sem contar erro (cancelamento ou estado local ajustado).</summary>
+    public void ReleaseOp(long id) => Exec("UPDATE ops SET state='pending' WHERE id=$i", ("$i", id));
 
     public void CompleteOp(long id) => Exec("DELETE FROM ops WHERE id=$i", ("$i", id));
 
@@ -575,14 +827,14 @@ public sealed class StateDb : IDisposable
     }
 
     public void FailOp(long id, string error, TimeSpan retryIn) => Exec(
-        "UPDATE ops SET attempts=attempts+1,last_error=$e,next_try=$n WHERE id=$i",
+        "UPDATE ops SET state='pending',attempts=attempts+1,last_error=$e,next_try=$n WHERE id=$i",
         ("$e", error), ("$n", DateTimeOffset.UtcNow.Add(retryIn).ToUnixTimeMilliseconds()), ("$i", id));
 
     public void RemoveOpsForLid(long lid)
     {
         lock (Lock)
         {
-            Exec("DELETE FROM ops WHERE lid=$l AND kind<>'delete'", ("$l", lid));
+            Exec("DELETE FROM ops WHERE lid=$l AND kind<>'delete' AND state<>'running'", ("$l", lid));
             Exec("DELETE FROM failed_ops WHERE lid=$l AND kind<>'delete'", ("$l", lid));
         }
     }
@@ -596,11 +848,13 @@ public sealed class StateDb : IDisposable
         {
             if (op.Lid != 0)
                 Exec("DELETE FROM failed_ops WHERE drive_id=$d AND kind=$k AND lid=$l", ("$d", op.DriveId), ("$k", op.Kind), ("$l", op.Lid));
+            else if (op.RemoteId != null) // exclusão de item que já saiu do banco (lid 0): a mesma é o mesmo id remoto
+                Exec("DELETE FROM failed_ops WHERE drive_id=$d AND kind=$k AND lid=0 AND remote_id=$r", ("$d", op.DriveId), ("$k", op.Kind), ("$r", op.RemoteId));
             Exec("""
-                INSERT INTO failed_ops(drive_id,kind,lid,remote_id,parent_remote,name,error,at)
-                VALUES($d,$k,$l,$r,$p,$n,$e,$t)
+                INSERT INTO failed_ops(drive_id,kind,lid,remote_id,parent_remote,name,error,at,is_dir,etag)
+                VALUES($d,$k,$l,$r,$p,$n,$e,$t,$i,$tag)
                 """, ("$d", op.DriveId), ("$k", op.Kind), ("$l", op.Lid), ("$r", op.RemoteId), ("$p", op.ParentRemote),
-                ("$n", op.Name ?? Get(op.Lid)?.Name), ("$e", error), ("$t", DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()));
+                ("$n", op.Name ?? Get(op.Lid)?.Name), ("$e", error), ("$t", DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()), ("$i", op.IsDir ? 1 : 0), ("$tag", op.ETag));
             Exec("DELETE FROM ops WHERE id=$i", ("$i", op.Id));
         });
     }
@@ -688,10 +942,12 @@ public sealed class StateDb : IDisposable
             var f = FailuresOn(_c).FirstOrDefault(x => x.Id == id); // conexão principal: dentro da transação
             if (f == null) return;
             drive = f.DriveId;
+            // is_dir volta junto: exclusão de pasta que sai de Problemas continua pasta (HeldDeletes/Lixeira)
+            Exec("""
+                INSERT INTO ops(drive_id,kind,lid,remote_id,created,parent_remote,name,is_dir,etag)
+                SELECT drive_id,kind,lid,remote_id,$t,parent_remote,name,is_dir,etag FROM failed_ops WHERE id=$i
+                """, ("$t", DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()), ("$i", id));
             Exec("DELETE FROM failed_ops WHERE id=$i", ("$i", id));
-            Exec("INSERT INTO ops(drive_id,kind,lid,remote_id,created,parent_remote,name) VALUES($d,$k,$l,$r,$t,$p,$n)",
-                ("$d", f.DriveId), ("$k", f.Kind), ("$l", f.Lid), ("$r", f.RemoteId), ("$t", DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()),
-                ("$p", f.ParentRemote), ("$n", f.Name));
         });
         return drive;
     }
@@ -701,8 +957,33 @@ public sealed class StateDb : IDisposable
         Scalar<long>("SELECT EXISTS(SELECT 1 FROM ops WHERE drive_id=$d AND kind='delete' AND remote_id=$r)",
             ("$d", driveId), ("$r", remoteId)) != 0;
 
+    /// <summary>Envio reservado/em execução (o delta não pode sobrescrever seu estado antes do commit).</summary>
+    public bool HasRunningUpload(long lid) => Scalar<long>(
+        "SELECT EXISTS(SELECT 1 FROM ops WHERE lid=$l AND kind='upload' AND state='running')", ("$l", lid)) != 0;
+
     public bool PendingOpsFor(long lid, string kind) =>
         Scalar<long>("SELECT EXISTS(SELECT 1 FROM ops WHERE lid=$l AND kind=$k)", ("$l", lid), ("$k", kind)) != 0;
+
+    /// <summary>
+    /// Arquivos com alterações locais sem envio na fila nem em Problemas: o fd de escrita estava aberto quando o
+    /// app encerrou/caiu (o envio só entra na fila no release). (drive, lid).
+    /// </summary>
+    public List<(string driveId, long lid)> DirtyWithoutUpload()
+    {
+        lock (Lock)
+        {
+            using var cmd = Cmd("""
+                SELECT drive_id, lid FROM items i WHERE dirty=1 AND local_only=0 AND is_dir=0
+                  AND NOT EXISTS(SELECT 1 FROM ops o WHERE o.lid=i.lid AND o.kind='upload')
+                  AND NOT EXISTS(SELECT 1 FROM failed_ops f WHERE f.lid=i.lid AND f.kind='upload')
+                ORDER BY lid
+                """, []);
+            using var r = cmd.ExecuteReader();
+            var list = new List<(string, long)>();
+            while (r.Read()) list.Add((r.GetString(0), r.GetInt64(1)));
+            return list;
+        }
+    }
 
     public List<(long lid, string itemId)> AllRemoteIds(string driveId)
     {
@@ -787,10 +1068,9 @@ public sealed class StateDb : IDisposable
     /// <summary>Excluídos recentes, mais novos primeiro.</summary>
     public List<TrashRecord> Trash(string? driveId = null)
     {
-        lock (Lock)
+        lock (_roLock) // conexão de leitura: a janela da Lixeira não espera o Db.Lock do motor/FUSE
         {
-            EnsureTrash();
-            using var cmd = Cmd("SELECT id,drive_id,item_id,name,is_dir,at FROM trash" + (driveId != null ? " WHERE drive_id=$d" : "") + " ORDER BY at DESC, id DESC",
+            using var cmd = Cmd(_ro, "SELECT id,drive_id,item_id,name,is_dir,at FROM trash" + (driveId != null ? " WHERE drive_id=$d" : "") + " ORDER BY at DESC, id DESC",
                 driveId != null ? [("$d", driveId)] : []);
             using var r = cmd.ExecuteReader();
             var list = new List<TrashRecord>();
@@ -801,14 +1081,40 @@ public sealed class StateDb : IDisposable
 
     public void RemoveTrash(long id)
     {
-        lock (Lock)
+        // _ro é ReadOnly e não pode fazer DELETE. Escrita curta em conexão própria: não bloqueia a leitura da UI nem
+        // espera o monitor Db.Lock; ainda respeita a serialização de escritores do SQLite se há transação ativa.
+        using var c = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = _path, Pooling = false }.ToString());
+        c.Open();
+        using var cmd = Cmd(c, "DELETE FROM trash WHERE id=$i", [("$i", id)]);
+        cmd.ExecuteNonQuery();
+    }
+
+    /// <summary>
+    /// Cabeça da fila de cada drive (a operação de menor id) e quantas há atrás dela — painel "o que está travando"
+    /// da interface (conexão de leitura).
+    /// </summary>
+    public List<QueueHead> QueueHeads()
+    {
+        lock (_roLock)
         {
-            EnsureTrash();
-            using var cmd = Cmd("DELETE FROM trash WHERE id=$i", [("$i", id)]);
-            cmd.ExecuteNonQuery();
+            using var cmd = Cmd(_ro, """
+                SELECT o.drive_id,o.kind,o.lid,o.name,o.attempts,o.next_try,o.last_error,o.created,
+                       (SELECT COUNT(*) FROM ops p WHERE p.drive_id=o.drive_id) - 1
+                FROM ops o WHERE o.id IN (SELECT MIN(id) FROM ops GROUP BY drive_id)
+                """, []);
+            using var r = cmd.ExecuteReader();
+            var list = new List<QueueHead>();
+            while (r.Read())
+                list.Add(new QueueHead(r.GetString(0), r.GetString(1), r.GetInt64(2), r.IsDBNull(3) ? null : r.GetString(3),
+                    (int)r.GetInt64(4), r.GetInt64(5), r.IsDBNull(6) ? null : r.GetString(6), r.GetInt64(7), r.GetInt64(8)));
+            return list;
         }
     }
 }
 
 /// <summary>Item que o craftDriver viu ir para a Lixeira da nuvem (excluído aqui ou em outro dispositivo).</summary>
 public sealed record TrashRecord(long Id, string DriveId, string ItemId, string Name, bool IsDir, long At);
+
+/// <summary>Operação na cabeça da fila de uma drive; <see cref="Behind"/> = quantas esperam atrás dela.</summary>
+public sealed record QueueHead(string DriveId, string Kind, long Lid, string? Name, int Attempts, long NextTry, string? LastError,
+    long Created, long Behind);

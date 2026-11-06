@@ -278,8 +278,9 @@ public sealed class ContentCache
     /// Limpeza ao iniciar: temporários de execuções anteriores e cópias de envio que nenhuma operação usa mais.
     /// Downloads parciais ficam (são retomados).
     /// </summary>
-    public void CleanStale(IEnumerable<string> liveSnapshots)
+    public void CleanStale(IEnumerable<string> liveSnapshots, Func<long, string?>? driveOfLid = null)
     {
+        if (driveOfLid != null) DeleteOrphanPartials(driveOfLid);
         foreach (var f in Directory.EnumerateFiles(TempDir)) try { File.Delete(f); } catch (IOException) { }
         if (!Directory.Exists(UploadsDir)) return;
         var keep = new HashSet<string>(liveSnapshots);
@@ -289,9 +290,11 @@ public sealed class ContentCache
 
     public bool Exists(string driveId, long lid) => File.Exists(PathFor(driveId, lid));
 
+    /// <summary>Apaga o conteúdo do item e os downloads parciais dele (<c>.partial</c>, <c>.stream</c>, <c>.blocks</c>, de qualquer versão).</summary>
     public void Delete(string driveId, long lid)
     {
         try { File.Delete(PathFor(driveId, lid)); } catch (IOException) { }
+        DeletePartials($"{DriveKey(driveId)}-{lid}-*");
     }
 
     public void DeleteDrive(string driveId)
@@ -302,6 +305,56 @@ public sealed class ContentCache
             try { Directory.Delete(dir ?? Path.Combine(_root, DriveKey(driveId)), true); }
             catch (DirectoryNotFoundException) { }
         }
+        DeletePartials($"{DriveKey(driveId)}-*");
+    }
+
+    void DeletePartials(string pattern)
+    {
+        if (!Directory.Exists(PartialDir)) return;
+        foreach (var f in Directory.EnumerateFiles(PartialDir, pattern))
+            try { File.Delete(f); } catch (IOException) { }
+    }
+
+    /// <summary>
+    /// Apaga downloads parciais cujo item não existe mais (excluído no meio do download, drive removida, banco
+    /// recriado). Eles contavam no limite do cache sem que o LRU pudesse despejá-los: com órfãos perto do limite,
+    /// o LRU apagava todo o cache não fixado a cada passada. <paramref name="driveOfLid"/> devolve a drive do item
+    /// (null = não existe). Devolve os bytes liberados.
+    /// </summary>
+    public long DeleteOrphanPartials(Func<long, string?> driveOfLid)
+    {
+        if (!Directory.Exists(PartialDir)) return 0;
+        long freed = 0;
+        foreach (var f in new DirectoryInfo(PartialDir).EnumerateFiles())
+        {
+            // {chave da drive}-{lid}-{versão}[.stream|.blocks]
+            var parts = f.Name.Split('-', 3);
+            if (parts.Length == 3 && long.TryParse(parts[1], System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var lid)
+                && driveOfLid(lid) is { } drive && DriveKey(drive) == parts[0]) continue;
+            try
+            {
+                var len = f.Name.EndsWith(StreamSession.DataSuffix, StringComparison.Ordinal) ? StreamSession.StoredBytes(f.FullName) : f.Length;
+                f.Delete();
+                freed += len;
+            }
+            catch (IOException) { }
+        }
+        return freed;
+    }
+
+    /// <summary>
+    /// Cópias congeladas de envio que nenhuma operação usa mais (operação removida porque o item foi apagado ou
+    /// substituído). A lista de vivas é lida DEPOIS de enumerar os arquivos: o envio grava o caminho na operação antes
+    /// de criar a cópia, então uma cópia nova nunca parece órfã.
+    /// </summary>
+    public void DeleteOrphanUploads(Func<IEnumerable<string>> liveSnapshots)
+    {
+        if (!Directory.Exists(UploadsDir)) return;
+        var files = Directory.EnumerateFiles(UploadsDir).ToList();
+        if (files.Count == 0) return;
+        var keep = new HashSet<string>(liveSnapshots());
+        foreach (var f in files)
+            if (!keep.Contains(f)) try { File.Delete(f); } catch (IOException) { }
     }
 
     /// <summary>Varredura fora da thread chamadora (UI). O resultado inclui parciais e snapshots, sem total obsoleto.</summary>

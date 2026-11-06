@@ -135,12 +135,17 @@ public class LruOpenRaceTests
         var lids = Enumerable.Range(0, files).Select(i => Get(h, $"/f{i}.bin").Lid).ToArray();
         h.Config.CacheLimitMB = 1; // 1,6 MB de arquivos: cada passada despeja quem não estiver aberto
 
-        var stop = DateTime.UtcNow.AddSeconds(3);
+        var minimum = DateTime.UtcNow.AddSeconds(3);
+        var deadline = minimum.AddSeconds(27);
         long opens = 0, passes = 0;
+        // A carga de outras suítes/compilações não é falha de reserva/LRU. Mantém os mesmos mínimos de trabalho e as
+        // mesmas asserções; se os workers receberam pouca CPU em 3 s, dá até 30 s para completar a intercalação.
+        bool Continue() => DateTime.UtcNow < deadline && (DateTime.UtcNow < minimum
+            || Interlocked.Read(ref opens) <= 200 || Volatile.Read(ref h.Remote.Downloads) <= 50);
         var errors = new ConcurrentQueue<string>();
         var lru = new Thread(() =>
         {
-            while (DateTime.UtcNow < stop)
+            while (Continue())
             {
                 h.Engine.EnforceCacheLimit();
                 Interlocked.Increment(ref passes);
@@ -150,7 +155,7 @@ public class LruOpenRaceTests
         {
             var buf = new byte[16];
             var i = w;
-            while (DateTime.UtcNow < stop && errors.IsEmpty)
+            while (Continue() && errors.IsEmpty)
             {
                 i = (i + 1) % files;
                 var r = h.Fs.Open(h.P($"/f{i}.bin"), 0, 0, out var fh);

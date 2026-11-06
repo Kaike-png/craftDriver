@@ -9,7 +9,7 @@ public static class Errno
 {
     public const int EPERM = 1, ENOENT = 2, EINTR = 4, EIO = 5, EBADF = 9, EACCES = 13, EEXIST = 17, EXDEV = 18,
         ENOTDIR = 20, EISDIR = 21, EINVAL = 22, ENOSPC = 28, ENAMETOOLONG = 36,
-        ENOTEMPTY = 39, ENODATA = 61, ENOTSUP = 95, EHOSTUNREACH = 113, ECANCELED = 125;
+        ENOTEMPTY = 39, ENODATA = 61, EILSEQ = 84, ENOTSUP = 95, EHOSTUNREACH = 113, ECANCELED = 125;
 }
 
 public static class OpenFlags
@@ -22,7 +22,8 @@ public static class OpenFlags
 /// que a nuvem informa) e um ctime anterior ao mtime confunde backups/rsync — o FUSE usa o mtime.
 /// </summary>
 /// <param name="Mode">0 = padrão (0644 arquivo, 0755 pasta); senão <see cref="VirtualFs.ExplicitMode"/> | bits.</param>
-public readonly record struct FileAttr(bool IsDir, long Size, long MTimeMs, long Blocks, uint Mode = 0);
+/// <param name="Lid">Item do banco (0 = sem item: raiz virtual): o readdirplus do FUSE usa sem consultar o banco de novo.</param>
+public readonly record struct FileAttr(bool IsDir, long Size, long MTimeMs, long Blocks, uint Mode = 0, long Lid = 0, int SubMtimeNs = 0);
 
 /// <summary>Estado de um arquivo como o Windows mostra no Explorer.</summary>
 public enum ItemStatus { OnlineOnly, Available, AlwaysAvailable, Syncing, LocalOnly, Folder }
@@ -63,17 +64,58 @@ public sealed class VirtualFs
     /// </summary>
     readonly ConcurrentDictionary<long, long> _mtimeOverride = new();
     readonly ConcurrentDictionary<int, (bool blocked, DateTime at)> _pidCache = new();
+    readonly long _rootMtime = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
     long _nextFh;
-    readonly Dictionary<(string drive, string path), long> _resolved = new();
+    Dictionary<(string drive, string path), long> _resolved = new();
+    const int LimiteCaminhos = 65_536;
+    LinkedList<(string drive, string path)> _lruCaminhos = new();
+    Dictionary<(string drive, string path), LinkedListNode<(string drive, string path)>> _posicoesCaminhos = new();
     long _resolvedVersion = -1;
 
     public VirtualFs(SyncEngine engine)
     {
         _e = engine;
         _e.IsOpen = lid => _openCount.TryGetValue(lid, out var n) && n > 0;
+        _e.MoveOpenHandles = MoveOpenHandles;
     }
 
     public int OpenHandles => _handles.Count;
+
+    /// <summary>Eventos do motor: somente enfileirar, pois podem vir sob Db.Lock e de handlers locais.</summary>
+    public event Action<Item?, Item?> ItemChanged
+    {
+        add => _e.ItemChanged += value;
+        remove => _e.ItemChanged -= value;
+    }
+
+    /// <summary>Caminho atual de um lid, sem depender dos aliases do kernel.</summary>
+    public string? PathOfLid(long lid)
+    {
+        lock (Db.Lock)
+        {
+            var item = Db.Get(lid);
+            if (item == null) return null;
+            var nomes = new List<string>();
+            var visitados = new HashSet<long>();
+            while (visitados.Add(item.Lid))
+            {
+                foreach (var d in MountedDrives)
+                    if (item.Lid == d.RootLid) return "/" + Sanitize(d.Config.DisplayName) + (nomes.Count == 0 ? "" : "/" + string.Join('/', nomes.AsEnumerable().Reverse()));
+                foreach (var c in _e.SharedContainers)
+                    if (item.Lid == c.Lid) return "/" + Sanitize(c.Name) + (nomes.Count == 0 ? "" : "/" + string.Join('/', nomes.AsEnumerable().Reverse()));
+                if (Db.IsExcluded(item.Lid)) return null;
+                nomes.Add(item.Name);
+                if (Db.Get(item.ParentLid) is not { } pai) return null;
+                item = pai;
+            }
+            return null;
+        }
+    }
+
+    /// <summary>Confirma o estado fora do evento; o monitor garante que a transação do delta terminou.</summary>
+    public Item? ItemOfLid(long lid) => Db.Get(lid);
+
+    public StateDb.EscopoLocal MutacaoLocal() => Db.MutacaoLocal();
 
     // ---------- resolução de caminhos ----------
 
@@ -110,12 +152,21 @@ public sealed class VirtualFs
         {
             if (_resolvedVersion != Db.ItemsVersion)
             {
-                _resolved.Clear();
+                // Dictionary.Clear conserva os buckets: depois de um find grande cada unlink voltaria a zerar
+                // dezenas de milhares de posições, mesmo com só dois caminhos vivos. Trocar a geração é O(1).
+                _resolved = new();
+                _lruCaminhos = new();
+                _posicoesCaminhos = new();
                 _resolvedVersion = Db.ItemsVersion;
             }
             var key = (drive.Config.DriveId, path);
-            if (_resolved.TryGetValue(key, out var lid))
+            if (!includeExcluded && _resolved.TryGetValue(key, out var lid))
+            {
+                var posicao = _posicoesCaminhos[key];
+                _lruCaminhos.Remove(posicao);
+                _lruCaminhos.AddLast(posicao);
                 return Db.Get(lid) is { } hit ? new Node(false, drive, hit) : null;
+            }
             var cur = Db.Get(startLid);
             for (var i = 1; i < parts.Length && cur != null; i++)
             {
@@ -125,7 +176,14 @@ public sealed class VirtualFs
             }
             if (cur == null) return null;
             if (includeExcluded) return new Node(false, drive, cur); // não entra no cache dos caminhos visíveis
-            if (_resolved.Count >= 4096) _resolved.Clear();
+            if (_resolved.Count >= LimiteCaminhos)
+            {
+                var antigo = _lruCaminhos.First!.Value;
+                _lruCaminhos.RemoveFirst();
+                _resolved.Remove(antigo);
+                _posicoesCaminhos.Remove(antigo);
+            }
+            _posicoesCaminhos[key] = _lruCaminhos.AddLast(key);
             _resolved[key] = cur.Lid; // só lid: tamanho/mtime/dirty sempre vêm frescos do banco
             return new Node(false, drive, cur);
         }
@@ -150,7 +208,7 @@ public sealed class VirtualFs
 
     FileAttr AttrOf(Item it)
     {
-        if (it.IsDir) return new FileAttr(true, 4096, it.MTime, 0, ModeOf(it));
+        if (it.IsDir) return new FileAttr(true, 4096, it.MTime, 0, ModeOf(it), it.Lid, Db.FracaoMtime(it.Lid, it.MTime));
         long size = it.Size, blocks = 0;
         if (SyncEngine.IsContentCurrent(it, _e.Cache))
         {
@@ -161,7 +219,7 @@ public sealed class VirtualFs
                 blocks = (size + 511) / 512;
             }
         }
-        return new FileAttr(false, size, it.MTime, blocks, ModeOf(it));
+        return new FileAttr(false, size, it.MTime, blocks, ModeOf(it), it.Lid, Db.FracaoMtime(it.Lid, it.MTime));
     }
 
     public int GetAttr(string path, out FileAttr attr)
@@ -171,7 +229,7 @@ public sealed class VirtualFs
         if (n == null) return -Errno.ENOENT;
         if (n.Value.IsVirtualRoot)
         {
-            attr = new FileAttr(true, 4096, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), 0, 0);
+            attr = new FileAttr(true, 4096, _rootMtime, 0, ExplicitMode | 0x16D);
             return 0;
         }
         attr = AttrOf(n.Value.Item!);
@@ -185,9 +243,9 @@ public sealed class VirtualFs
         if (n.Value.IsVirtualRoot)
         {
             foreach (var d in MountedDrives)
-                entries.Add((Sanitize(d.Config.DisplayName), new FileAttr(true, 4096, 0, 0, 0)));
+                if (Db.Get(d.RootLid) is { } raiz) entries.Add((Sanitize(d.Config.DisplayName), AttrOf(raiz)));
             foreach (var c in _e.SharedContainers)
-                entries.Add((Sanitize(c.Name), new FileAttr(true, 4096, 0, 0, ExplicitMode | 0x16D)));
+                if (Db.Get(c.Lid) is { } raiz) entries.Add((Sanitize(c.Name), AttrOf(raiz)));
             return 0;
         }
         if (!n.Value.Item!.IsDir) return -Errno.ENOTDIR;
@@ -283,6 +341,9 @@ public sealed class VirtualFs
     /// </summary>
     public Action<string, long>? OpenStepForTests { get; set; }
 
+    /// <summary>Intercalações determinísticas depois de Resolve, antes do monitor da mutação.</summary>
+    public Action<string>? MutationStepForTests { get; set; }
+
     public int Open(string path, int flags, int callerPid, out ulong fh)
     {
         fh = 0;
@@ -291,8 +352,8 @@ public sealed class VirtualFs
         if (n.Value.IsDir) return -Errno.EISDIR;
         var item = n.Value.Item!;
         var write = (flags & OpenFlags.AccMode) != 0;
-        var trunc = write && (flags & OpenFlags.Trunc) != 0;
-        if (write && IsReadOnly(item)) return -Errno.EACCES; // compartilhado só para leitura
+        var trunc = (flags & OpenFlags.Trunc) != 0;
+        if ((write || trunc) && IsReadOnly(item)) return -Errno.EACCES; // compartilhado só para leitura
 
         // reserva antes de baixar: o limite do cache (LRU) não despeja o arquivo entre o download e a abertura
         OpenStepForTests?.Invoke("reservando", item.Lid);
@@ -400,13 +461,16 @@ public sealed class VirtualFs
         if (IsReadOnly(parent)) return -Errno.EACCES;
 
         Item item;
+        MutationStepForTests?.Invoke("create");
         lock (Db.Lock)
         {
+            if (Db.Get(parent.Lid) is not { IsDir: true } atual) return -Errno.ENOENT;
+            parent = atual;
             var existing = Db.GetChildNoCase(parent.Lid, name);
             if (existing != null)
             {
                 if (existing.Name == name && !existing.IsDir && (flags & OpenFlags.Excl) == 0)
-                    return Open(path, flags | OpenFlags.Trunc, 0, out fh);
+                    goto reabrir; // sair do monitor antes de qualquer download
                 return -Errno.EEXIST;
             }
             var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
@@ -424,6 +488,9 @@ public sealed class VirtualFs
         Reserve(item.Lid);
         fh = Register(item, handle, true, wrote: true);
         return 0;
+
+    reabrir:
+        return Open(path, flags, 0, out fh);
     }
 
     void MarkDirty(long lid, long? size, long? mtime = null)
@@ -435,6 +502,7 @@ public sealed class VirtualFs
             cur.Dirty = true;
             cur.DirtyGen++;
             cur.MTime = mtime ?? DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            if (mtime == null) Db.DefinirFracaoMtime(lid, cur.MTime, 0);
             if (size != null) cur.Size = size.Value;
             Db.Update(cur);
         }
@@ -460,6 +528,28 @@ public sealed class VirtualFs
     /// <summary>true se ler essa faixa precisa de rede (bloco ainda não baixado): o FUSE roda o read fora do loop.</summary>
     public bool ReadNeedsNetwork(ulong fh, long offset, long size) =>
         _handles.TryGetValue(fh, out var h) && h.Stream is { } s && !s.HasRange(offset, size);
+
+    /// <summary>Mesmo hit streaming pode perder a bitmap antes de TryRead; jamais permitir rede no loop FUSE.</summary>
+    public bool ReadOutsideLoop(ulong fh) => IsStreaming(fh);
+
+    public bool OpenNeedsNetwork(string? path, int flags)
+    {
+        if (path == null || (flags & OpenFlags.Trunc) != 0) return false;
+        var item = Resolve(path)?.Item;
+        return item != null && !SyncEngine.IsContentCurrent(item, _e.Cache);
+    }
+
+    public bool RenameNeedsNetwork(string? from, string? to)
+    {
+        if (from == null || to == null) return false;
+        var src = Resolve(from)?.Item;
+        if (src == null) return false;
+        var (pai, nome) = Split(to);
+        var parent = Resolve(pai)?.Item;
+        var local = parent?.LocalOnly == true || _e.Names.IsLocalOnly(nome);
+        return local && Db.GetSubtree(src.Lid).Any(x => !x.IsDir && !SyncEngine.IsContentCurrent(x, _e.Cache))
+            || !src.IsDir && !CanMoveRemote(src) && !SyncEngine.IsContentCurrent(src, _e.Cache);
+    }
 
     public int Read(ulong fh, Span<byte> buffer, long offset)
     {
@@ -520,11 +610,11 @@ public sealed class VirtualFs
             return -Errno.ENOSPC;
         }
         catch (IOException) { return -Errno.EIO; }
-        if (!_mtimeOverride.IsEmpty) _mtimeOverride.TryRemove(h.Lid, out _); // escrita depois do utimens: vale a hora atual
-        if (!h.Wrote)
+        lock (Db.Lock) // a identidade do fd pode mudar na cópia de conflito (MoveOpenHandles, sob este mesmo lock)
         {
+            if (!_mtimeOverride.IsEmpty) _mtimeOverride.TryRemove(h.Lid, out _); // escrita depois do utimens: vale a hora atual
             h.Wrote = true;
-            MarkDirty(h.Lid, null);
+            MarkDirty(h.Lid, null); // cada write altera mtime, não só o primeiro
         }
         return data.Length;
     }
@@ -637,16 +727,25 @@ public sealed class VirtualFs
         {
             RandomAccess.FlushToDisk(h.File);
             var p = _e.Cache.PathFor(h.DriveId, h.Lid);
-            if (File.Exists(p)) MarkDirty(h.Lid, new FileInfo(p).Length, _mtimeOverride.TryGetValue(h.Lid, out var m) ? m : null);
+            if (File.Exists(p)) MarkDirty(h.Lid, new FileInfo(p).Length, Db.Get(h.Lid)?.MTime);
         }
         return 0;
+    }
+
+    /// <summary>
+    /// Enfileira as alterações de fds ainda abertos antes de desmontar/parar o motor: fuse_session_exit pode encerrar
+    /// sem receber release (o app que abriu o arquivo continua vivo). Não fecha os fds: eles ainda pertencem ao FUSE.
+    /// </summary>
+    public void CommitOpenWrites()
+    {
+        foreach (var h in _handles.Values.Where(h => h.Wrote)) CommitWrite(h);
     }
 
     void CommitWrite(Handle h)
     {
         var p = _e.Cache.PathFor(h.DriveId, h.Lid);
         if (!File.Exists(p)) return;
-        MarkDirty(h.Lid, new FileInfo(p).Length, _mtimeOverride.TryGetValue(h.Lid, out var m) ? m : null);
+        MarkDirty(h.Lid, new FileInfo(p).Length, Db.Get(h.Lid)?.MTime);
         EnqueueUpload(h.Lid);
     }
 
@@ -673,17 +772,25 @@ public sealed class VirtualFs
             catch (IOException) { return -Errno.EIO; }
             var it = Db.Get(h.Lid);
             var mtime = it?.MTime ?? new DateTimeOffset(File.GetLastWriteTimeUtc(h.File)).ToUnixTimeMilliseconds();
-            attr = new FileAttr(false, len, mtime, (len + 511) / 512, it != null ? ModeOf(it) : 0);
+            attr = new FileAttr(false, len, mtime, (len + 511) / 512, it != null ? ModeOf(it) : 0, h.Lid, Db.FracaoMtime(h.Lid, mtime));
             return 0;
         }
         if (fh != 0 && _dirHandles.TryGetValue(fh, out var dirLid))
         {
-            var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
             var it = dirLid == 0 ? null : Db.Get(dirLid);
-            attr = it != null ? AttrOf(it) : new FileAttr(true, 4096, now, 0, 0);
+            attr = it != null ? AttrOf(it) : new FileAttr(true, 4096, _rootMtime, 0, ExplicitMode | 0x16D);
             return 0;
         }
         return path == null ? -Errno.EBADF : GetAttr(path, out attr);
+    }
+
+    /// <summary>getattr sem fh de inode apagado ainda aberto (ex.: /proc/self/fd/N).</summary>
+    public int GetAttrByLid(long lid, out FileAttr attr)
+    {
+        foreach (var (fh, h) in _handles)
+            if (h.Lid == lid) return GetAttr(null, fh, out attr);
+        attr = default;
+        return -Errno.ENOENT;
     }
 
     public int OpenDir(string path, out ulong fh)
@@ -728,8 +835,11 @@ public sealed class VirtualFs
         var parent = p.Value.Item!;
         if (!parent.IsDir) return -Errno.ENOTDIR;
         if (IsReadOnly(parent)) return -Errno.EACCES;
+        MutationStepForTests?.Invoke("mkdir");
         lock (Db.Lock)
         {
+            if (Db.Get(parent.Lid) is not { IsDir: true } atual) return -Errno.ENOENT;
+            parent = atual;
             if (Db.GetChildNoCase(parent.Lid, name) != null) return -Errno.EEXIST;
             var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
             var item = new Item
@@ -783,9 +893,18 @@ public sealed class VirtualFs
         var item = n.Value.Item!;
         if (!item.IsDir) return -Errno.ENOTDIR;
         if (IsReadOnly(item)) return -Errno.EACCES;
-        if (Db.HasChildren(item.Lid)) return -Errno.ENOTEMPTY;
+        if (TemFilhos(item)) return -Errno.ENOTEMPTY;
         RemoveItem(item);
         return 0;
+    }
+
+    bool TemFilhos(Item pasta)
+    {
+        var filhos = Db.GetChildren(pasta.Lid);
+        if (filhos.Count == 0) return false;
+        if (filhos.All(f => Db.IsExcluded(f.Lid)))
+            _e.Activity.Add(ActivityKind.Info, $"Não foi possível remover ou substituir '{pasta.Name}': há filhos excluídos da sincronização seletiva. Reinclua-os antes de apagar a pasta; eles continuam na nuvem.");
+        return true;
     }
 
     // ---------- renomear / mover ----------
@@ -851,9 +970,13 @@ public sealed class VirtualFs
 
     int RenameLocked(Item src, Item dstParent, string newName, uint flags)
     {
+        MutationStepForTests?.Invoke("rename");
         lock (Db.Lock)
         {
-            src = Db.Get(src.Lid)!;
+            if (Db.Get(src.Lid) is not { } origem || Db.Get(dstParent.Lid) is not { IsDir: true } pai) return -Errno.ENOENT;
+            src = origem;
+            dstParent = pai;
+            if (src.IsDir && (dstParent.Lid == src.Lid || Db.GetAncestors(dstParent.Lid).Any(a => a.Lid == src.Lid))) return -Errno.EINVAL;
             var target = Db.GetChild(dstParent.Lid, newName);
             var caseClash = Db.GetChildNoCase(dstParent.Lid, newName);
             if (target == null && caseClash != null && caseClash.Lid != src.Lid) return -Errno.EEXIST;
@@ -873,7 +996,7 @@ public sealed class VirtualFs
                 if (target.IsDir)
                 {
                     if (!src.IsDir) return -Errno.EISDIR;
-                    if (Db.HasChildren(target.Lid)) return -Errno.ENOTEMPTY;
+                    if (TemFilhos(target)) return -Errno.ENOTEMPTY;
                     RemoveItem(target);
                 }
                 else
@@ -975,12 +1098,14 @@ public sealed class VirtualFs
         foreach (var h in _handles.Values.Where(h => h.Lid == fromLid))
         {
             h.Lid = toLid;
+            // a cópia pode já ter sido enviada quando vier outra escrita por este fd: ela precisa marcar Dirty de novo
+            h.Wrote = false;
             Reserve(toLid);
             Unreserve(fromLid);
         }
     }
 
-    public int Utimens(string? path, long? mtimeMs, ulong fh = 0)
+    public int Utimens(string? path, long? mtimeMs, ulong fh = 0, int subMtimeNs = 0)
     {
         long lid;
         string driveId;
@@ -1007,6 +1132,7 @@ public sealed class VirtualFs
             if (it == null) return 0; // apagado com o fd aberto
             if (it.Lid == _e.GetDrive(it.DriveId)?.RootLid) return 0;
             it.MTime = mtime;
+            Db.DefinirFracaoMtime(lid, mtime, subMtimeNs);
             Db.Update(it);
             // item novo ainda sem id remoto: o envio pendente já leva a data (e reenfileira se ela mudar durante o envio)
             if (!it.LocalOnly && !it.IsDir && it.ItemId != null) Db.Enqueue(it.DriveId, OpKind.SetTime, it.Lid);
@@ -1069,10 +1195,10 @@ public sealed class VirtualFs
 
     public ItemStatus StatusOf(Item it)
     {
-        if (it.IsDir) return it.LocalOnly ? ItemStatus.LocalOnly : (Db.IsEffectivelyPinned(it.Lid) ? ItemStatus.AlwaysAvailable : ItemStatus.Folder);
+        if (it.IsDir) return it.LocalOnly ? ItemStatus.LocalOnly : (Db.IsEffectivelyPinnedVfs(it.Lid) ? ItemStatus.AlwaysAvailable : ItemStatus.Folder);
         if (it.LocalOnly) return ItemStatus.LocalOnly;
         if (it.Dirty || it.ItemId == null) return ItemStatus.Syncing;
-        if (Db.IsEffectivelyPinned(it.Lid)) return ItemStatus.AlwaysAvailable;
+        if (Db.IsEffectivelyPinnedVfs(it.Lid)) return ItemStatus.AlwaysAvailable;
         return SyncEngine.IsContentCurrent(it, _e.Cache) ? ItemStatus.Available : ItemStatus.OnlineOnly;
     }
 
@@ -1088,6 +1214,7 @@ public sealed class VirtualFs
 
     public string? GetXattr(string path, string name)
     {
+        if (!XattrNames.Contains(name, StringComparer.Ordinal)) return null; // KIO pede user.xdg.*, ACL e SELinux
         var n = Resolve(path);
         if (n?.Item == null) return null;
         return name switch

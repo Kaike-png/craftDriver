@@ -22,10 +22,10 @@ public sealed class Harness : IDisposable
     public Harness(Action<AppConfig>? configure = null)
     {
         // menor que o padrão (3 s) para a suíte ficar rápida, mas maior que a pausa do teste de salvamento
-        DriveSync.UploadSettleMs = 1000;
         Directory.CreateDirectory(Dir);
         Config = new AppConfig
         {
+            UploadSettleMs = 1000,
             CacheDir = Path.Combine(Dir, "cache"),
             PollIntervalSeconds = 5,
             Accounts = [new AccountConfig { Id = "acc", Username = "teste@exemplo.com" }],
@@ -322,7 +322,7 @@ public class EngineTests
         h.Engine.MassDeleteDetected += d => detected = d;
         ApagarAnexos(h, 30);
 
-        Thread.Sleep(DriveSync.DeleteQuietMs + 1500);
+        Thread.Sleep(h.Drive.DeleteQuietMs + 1500);
         h.Engine.SyncNow();
         Thread.Sleep(500);
         Assert.Same(h.Drive, detected);

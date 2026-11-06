@@ -87,7 +87,7 @@ public static unsafe class FuseHost
     const int StatSize = 144, StatVfsSize = 112;
     const int EntrySize = 176, EntryAttr = FuseLayout.EntryAttr;
     /// <summary>Mesmos prazos de cache do kernel que a API de alto nível usava por padrão.</summary>
-    const double AttrTimeout = 1.0, EntryTimeout = 1.0;
+    static double AttrTimeout = 1.0, EntryTimeout = 1.0;
     const ulong UnknownIno = 0xffffffff;
 
     const uint S_IFDIR = 0x4000, S_IFREG = 0x8000;
@@ -167,12 +167,15 @@ public static unsafe class FuseHost
         *(long*)(st + FuseLayout.StBlocks) = a.Blocks;
         SetTime(st + FuseLayout.StAtim, mtime);
         SetTime(st + FuseLayout.StMtim, mtime);
+        *(long*)(st + FuseLayout.StMtim + 8) += a.SubMtimeNs;
         SetTime(st + FuseLayout.StCtim, mtime);
     }
 
     static void SetTime(byte* p, long ms)
     {
-        *(long*)p = Math.DivRem(ms, 1000, out var rem);
+        var sec = Math.DivRem(ms, 1000, out var rem);
+        if (rem < 0) { sec--; rem += 1000; } // timespec usa floor: nanossegundos nunca negativos
+        *(long*)p = sec;
         *(long*)(p + 8) = rem * 1_000_000;
     }
 
@@ -205,7 +208,14 @@ public static unsafe class FuseHost
         return ctx == IntPtr.Zero ? 0 : *(int*)((byte*)ctx + 8); // uid, gid, pid, umask
     }
 
-    static string S(byte* s) => s == null ? "" : Marshal.PtrToStringUTF8((IntPtr)s) ?? "";
+    static readonly UTF8Encoding Utf8Estrito = new(false, true);
+    static string S(byte* s)
+    {
+        if (s == null) return "";
+        var len = 0;
+        while (s[len] != 0) len++;
+        return Utf8Estrito.GetString(new ReadOnlySpan<byte>(s, len));
+    }
 
     public static Action<string>? Log { get; set; }
 
@@ -214,7 +224,7 @@ public static unsafe class FuseHost
     /// errno negativo, que vira fuse_reply_err. Exceção → EIO. Com <paramref name="slow"/> roda em
     /// <see cref="SlowOps"/> e a thread do loop volta na hora para atender outras requisições.
     /// </summary>
-    static void Handle(IntPtr req, Func<int> body, bool slow = false, Action? cleanup = null, [CallerMemberName] string op = "")
+    static void Handle(IntPtr req, Func<int> body, bool slow = false, Action? cleanup = null, bool network = false, [CallerMemberName] string op = "")
     {
         if (!slow)
         {
@@ -226,14 +236,19 @@ public static unsafe class FuseHost
         {
             try { Execute(req, body, cleanup, op); }
             finally { Interlocked.Decrement(ref _inflight); }
-        });
+        }, network);
     }
 
     static void Execute(IntPtr req, Func<int> body, Action? cleanup, string op)
     {
         _currentReq = req;
         int r;
-        try { r = body(); }
+        try
+        {
+            using var local = _fs.MutacaoLocal();
+            r = body();
+        }
+        catch (DecoderFallbackException) { r = -Errno.EILSEQ; }
         catch (Exception ex)
         {
             Log?.Invoke($"FUSE {op}: {ex}");
@@ -253,17 +268,31 @@ public static unsafe class FuseHost
     /// <summary>Caminho de um inode; null se o kernel citou um inode que não existe mais (apagado ainda aberto).</summary>
     static string? PathOf(ulong ino) => _inodes.PathOf(ino);
 
-    static string? ChildPath(ulong parent, byte* name)
+    static bool Nome(IntPtr req, byte* name, out string nome)
     {
-        var dir = PathOf(parent);
-        return dir == null ? null : InodeTable.Combine(dir, S(name));
+        nome = "";
+        try { nome = S(name); }
+        catch (DecoderFallbackException) { fuse_reply_err(req, Errno.EILSEQ); return false; }
+        if (Encoding.UTF8.GetByteCount(nome) <= 255) return true;
+        fuse_reply_err(req, Errno.ENAMETOOLONG);
+        return false;
     }
 
-    /// <summary>Preenche um fuse_entry_param para o caminho; com <paramref name="countLookup"/> conta a referência do kernel.</summary>
-    static void FillEntry(byte* e, string path, in FileAttr a, bool countLookup)
+    static bool ChildPath(IntPtr req, ulong parent, byte* name, out string? path)
+    {
+        path = null;
+        if (!Nome(req, name, out var nome)) return false;
+        var dir = PathOf(parent);
+        path = dir == null ? null : InodeTable.Combine(dir, nome);
+        return true;
+    }
+
+    /// <summary>Preenche um fuse_entry_param para o caminho, contando a referência do kernel.</summary>
+    static void FillEntry(byte* e, string path, in FileAttr a) => FillEntry(e, _inodes.Lookup(path, a.Lid == 0 ? null : a.Lid), a);
+
+    static void FillEntry(byte* e, ulong ino, in FileAttr a)
     {
         new Span<byte>(e, EntrySize).Clear();
-        var ino = countLookup ? _inodes.Lookup(path) : _inodes.Peek(path);
         *(ulong*)e = ino;
         FillStat(e + EntryAttr, a, ino);
         *(double*)(e + L.EntryAttrTimeout) = AttrTimeout;
@@ -273,9 +302,17 @@ public static unsafe class FuseHost
     static int ReplyEntry(IntPtr req, string path)
     {
         var r = _fs.GetAttr(path, out var a);
+        if (r == -Errno.ENOENT)
+        {
+            var negativo = stackalloc byte[EntrySize];
+            new Span<byte>(negativo, EntrySize).Clear(); // nodeid 0 + prazo: cache negativo do protocolo
+            *(double*)(negativo + L.EntryEntryTimeout) = EntryTimeout;
+            fuse_reply_entry(req, negativo);
+            return 0;
+        }
         if (r != 0) return r;
         var e = stackalloc byte[EntrySize];
-        FillEntry(e, path, a, true);
+        FillEntry(e, path, a);
         if (fuse_reply_entry(req, e) != 0) _inodes.Forget(*(ulong*)e, 1); // o kernel não recebeu: não vai dar forget
         return 0;
     }
@@ -283,13 +320,17 @@ public static unsafe class FuseHost
     static int ReplyAttr(IntPtr req, ulong ino, string? path, ulong fh)
     {
         FileAttr a;
-        var r = fh != 0 || path == null ? _fs.GetAttr(path, fh, out a) : _fs.GetAttr(path, out a);
+        var r = path == null && fh == 0
+            ? (InodeTable.IsStable(ino) ? _fs.GetAttrByLid((long)ino - 1, out a) : AtributoAusente(out a))
+            : fh != 0 ? _fs.GetAttr(path, fh, out a) : _fs.GetAttr(path!, out a);
         if (r != 0) return r;
         var st = stackalloc byte[StatSize];
         FillStat(st, a, ino);
         fuse_reply_attr(req, st, AttrTimeout);
         return 0;
     }
+
+    static int AtributoAusente(out FileAttr a) { a = default; return -Errno.ENOENT; }
 
     /// <summary>Resultado 0 → responde sucesso; negativo → o Handle responde o erro.</summary>
     static int Ok(IntPtr req, int r)
@@ -303,7 +344,7 @@ public static unsafe class FuseHost
     [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
     static void Lookup(IntPtr req, ulong parent, byte* name)
     {
-        var p = ChildPath(parent, name);
+        if (!ChildPath(req, parent, name, out var p)) return;
         Handle(req, () => p == null ? -Errno.ENOENT : ReplyEntry(req, p));
     }
 
@@ -348,16 +389,16 @@ public static unsafe class FuseHost
             if ((toSet & (SetMtime | SetMtimeNow)) != 0)
             {
                 long? mtime = (toSet & SetMtimeNow) != 0 ? null : m.sec * 1000 + m.nsec / 1_000_000;
-                if ((r = _fs.Utimens(p, mtime, fh)) != 0) return r;
+                if ((r = _fs.Utimens(p, mtime, fh, (toSet & SetMtimeNow) != 0 ? 0 : (int)(m.nsec % 1_000_000))) != 0) return r;
             }
             return ReplyAttr(req, ino, p, fh);
-        }, slow: (toSet & SetSize) != 0);
+        }, slow: (toSet & SetSize) != 0, network: size > 0 && _fs.OpenNeedsNetwork(p, 0));
     }
 
     [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
     static void Mkdir(IntPtr req, ulong parent, byte* name, uint mode)
     {
-        var p = ChildPath(parent, name);
+        if (!ChildPath(req, parent, name, out var p)) return;
         Handle(req, () =>
         {
             if (p == null) return -Errno.ENOENT;
@@ -369,7 +410,7 @@ public static unsafe class FuseHost
     [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
     static void Unlink(IntPtr req, ulong parent, byte* name)
     {
-        var p = ChildPath(parent, name);
+        if (!ChildPath(req, parent, name, out var p)) return;
         Handle(req, () =>
         {
             if (p == null) return -Errno.ENOENT;
@@ -382,7 +423,7 @@ public static unsafe class FuseHost
     [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
     static void Rmdir(IntPtr req, ulong parent, byte* name)
     {
-        var p = ChildPath(parent, name);
+        if (!ChildPath(req, parent, name, out var p)) return;
         Handle(req, () =>
         {
             if (p == null) return -Errno.ENOENT;
@@ -396,8 +437,7 @@ public static unsafe class FuseHost
     [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
     static void Rename(IntPtr req, ulong parent, byte* name, ulong newParent, byte* newName, uint flags)
     {
-        var from = ChildPath(parent, name);
-        var to = ChildPath(newParent, newName);
+        if (!ChildPath(req, parent, name, out var from) || !ChildPath(req, newParent, newName, out var to)) return;
         Handle(req, () =>
         {
             if (from == null || to == null) return -Errno.ENOENT;
@@ -405,7 +445,7 @@ public static unsafe class FuseHost
             const uint RENAME_EXCHANGE = 2;
             if (r == 0) _inodes.Move(from, to, exchange: (flags & RENAME_EXCHANGE) != 0);
             return Ok(req, r);
-        }, slow: true);
+        }, slow: true, network: _fs.RenameNeedsNetwork(from, to));
     }
 
     /// <summary>
@@ -438,7 +478,7 @@ public static unsafe class FuseHost
                 *(uint*)(copy + FuseLayout.FiBits) |= FuseLayout.FiKeepCache;
             if (fuse_reply_open(req, copy) != 0) _fs.Release(fh); // processo morreu antes da resposta
             return 0;
-        }, slow: true, cleanup: () => NativeMemory.Free(copy));
+        }, slow: true, cleanup: () => NativeMemory.Free(copy), network: _fs.OpenNeedsNetwork(p, flags));
     }
 
     /// <summary>
@@ -449,7 +489,7 @@ public static unsafe class FuseHost
     static void Read(IntPtr req, ulong ino, nuint size, long off, byte* fi)
     {
         var fh = FiFh(fi);
-        var slow = _fs.ReadNeedsNetwork(fh, off, (long)size);
+        var slow = _fs.ReadOutsideLoop(fh);
         Handle(req, () =>
         {
             var buf = (byte*)NativeMemory.Alloc(size == 0 ? 1 : size);
@@ -461,7 +501,7 @@ public static unsafe class FuseHost
                 return 0;
             }
             finally { NativeMemory.Free(buf); }
-        }, slow);
+        }, slow, network: slow);
     }
 
     [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
@@ -514,7 +554,7 @@ public static unsafe class FuseHost
             if (n < 0) return (int)n;
             fuse_reply_write(req, (nuint)n);
             return 0;
-        }, slow: true);
+        }, slow: true, network: _fs.IsStreaming(fhIn));
     }
 
     [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
@@ -551,6 +591,8 @@ public static unsafe class FuseHost
     /// ("." e ".." primeiro; o offset de cada entrada é o índice seguinte). No readdirplus cada entrada, menos
     /// "." e "..", conta um lookup — só as que couberam no buffer.
     /// </summary>
+    static ulong InodeNaoLigado() => 0;
+
     static int ReplyDir(IntPtr req, ulong ino, ulong fh, nuint size, long off, bool plus)
     {
         if (off == 0 || !DirSnapshots.ContainsKey(fh))
@@ -577,15 +619,26 @@ public static unsafe class FuseHost
                 nuint need;
                 fixed (byte* n = bytes)
                 {
-                    if (plus)
+                    if (plus && path != null)
                     {
-                        if (path != null) FillEntry(e, path, attr, false);
-                        else
+                        // conta a referência antes de pôr no buffer; se não couber, devolve (ver InodeTable.ReaddirEntry)
+                        var room = size - used;
+                        var (at, ep, np, next) = ((IntPtr)(buf + used), (IntPtr)e, (IntPtr)n, i + 1);
+                        nuint got = 0;
+                        var a = attr;
+                        _inodes.ReaddirEntry(path, attr.Lid == 0 ? null : attr.Lid, entryIno =>
                         {
-                            new Span<byte>(e, EntrySize).Clear();
-                            *(ulong*)e = i == 0 ? ino : UnknownIno;
-                            FillStat(e + EntryAttr, attr, *(ulong*)e);
-                        }
+                            FillEntry((byte*)ep, entryIno, a);
+                            got = fuse_add_direntry_plus(req, (byte*)at, room, (byte*)np, (byte*)ep, next);
+                            return got <= room;
+                        });
+                        need = got;
+                    }
+                    else if (plus)
+                    {
+                        new Span<byte>(e, EntrySize).Clear();
+                        *(ulong*)e = InodeNaoLigado(); // nodeid 0, não FUSE_UNKNOWN_INO
+                        FillStat(e + EntryAttr, attr, *(ulong*)e);
                         need = fuse_add_direntry_plus(req, buf + used, size - used, n, e, i + 1);
                     }
                     else
@@ -594,12 +647,7 @@ public static unsafe class FuseHost
                         need = fuse_add_direntry(req, buf + used, size - used, n, st, i + 1);
                     }
                 }
-                if (need > size - used)
-                {
-                    if (plus && path != null) _inodes.DropIfUnused(*(ulong*)e); // não coube: o kernel não viu
-                    break;
-                }
-                if (plus && path != null) _inodes.AddRef(*(ulong*)e);
+                if (need > size - used) break; // não coube: fica para o próximo readdir
                 used += need;
             }
             fuse_reply_buf(req, buf, used);
@@ -646,7 +694,7 @@ public static unsafe class FuseHost
     static void SetXattr(IntPtr req, ulong ino, byte* name, byte* value, nuint size, int flags)
     {
         var p = PathOf(ino);
-        var n = S(name);
+        if (!Nome(req, name, out var n)) return;
         var v = new ReadOnlySpan<byte>(value, (int)size).ToArray();
         Handle(req, () => Ok(req, p == null ? -Errno.ENOENT : _fs.SetXattr(p, n, v, flags)));
     }
@@ -655,7 +703,7 @@ public static unsafe class FuseHost
     static void RemoveXattr(IntPtr req, ulong ino, byte* name)
     {
         var p = PathOf(ino);
-        var n = S(name);
+        if (!Nome(req, name, out var n)) return;
         Handle(req, () => Ok(req, p == null ? -Errno.ENOENT : _fs.RemoveXattr(p, n)));
     }
 
@@ -663,7 +711,7 @@ public static unsafe class FuseHost
     static void GetXattr(IntPtr req, ulong ino, byte* name, nuint size)
     {
         var p = PathOf(ino);
-        var n = S(name);
+        if (!Nome(req, name, out var n)) return;
         Handle(req, () =>
         {
             var v = p == null ? null : _fs.GetXattr(p, n);
@@ -709,30 +757,40 @@ public static unsafe class FuseHost
     [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
     static void Create(IntPtr req, ulong parent, byte* name, uint mode, byte* fi)
     {
-        var p = ChildPath(parent, name);
+        if (!ChildPath(req, parent, name, out var p)) return;
         var flags = FiFlags(fi);
+        var copy = CopyFi(fi);
         Handle(req, () =>
         {
             if (p == null) return -Errno.ENOENT;
             var r = _fs.Create(p, flags, mode, out var fh);
             if (r != 0) return r;
-            *(ulong*)(fi + FuseLayout.FiFh) = fh; // síncrono: o fi da libfuse ainda vale
+            *(ulong*)(copy + FuseLayout.FiFh) = fh; // a libfuse já pode ter liberado o fi original
             if ((r = _fs.GetAttr(p, fh, out var a)) != 0)
             {
                 _fs.Release(fh);
                 return r;
             }
             var e = stackalloc byte[EntrySize];
-            FillEntry(e, p, a, true);
+            FillEntry(e, p, a);
             _inodes.SameContentAsLastOpen(*(ulong*)e, a.MTimeMs, a.Size);
-            if (fuse_reply_create(req, e, fi) != 0)
+            if (fuse_reply_create(req, e, copy) != 0)
             {
                 _inodes.Forget(*(ulong*)e, 1);
                 _fs.Release(fh);
             }
             return 0;
-        });
+        }, slow: true, cleanup: () => NativeMemory.Free(copy), network: _fs.OpenNeedsNetwork(p, flags));
     }
+
+    [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
+    static void Mknod(IntPtr req, ulong parent, byte* name, uint mode, ulong rdev) => fuse_reply_err(req, Errno.EPERM);
+
+    [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
+    static void Symlink(IntPtr req, byte* link, ulong parent, byte* name) => fuse_reply_err(req, Errno.EPERM);
+
+    [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
+    static void Link(IntPtr req, ulong ino, ulong parent, byte* name) => fuse_reply_err(req, Errno.EPERM);
 
     // ---------- montagem ----------
 
@@ -759,6 +817,9 @@ public static unsafe class FuseHost
         ops[(int)OpIndex.forget] = (IntPtr)(delegate* unmanaged[Cdecl]<IntPtr, ulong, ulong, void>)&Forget;
         ops[(int)OpIndex.getattr] = (IntPtr)(delegate* unmanaged[Cdecl]<IntPtr, ulong, byte*, void>)&GetAttr;
         ops[(int)OpIndex.setattr] = (IntPtr)(delegate* unmanaged[Cdecl]<IntPtr, ulong, byte*, int, byte*, void>)&SetAttr;
+        ops[(int)OpIndex.mknod] = (IntPtr)(delegate* unmanaged[Cdecl]<IntPtr, ulong, byte*, uint, ulong, void>)&Mknod;
+        ops[(int)OpIndex.symlink] = (IntPtr)(delegate* unmanaged[Cdecl]<IntPtr, byte*, ulong, byte*, void>)&Symlink;
+        ops[(int)OpIndex.link] = (IntPtr)(delegate* unmanaged[Cdecl]<IntPtr, ulong, ulong, byte*, void>)&Link;
         ops[(int)OpIndex.mkdir] = (IntPtr)(delegate* unmanaged[Cdecl]<IntPtr, ulong, byte*, uint, void>)&Mkdir;
         ops[(int)OpIndex.unlink] = (IntPtr)(delegate* unmanaged[Cdecl]<IntPtr, ulong, byte*, void>)&Unlink;
         ops[(int)OpIndex.rmdir] = (IntPtr)(delegate* unmanaged[Cdecl]<IntPtr, ulong, byte*, void>)&Rmdir;
@@ -821,9 +882,10 @@ public static unsafe class FuseHost
     /// Monta e executa o loop do FUSE numa thread dedicada. Retorna a Task que termina ao desmontar.
     /// <paramref name="maxThreads"/> limita as threads do loop; downloads não as ocupam (ver <see cref="SlowOps"/>).
     /// </summary>
-    public static Task MountAsync(VirtualFs fs, string mountPoint, int maxThreads = 16)
+    public static Task MountAsync(VirtualFs fs, string mountPoint, int maxThreads = 16, double cacheTimeout = 1.0)
     {
         if (_session != IntPtr.Zero) throw new InvalidOperationException("Já montado");
+        AttrTimeout = EntryTimeout = cacheTimeout;
         _fs = fs;
         _inodes = new InodeTable(path => fs.Resolve(path)?.Item?.Lid);
         DirSnapshots.Clear();
@@ -869,6 +931,7 @@ public static unsafe class FuseHost
             MountPoint = mountPoint;
         }
 
+        var notificacoes = new KernelNotifications(fs, _inodes, se);
         var tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var thread = new Thread(() =>
         {
@@ -887,12 +950,13 @@ public static unsafe class FuseHost
                 var deadline = Environment.TickCount64 + 15_000;
                 while (Volatile.Read(ref _inflight) > 0 && Environment.TickCount64 < deadline) Thread.Sleep(20);
                 var pending = Volatile.Read(ref _inflight);
+                var notificacoesEncerradas = notificacoes.Stop();
                 lock (MountLock)
                 {
                     // zera antes de destruir: Unmount não pode chamar fuse_session_exit numa sessão liberada
                     _session = IntPtr.Zero;
                     MountPoint = null;
-                    if (pending > 0)
+                    if (pending > 0 || !notificacoesEncerradas)
                         Log?.Invoke($"FUSE: {pending} respostas pendentes ao desmontar; sessão não destruída");
                     else
                     {

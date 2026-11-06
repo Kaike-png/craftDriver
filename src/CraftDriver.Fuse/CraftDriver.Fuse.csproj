@@ -10,6 +10,11 @@
     <Nullable>enable</Nullable>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <NoWarn>$(NoWarn);CA1416</NoWarn>
+    <!-- Publicado com trimming (packaging/build.sh), como o Core: o analisador quebra o build em vez de deixar só o
+         smoke dos pacotes pegar um uso por reflexão que o trimmer não enxerga. -->
+    <IsTrimmable>true</IsTrimmable>
+    <EnableTrimAnalyzer>true</EnableTrimAnalyzer>
+    <WarningsAsErrors>$(WarningsAsErrors);IL2026;IL2046;IL2057;IL2067;IL2070;IL2072;IL2075;IL2087;IL2090;IL2091;IL2104;IL3050</WarningsAsErrors>
   </PropertyGroup>
 
 </Project>

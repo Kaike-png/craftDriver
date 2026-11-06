@@ -8,6 +8,7 @@ using CraftDriver.Core.Sync;
 
 namespace CraftDriver.Tests;
 
+[Collection(nameof(AlocacaoTests))]
 public class TransferPerformanceTests
 {
     sealed class Handler(Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> send) : HttpMessageHandler
@@ -115,6 +116,34 @@ public class TransferPerformanceTests
         var clock = Stopwatch.StartNew();
         await Task.WhenAll(f.Lids.Select(l => f.Engine.EnsureContentAsync(l, default)));
         Assert.True(clock.Elapsed >= TimeSpan.FromMilliseconds(350), $"4 bytes a 10 B/s levaram {clock.Elapsed}");
+    }
+
+    /// <summary>§13.5 no download: limites altos entregam ≥ 90 % do configurado (antes saturava em ~13 MiB/s).</summary>
+    [Theory]
+    [InlineData(50)]
+    [InlineData(100)]
+    public async Task Banda_download_alta_e_respeitada(int mibPerSecond)
+    {
+        long rate = mibPerSecond * 1024L * 1024;
+        var length = (int)(rate * 3 / 2); // 1,5 s no ritmo pedido
+        var body = new byte[length];
+        using var f = new DownloadFixture(new Handler((_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(body) })),
+            $"{{\"DownloadConcurrency\":1,\"DownloadBytesPerSecond\":{rate}}}", itemCount: 0);
+        var root = f.Db.GetDrive("drive")!.RootLid;
+        var lid = f.Db.Insert(new Item { DriveId = "drive", ParentLid = root, ItemId = "grande", Name = "grande.bin", Size = length, CTag = "v1" });
+        await f.Engine.EnsureContentAsync(lid, TestContext.Current.CancellationToken);
+        Assert.Equal("v1", f.Db.Get(lid)!.CachedCTag);
+        // Mede a entrega do transporte + limitador, sem misturar fsync/cache/disputa de disco entre processos da
+        // suíte. A integração do cache continua provada acima. Usa a mesma DriveSync.DownloadAsync que o cache usa.
+        var download = typeof(DriveSync).GetMethod("DownloadAsync", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+        long delivered = 0;
+        Action<long> progress = n => delivered = n;
+        var clock = Stopwatch.StartNew();
+        await (Task)download.Invoke(f.Engine.GetDrive("drive"), ["grande", Stream.Null, 0L, progress, TestContext.Current.CancellationToken])!;
+        var measured = length / clock.Elapsed.TotalSeconds / 1024 / 1024;
+        Assert.Equal(length, delivered);
+        Assert.True(measured >= mibPerSecond * 0.9 && measured <= mibPerSecond * 1.1,
+            $"download com limite {mibPerSecond} MiB/s entregou {measured:F1} MiB/s ({measured / mibPerSecond:P0})");
     }
 
     [Fact]

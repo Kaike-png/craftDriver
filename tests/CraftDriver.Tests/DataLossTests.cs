@@ -249,7 +249,7 @@ public class DataLossTests
         h.Settle();
         h.Remote.CorruptNextDownloads = 100;
         Assert.Equal(-Errno.EIO, h.Fs.Open(h.P("/dados.bin"), 0, 0, out _));
-        Assert.Equal(SyncEngine.DownloadAttempts, h.Remote.Downloads);
+        Assert.Equal(h.Engine.DownloadAttempts, h.Remote.Downloads);
         var it = Get(h, "/dados.bin");
         Assert.Null(it.CachedCTag);
         Assert.False(h.Engine.Cache.Exists(it.DriveId, it.Lid));

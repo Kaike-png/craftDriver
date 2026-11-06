@@ -3,72 +3,75 @@ using System.Collections.Concurrent;
 namespace CraftDriver.Fuse;
 
 /// <summary>
-/// Threads próprias para operações do FUSE que podem esperar a rede (open de arquivo só-na-nuvem, truncate,
-/// rename, fsync). Elas bloqueiam esperando o download — no ThreadPool do .NET isso o deixaria sem threads
-/// justamente para o download assíncrono que estão esperando. Cresce sob demanda (uma thread ociosa é
-/// reaproveitada; sem ociosa, cria outra) e cada thread sai depois de 30 s sem trabalho. Acima de
-/// <see cref="MaxThreads"/> o trabalho espera na fila, sem ocupar o loop do FUSE.
+/// Operações que não devem ocupar o loop FUSE. Duas filas com threads próprias: rede (até 256 esperas) e local
+/// (até 16 operações em disco). Uma fila única invertia a prioridade: 256 reads presos na rede impediam fsync,
+/// rename e open de arquivos já no cache. Não usar ThreadPool: bloquear nele também impede o download assíncrono.
 /// </summary>
 public static class SlowOps
 {
     public const int MaxThreads = 256;
-    static readonly ConcurrentQueue<Action> Queue = new();
-    static readonly SemaphoreSlim Signal = new(0);
-    static int _threads, _idle;
+    const int MaxLocalThreads = 16;
+    static readonly Fila Rede = new(MaxThreads, "fuse-rede");
+    static readonly Fila Local = new(MaxLocalThreads, "fuse-local");
 
-    public static int Threads => Volatile.Read(ref _threads);
+    public static int Threads => Rede.Threads + Local.Threads;
 
-    /// <summary>
-    /// Enfileira e garante que alguém vai pegar: reserva uma thread ociosa (decrementando o contador e acordando
-    /// uma) ou cria outra. Sem reserva, dois trabalhos chegando juntos podiam acordar a mesma thread, e o segundo
-    /// open esperaria o download do primeiro.
-    /// </summary>
-    public static void Run(Action work)
+    public static void Run(Action work, bool network = false) => (network ? Rede : Local).Run(work);
+
+    sealed class Fila(int limite, string nome)
     {
-        Queue.Enqueue(work);
-        while (true)
-        {
-            var idle = Volatile.Read(ref _idle);
-            if (idle == 0) break;
-            if (Interlocked.CompareExchange(ref _idle, idle - 1, idle) == idle)
-            {
-                Signal.Release();
-                return;
-            }
-        }
-        if (Interlocked.Increment(ref _threads) > MaxThreads)
-        {
-            Interlocked.Decrement(ref _threads); // no limite: fica na fila; quem terminar esvazia a fila antes de ficar ocioso
-            return;
-        }
-        new Thread(Worker) { IsBackground = true, Name = "fuse-slow" }.Start();
-    }
+        readonly ConcurrentQueue<Action> _queue = new();
+        readonly SemaphoreSlim _signal = new(0);
+        int _threads, _idle;
 
-    static void Worker()
-    {
-        try
+        public int Threads => Volatile.Read(ref _threads);
+
+        public void Run(Action work)
         {
+            _queue.Enqueue(work);
             while (true)
             {
-                while (Queue.TryDequeue(out var work))
+                var idle = Volatile.Read(ref _idle);
+                if (idle == 0) break;
+                if (Interlocked.CompareExchange(ref _idle, idle - 1, idle) == idle)
                 {
-                    try { work(); }
-                    catch { /* o FuseHost já trata e responde; uma exceção aqui não pode matar a thread */ }
+                    _signal.Release();
+                    return;
                 }
-                Interlocked.Increment(ref _idle);
-                if (Signal.Wait(TimeSpan.FromSeconds(30))) continue; // quem acordou já descontou o ocioso
-                // 30 s sem trabalho: sai, a menos que alguém tenha acabado de reservar esta thread
-                var left = false;
+            }
+            if (Interlocked.Increment(ref _threads) > limite)
+            {
+                Interlocked.Decrement(ref _threads);
+                return;
+            }
+            new Thread(Worker) { IsBackground = true, Name = nome }.Start();
+        }
+
+        void Worker()
+        {
+            try
+            {
                 while (true)
                 {
-                    var idle = Volatile.Read(ref _idle);
-                    if (idle == 0) break; // reservada: o sinal está a caminho
-                    if (Interlocked.CompareExchange(ref _idle, idle - 1, idle) == idle) { left = true; break; }
+                    while (_queue.TryDequeue(out var work))
+                    {
+                        try { work(); }
+                        catch { /* FuseHost já responde os erros; um trabalho não pode matar a fila */ }
+                    }
+                    Interlocked.Increment(ref _idle);
+                    if (_signal.Wait(TimeSpan.FromSeconds(30))) continue;
+                    var left = false;
+                    while (true)
+                    {
+                        var idle = Volatile.Read(ref _idle);
+                        if (idle == 0) break;
+                        if (Interlocked.CompareExchange(ref _idle, idle - 1, idle) == idle) { left = true; break; }
+                    }
+                    if (left) return;
+                    _signal.Wait();
                 }
-                if (left) return;
-                Signal.Wait();
             }
+            finally { Interlocked.Decrement(ref _threads); }
         }
-        finally { Interlocked.Decrement(ref _threads); }
     }
 }

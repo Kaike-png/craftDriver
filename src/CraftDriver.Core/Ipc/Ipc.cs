@@ -5,7 +5,11 @@ using System.Text.Json;
 namespace CraftDriver.Core.Ipc;
 
 public sealed record IpcRequest(string Cmd, string[] Args);
-public sealed record IpcResponse(bool Ok, string Text);
+/// <param name="Links">
+/// share: links criados que a instância NÃO copiou (ela não tem sessão gráfica, ex.: serviço do systemd sem
+/// WAYLAND_DISPLAY); o CLI, que roda na sessão do usuário, copia. Null nos demais comandos.
+/// </param>
+public sealed record IpcResponse(bool Ok, string Text, string[]? Links = null);
 
 /// <summary>
 /// Conta recém-autenticada pelo <c>craftdriver login</c>, entregue à instância em execução
@@ -30,7 +34,23 @@ public static class IpcJson
 public sealed class IpcServer : IDisposable
 {
     readonly string _path;
-    readonly Func<IpcRequest, Task<IpcResponse>> _handler;
+    Func<IpcRequest, Task<IpcResponse>> _handler;
+
+    /// <summary>Tamanho máximo de um pedido (caracteres da linha JSON).</summary>
+    public static int MaxLineChars { get; set; } = 1 << 20;
+
+    /// <summary>Prazo para o cliente mandar a linha do pedido (cliente parado não segura uma tarefa para sempre).</summary>
+    public static TimeSpan ReadTimeout { get; set; } = TimeSpan.FromSeconds(30);
+
+    /// <summary>
+    /// Quem responde aos pedidos. Trocável: o Program abre o servidor antes do AppHost existir (respostas de
+    /// "ainda iniciando") e o AppHost assume o mesmo socket ao iniciar.
+    /// </summary>
+    public Func<IpcRequest, Task<IpcResponse>> Handler
+    {
+        get => Volatile.Read(ref _handler);
+        set => Volatile.Write(ref _handler, value);
+    }
     readonly Socket _sock;
     readonly CancellationTokenSource _cts = new();
 
@@ -44,7 +64,9 @@ public sealed class IpcServer : IDisposable
         _sock.Bind(new UnixDomainSocketEndPoint(path));
         File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite);
         _sock.Listen(8);
-        _ = AcceptLoop();
+        // fora do contexto de quem cria (a thread de UI, no AppHost.Start): as continuações do laço não podem
+        // depender dela — com a UI ocupada, nenhum comando seria atendido
+        _ = Task.Run(AcceptLoop);
     }
 
     async Task AcceptLoop()
@@ -62,7 +84,17 @@ public sealed class IpcServer : IDisposable
                 await using var writer = new StreamWriter(stream, new UTF8Encoding(false)) { AutoFlush = true };
                 try
                 {
-                    var line = await reader.ReadLineAsync();
+                    string? line;
+                    using (var timeout = new CancellationTokenSource(ReadTimeout))
+                    {
+                        try { line = await ReadLineLimitedAsync(reader, MaxLineChars, timeout.Token); }
+                        catch (OperationCanceledException) { return; } // cliente parado: solta a conexão
+                        catch (InvalidDataException)
+                        {
+                            await writer.WriteLineAsync(IpcJson.Serialize(new IpcResponse(false, $"Pedido grande demais para o craftDriver (máximo {MaxLineChars} caracteres).")));
+                            return;
+                        }
+                    }
                     if (line == null) return;
                     IpcResponse resp;
                     IpcRequest? req = null;
@@ -73,13 +105,31 @@ public sealed class IpcServer : IDisposable
                         resp = new IpcResponse(false, "Pedido inválido para o craftDriver (esperado JSON {\"Cmd\":…,\"Args\":[…]}).");
                     else
                     {
-                        try { resp = await _handler(req); }
+                        try { resp = await Handler(req); }
                         catch (Exception ex) { resp = new IpcResponse(false, ex.Message); }
                     }
                     await writer.WriteLineAsync(IpcJson.Serialize(resp));
                 }
                 catch { /* cliente desconectou */ }
             });
+        }
+    }
+
+    /// <summary>Lê uma linha de até <paramref name="max"/> caracteres; mais que isso lança InvalidDataException.</summary>
+    static async Task<string?> ReadLineLimitedAsync(StreamReader reader, int max, CancellationToken ct)
+    {
+        var sb = new StringBuilder();
+        var buf = new char[4096];
+        while (true)
+        {
+            // um char por vez seria lento; Peek não é assíncrono: lê blocos e corta na quebra de linha
+            // (o protocolo é um pedido por conexão, então o que vier depois do \n é descartado)
+            var n = await reader.ReadAsync(buf.AsMemory(), ct);
+            if (n == 0) return sb.Length == 0 ? null : sb.ToString();
+            var nl = Array.IndexOf(buf, '\n', 0, n);
+            sb.Append(buf, 0, nl < 0 ? n : nl);
+            if (sb.Length > max) throw new InvalidDataException();
+            if (nl >= 0) return sb.ToString().TrimEnd('\r');
         }
     }
 

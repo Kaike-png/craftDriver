@@ -333,26 +333,31 @@ public sealed class StreamSession
             }
             var off = (long)b * BlockSize;
             var len = (int)Math.Min(BlockSize, Size - off);
-            var buf = new byte[len];
-            using (var linked = CancellationTokenSource.CreateLinkedTokenSource(f.Cts.Token, t.Transfer.Token))
-            using (var ms = new MemoryStream(buf, 0, len, writable: true))
-            {
-                await drive.DownloadRangeAsync(ItemId, ms, off, len, n => t.Transfer.Done = Math.Min(Size, baseDone + n), linked.Token);
-                if (ms.Position != len) throw new IOException($"Bloco {b} de '{Name}' incompleto: {ms.Position} de {len} bytes");
-            }
-            // grava e sincroniza antes de marcar: depois de uma queda de energia, bloco marcado tem dados
+            // do pool: era um array novo do tamanho do bloco (4 MiB, no LOH) a cada bloco baixado
+            var buf = System.Buffers.ArrayPool<byte>.Shared.Rent(len);
             try
             {
-                RandomAccess.Write(data, buf, off);
-                RandomAccess.FlushToDisk(data);
+                using (var linked = CancellationTokenSource.CreateLinkedTokenSource(f.Cts.Token, t.Transfer.Token))
+                using (var ms = new MemoryStream(buf, 0, len, writable: true))
+                {
+                    await drive.DownloadRangeAsync(ItemId, ms, off, len, n => t.Transfer.Done = Math.Min(Size, baseDone + n), linked.Token);
+                    if (ms.Position != len) throw new IOException($"Bloco {b} de '{Name}' incompleto: {ms.Position} de {len} bytes");
+                }
+                // grava e sincroniza antes de marcar: depois de uma queda de energia, bloco marcado tem dados
+                try
+                {
+                    RandomAccess.Write(data, buf.AsSpan(0, len), off);
+                    RandomAccess.FlushToDisk(data);
+                }
+                catch (IOException ex) when (Errors.IsDiskFull(ex))
+                {
+                    // disco cheio no meio do bloco: o pedaço gravado não serve (o bloco não é marcado) e o LRU não o
+                    // enxerga (conta só blocos marcados) — devolve o espaço em vez de deixá-lo preso no esparso
+                    PunchHole(data, off, len);
+                    throw;
+                }
             }
-            catch (IOException ex) when (Errors.IsDiskFull(ex))
-            {
-                // disco cheio no meio do bloco: o pedaço gravado não serve (o bloco não é marcado) e o LRU não o
-                // enxerga (conta só blocos marcados) — devolve o espaço em vez de deixá-lo preso no esparso
-                PunchHole(data, off, len);
-                throw;
-            }
+            finally { System.Buffers.ArrayPool<byte>.Shared.Return(buf); }
             bool last;
             lock (_lock)
             {
@@ -443,9 +448,9 @@ public sealed class StreamSession
                 await Task.WhenAll(missing.Skip(i).Take(2).Select(b => EnsureBlockAsync(b, ct)));
             if (await FinishTask().WaitAsync(ct)) return;
             if (Detached) throw new StaleContentException($"'{Name}' mudou na nuvem durante o download.");
-            if (attempt >= SyncEngine.DownloadAttempts)
+            if (attempt >= _e.DownloadAttempts)
                 throw new ContentIntegrityException(
-                    $"O conteúdo baixado de '{Name}' não confere com a nuvem após {SyncEngine.DownloadAttempts} tentativas.");
+                    $"O conteúdo baixado de '{Name}' não confere com a nuvem após {_e.DownloadAttempts} tentativas.");
         }
     }
 
