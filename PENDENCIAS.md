@@ -1056,6 +1056,16 @@ coverlet (134) e classes de UI que trocam `CRAFTDRIVER_HOME` fora da coleção s
   `ExecStop` com socket "ainda iniciando", Nautilus (fila única, API 3.0/4.0, mountinfo), pacotes Dolphin deb/rpm,
   deps .NET por distro, `metainfo.py --check`, job AUR sem força.
 
+## 28. Testes instáveis vistos no CI (a investigar)
+
+- [ ] `Rodada3FuseTests.R24_8_touch_na_raiz…` no executor arm64 (run 42297941034): "loop do FUSE não terminou após
+  desmontar" (15 s) e, em cascata, "Já montado" nos testes FUSE seguintes. A mesma árvore de FUSE passou no arm64 em
+  outros 3 runs e 15× seguidas aqui (x64). Não reproduzido; hipótese a testar: desmontagem com a thread de
+  notificações (`fuse-notify`) ou um worker do `SlowOps` ainda dentro da sessão. Se repetir, pegar o dump do
+  `--blame-hang` e o log do `FuseHost`; considerar o `Montado` desmontar com `fusermount -u` de novo antes de falhar.
+- [x] `DisplayScalingTests.Le_monitores…` (x64): servidor falso no ThreadPool demorava mais que os 500 ms do
+  `HyprRequest` com o executor ocupado. **Feito:** prazo de 10 s só no teste (produção continua 500 ms e já trata o erro).
+
 ## Ordem sugerida (rodada 3 — concluída, exceto §24.9/§24.10)
 
 1. §24.1 (SlowOps — syscall pendurada), §25.1–25.3 (relaunch órfão, `.lock` em disco cheio, `install-user.sh` com app aberto)

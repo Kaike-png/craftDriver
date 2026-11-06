@@ -679,8 +679,9 @@ public class DisplayScalingTests
                 c.Shutdown(SocketShutdown.Both);
             }
         }, TestContext.Current.CancellationToken);
-        var monitors = DisplayScaling.ParseMonitors(DisplayScaling.HyprRequest(path, "j/monitors"));
-        var fz = DisplayScaling.ParseBoolOption(DisplayScaling.HyprRequest(path, "j/getoption xwayland:force_zero_scaling"));
+        // prazo folgado: o servidor falso roda no ThreadPool e, com o executor do CI ocupado, o Accept passava de 500 ms
+        var monitors = DisplayScaling.ParseMonitors(DisplayScaling.HyprRequest(path, "j/monitors", 10_000));
+        var fz = DisplayScaling.ParseBoolOption(DisplayScaling.HyprRequest(path, "j/getoption xwayland:force_zero_scaling", 10_000));
         await serve.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
         Assert.Equal(["j/monitors", "j/getoption xwayland:force_zero_scaling"], received);
         Assert.Equal([new HyprMonitor("eDP-1", 1.8), new HyprMonitor("HDMI-A-1", 1)], monitors);
