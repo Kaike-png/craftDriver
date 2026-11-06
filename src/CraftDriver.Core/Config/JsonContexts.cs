@@ -17,6 +17,10 @@ internal sealed partial class ConfigJsonContext : JsonSerializerContext;
 [JsonSerializable(typeof(AddAccountRequest))]
 internal sealed partial class IpcJsonContext : JsonSerializerContext;
 
+/// <summary>Release do GitHub (verificação de atualizações); só leitura.</summary>
+[JsonSerializable(typeof(CraftDriver.Core.Updates.GitHubRelease))]
+internal sealed partial class UpdateJsonContext : JsonSerializerContext;
+
 /// <summary>Filhos cujo pai ainda não apareceu na enumeração inicial; persistidos com o nextLink para retomada.</summary>
 [JsonSerializable(typeof(List<CraftDriver.Core.Graph.RemoteItem>))]
 [JsonSerializable(typeof(CraftDriver.Core.Graph.RemoteItem))]

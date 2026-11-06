@@ -34,6 +34,9 @@ public static class AppPaths
     public static string RuntimeDir => Override is { } o ? Path.Combine(o, "run")
         : Xdg("XDG_RUNTIME_DIR", Path.Combine(Path.GetTempPath(), AppName + "-" + Environment.UserName));
 
+    /// <summary>Pacotes baixados pela atualização (cache padrão, fora do cache de conteúdo configurável).</summary>
+    public static string UpdatesDir => Path.Combine(DefaultCacheDir, "updates");
+
     public static string SocketPath => Path.Combine(RuntimeDir, AppName + ".sock");
     public static string ConfigFile => Path.Combine(ConfigDir, "config.json");
     public static string DatabaseFile => Path.Combine(StateDir, "state.db");
@@ -394,4 +397,13 @@ public sealed class AppConfig
     public bool WindowMaximized { get; set; }
     /// <summary>O aviso "o craftDriver continua na bandeja" já foi mostrado (só aparece uma vez).</summary>
     public bool TrayNoticeShown { get; set; }
+
+    // ---- atualizações (docs/atualizacoes.md) ----
+
+    /// <summary>Procurar versão nova no GitHub 2 min após iniciar e depois a cada 24 h (CRAFTDRIVER_NO_UPDATE_CHECK=1 desliga).</summary>
+    public bool CheckForUpdates { get; set; } = true;
+    /// <summary>Versão que o usuário mandou ignorar ("Ignorar esta versão"); uma mais nova volta a aparecer.</summary>
+    public string? SkippedUpdateVersion { get; set; }
+    /// <summary>Última versão já avisada por notificação (uma notificação por versão, não a cada início).</summary>
+    public string? NotifiedUpdateVersion { get; set; }
 }

@@ -7,4 +7,9 @@
     <ProjectReference Include="..\..\src\CraftDriver.Fuse\CraftDriver.Fuse.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- respostas reais de APIs (ex.: release do GitHub) usadas como fixture -->
+    <None Include="Fixtures\**" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>
