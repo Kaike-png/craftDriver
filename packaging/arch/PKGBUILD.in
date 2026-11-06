@@ -7,9 +7,10 @@ pkgdesc="Cliente para OneDrive e SharePoint com arquivos sob demanda (FUSE). Nã
 arch=(@ARCH@)
 url="https://github.com/Kaike-png/craftDriver"
 license=('MIT')
-depends=('glibc' 'libgcc' 'libstdc++' 'fuse3' 'icu' 'fontconfig' 'libx11' 'libice' 'libsm' 'hicolor-icon-theme'
+depends=('glibc' 'gcc-libs' 'openssl' 'ca-certificates' 'zlib' 'fuse3' 'icu' 'fontconfig' 'libx11' 'libice' 'libsm' 'hicolor-icon-theme'
          'xdg-utils' 'dbus')
-optdepends=('libsecret: guardar os tokens no chaveiro do sistema (KWallet/GNOME Keyring)'
+optdepends=('krb5: autenticação Negotiate/Kerberos (opcional para OAuth)'
+            'libsecret: guardar os tokens no chaveiro do sistema (KWallet/GNOME Keyring)'
             'dolphin: menu de contexto craftDriver no gerenciador de arquivos'
             'craftdriver-dolphin: emblemas de status no Dolphin e menu só dentro do ponto de montagem'
             'python-nautilus: emblemas e menu craftDriver no Nautilus'

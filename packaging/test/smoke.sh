@@ -6,6 +6,10 @@ ls -l /usr/bin/craftdriver /usr/lib/craftdriver/craftdriver /usr/share/applicati
       /usr/share/kio/servicemenus/craftdriver.desktop /usr/share/icons/hicolor/256x256/apps/craftdriver.png | awk '{print $1, $NF}'
 echo "== versão"
 craftdriver --version
+echo "== TLS (OpenSSL, certificados raiz e HTTPS público; sem Microsoft)"
+craftdriver diagnose --tls "${CRAFTDRIVER_TLS_URL:-https://github.com}"
+echo "== tarball (instalação de usuário sem SDK)"
+bash /t/install-user.sh
 useradd -m tester 2>/dev/null || adduser -D tester
 H=/home/tester/h; mkdir -p $H/config
 echo "{\"MountPoint\":\"$H/OneDrive\",\"CacheDir\":\"$H/cache\"}" > $H/config/config.json

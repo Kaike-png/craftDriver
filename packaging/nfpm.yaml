@@ -25,12 +25,19 @@ overrides:
       - libx11-6
       - libice6
       - libsm6
+      # Runtime .NET: libssl vem por dlopen (ldd não acusa); sem ele o login aborta. Sem raízes, UntrustedRoot.
+      # Debian 12 = libssl3; Debian 13 / Ubuntu 24.04 = libssl3t64.
+      - libssl3t64 | libssl3
+      - ca-certificates
+      - libstdc++6
+      - zlib1g
       # ICU fica: com InvariantGlobalization números/datas sairiam em formato inglês (ver docs/empacotamento.md)
       - libicu78 | libicu77 | libicu76 | libicu74 | libicu72 | libicu71 | libicu70 | libicu67
       - xdg-utils          # xdg-open: abrir a pasta, o navegador do login e os links
       - dbus-bin | dbus    # dbus-send: iniciar o chaveiro e mostrar o arquivo no gerenciador
     recommends:
       - libsecret-1-0
+      - libgssapi-krb5-2    # Negotiate/Kerberos (opcional para o OAuth do OneDrive)
       - libnotify-bin      # notify-send: só se o serviço de notificações não responder pelo D-Bus
       - wl-clipboard | xclip | xsel   # copiar o link de compartilhamento
       - fonts-dejavu-core
@@ -45,11 +52,16 @@ overrides:
       - libX11
       - libICE
       - libSM
+      - openssl-libs
+      - ca-certificates
+      - libstdc++
+      - zlib
       - libicu
       - xdg-utils
       - dbus-tools
     recommends:
       - libsecret
+      - krb5-libs
       - libnotify
       - (wl-clipboard or xclip or xsel)
       - dejavu-sans-fonts

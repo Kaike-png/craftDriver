@@ -25,6 +25,20 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+      - name: Metainfo gerada e versões coerentes (tag, csproj, AppStream, CHANGELOG/data)
+        env:
+          RELEASE_TAG: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '' }}
+        run: |
+          python3 -m unittest discover -s packaging/tests -v
+          python3 packaging/metainfo.py --check --tag "$RELEASE_TAG"
+      - name: Validadores de empacotamento e workflow
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq appstream desktop-file-utils
+          docker run --rm -v "$PWD:/repo" -w /repo rhysd/actionlint:1.7.12 -no-color
+          appstreamcli validate --no-net packaging/share/metainfo/*.xml
+          # Servicemenus KDE usam Type=Service e schema próprio; desktop-file-validate só valida aplicativos XDG.
+          desktop-file-validate packaging/share/applications/*.desktop
       - name: Notas da release (só em tag)
         if: startsWith(github.ref, 'refs/tags/v')
         run: |
@@ -86,7 +100,7 @@ jobs:
       - name: Testes (com cobertura)
         env:
           CRAFTDRIVER_UI_OUT: ${{ runner.temp }}/craftdriver-ui
-        run: dotnet test CraftDriver.slnx -c Release --collect:"XPlat Code Coverage" --logger trx --results-directory coverage
+        run: dotnet test CraftDriver.slnx -c Release -warnaserror --collect:"XPlat Code Coverage" --logger trx --results-directory coverage --blame-hang-timeout 5m --blame-hang-dump-type mini
       - name: Relatório de cobertura
         if: ${{ !cancelled() }}
         run: |
@@ -102,7 +116,10 @@ jobs:
         if: always()
         with:
           name: resultados-testes-${{ matrix.arch }}
-          path: coverage/**/*.trx
+          path: |
+            coverage/**/*.trx
+            coverage/**/Sequence*.xml
+            coverage/**/*.dmp
           if-no-files-found: warn
       - uses: actions/upload-artifact@v4
         if: always()
@@ -111,14 +128,17 @@ jobs:
           path: ${{ runner.temp }}/craftdriver-ui/
           if-no-files-found: warn
 
-  # Plugin C++ do Dolphin (extensions/dolphin): precisa de KF6, que o Ubuntu 24.04 não tem, então compila e
-  # testa num contêiner archlinux (o mesmo ambiente do pacote craftdriver-dolphin do AUR). Não entra no
-  # .deb/.rpm; é distribuído como pacote à parte, compilado da fonte.
+  # Plugin C++ KF6: Arch prova o AUR; o job nativo abaixo gera pacotes separados por distro/ABI.
   dolphin-plugin:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     container: archlinux:latest
     steps:
+      - uses: actions/cache@v4
+        with:
+          path: /var/cache/pacman/pkg
+          key: pacman-dolphin-${{ runner.arch }}-${{ github.run_id }}
+          restore-keys: pacman-dolphin-${{ runner.arch }}-
       - name: Dependências (KF6, ECM)
         run: pacman -Syu --noconfirm --needed base-devel git cmake ninja extra-cmake-modules kio qt6-base breeze-icons attr
       - uses: actions/checkout@v4
@@ -134,6 +154,33 @@ jobs:
         run: |
           DESTDIR="$PWD/dest" cmake --install build-dolphin
           find dest -type f | sort
+
+  dolphin-native:
+    needs: checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - distro: debian13
+            image: debian:13
+          - distro: ubuntu2504
+            image: ubuntu:25.04
+          - distro: fedora41
+            image: fedora:41
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compilar, testar e empacotar plugin KF6 na distro de destino
+        env:
+          IMAGE: ${{ matrix.image }}
+          DISTRO: ${{ matrix.distro }}
+        run: docker run --rm -v "$PWD:/repo" -w /repo "$IMAGE" bash packaging/dolphin/build-native.sh "$DISTRO"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dolphin-${{ matrix.distro }}
+          path: dist/dolphin/${{ matrix.distro }}/
+          if-no-files-found: error
 
   package:
     needs: [checks, test, dolphin-plugin]
@@ -170,7 +217,7 @@ jobs:
             dist/*.rpm
             dist/*.pkg.tar.zst
             dist/aur/
-            dist/test/
+            dist/test/*.pkg.tar.zst
       # logs e capturas de tela do smoke (dist/test) também quando um contêiner falha
       - uses: actions/upload-artifact@v4
         if: failure()
@@ -202,26 +249,32 @@ jobs:
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [package, package-arm64]
+    needs: [package, package-arm64, dolphin-native]
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v4
+      # Baixa SOMENTE pacotes; sem merge-multiple e sem HTML/PNGs de cobertura/smoke/UI.
       - uses: actions/download-artifact@v4
         with:
-          path: art
-          merge-multiple: true
+          pattern: craftdriver-*
+          path: art/app
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: dolphin-*
+          path: art/dolphin
       - name: Anexar à release
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
-          cd art
-          cp aur/PKGBUILD PKGBUILD
-          cp aur/craftdriver-dolphin/PKGBUILD PKGBUILD-craftdriver-dolphin
-          cp test/*.pkg.tar.zst .
+          mkdir -p art/assets
+          find art/app art/dolphin -type f \( -name '*.tar.gz' -o -name '*.sha256' -o -name '*.deb' -o -name '*.rpm' -o -name '*.pkg.tar.zst' \) -exec cp -t art/assets/ {} +
+          cp art/app/*/aur/PKGBUILD art/assets/PKGBUILD
+          cp art/app/*/aur/craftdriver-dolphin/PKGBUILD art/assets/PKGBUILD-craftdriver-dolphin
+          cd art/assets
           sha256sum -- *.tar.gz *.deb *.rpm *.pkg.tar.zst > SHA256SUMS
           files=(*.tar.gz *.sha256 *.deb *.rpm *.pkg.tar.zst PKGBUILD PKGBUILD-craftdriver-dolphin SHA256SUMS)
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
@@ -229,6 +282,27 @@ jobs:
             gh release upload "$GITHUB_REF_NAME" "${files[@]}" --clobber
           else
             # antes caía calado em --generate-notes quando o arquivo faltava; o job checks já barra a tag sem notas
-            ../packaging/release-notes.sh "$GITHUB_REF_NAME" > "$RUNNER_TEMP/notes.md"
+            ../../packaging/release-notes.sh "$GITHUB_REF_NAME" > "$RUNNER_TEMP/notes.md"
             gh release create "$GITHUB_REF_NAME" "${files[@]}" --title "craftDriver $GITHUB_REF_NAME" --notes-file "$RUNNER_TEMP/notes.md"
           fi
+
+  aur:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: craftdriver-*
+          path: art
+      - name: Publicar PKGBUILDs no AUR (opcional)
+        env:
+          AUR_SSH_KEY: ${{ secrets.AUR_SSH_KEY }}
+        run: |
+          if [[ -z "$AUR_SSH_KEY" ]]; then
+            echo '::warning title=AUR não publicado::Defina o segredo AUR_SSH_KEY (chave de uma conta mantenedora de craftdriver-bin e craftdriver-dolphin) para habilitar.'
+            exit 0
+          fi
+          packaging/arch/publish-aur.sh art/*/aur

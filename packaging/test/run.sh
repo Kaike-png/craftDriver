@@ -23,8 +23,8 @@ run() {
 want="${*:-ubuntu debian fedora arch}"
 for d in $want; do case $d in
   ubuntu) run ubuntu ubuntu:24.04 "export DEBIAN_FRONTEND=noninteractive; apt-get update -qq && apt-get install -y -qq /dist/$DEB $TOOLS_DEB >/dev/null" ;;
-  debian) run debian debian:12 "export DEBIAN_FRONTEND=noninteractive; apt-get update -qq && apt-get install -y -qq /dist/$DEB $TOOLS_DEB >/dev/null" ;;
-  fedora) run fedora fedora:latest "dnf install -y -q /dist/$RPM $TOOLS_RPM >/dev/null" ;;
+  debian) run debian debian:12-slim "export DEBIAN_FRONTEND=noninteractive; apt-get update -qq && apt-get install -y -qq /dist/$DEB $TOOLS_DEB >/dev/null" ;;
+  fedora) run fedora fedora:41 "dnf install -y -q /dist/$RPM $TOOLS_RPM >/dev/null" ;;
   # Arch: compila o PKGBUILD do AUR com makepkg (tarball local no lugar do download) e instala com pacman
   arch) if [ "$DEB_ARCH" != amd64 ]; then echo "######## arch: pulado (a imagem archlinux só existe para x86_64)"; continue; fi
         run arch archlinux:latest "pacman -Syu --noconfirm -q base-devel xorg-server-xvfb xorg-xwininfo imagemagick ttf-dejavu noto-fonts-emoji >/dev/null \

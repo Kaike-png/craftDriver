@@ -13,10 +13,10 @@
 # As extensões de gerenciador de arquivos em Python/XML/.desktop (Nautilus, Thunar, PCManFM; ver
 # extensions/) vão no tarball e nos pacotes. O plugin C++ do Dolphin (extensions/dolphin) precisa de
 # KF6/ECM para compilar e NÃO é gerado aqui: é um pacote à parte (craftdriver-dolphin no AUR, ou
-# cmake manual), testado no CI num contêiner archlinux.
+# cmake manual); packaging/dolphin/build-native.sh gera .deb/.rpm KF6 específicos por distro no CI.
 #
 # Uso: [ARCHES="x64 arm64"] packaging/build.sh [versão]   (padrão: ARCHES=x64; versão do CraftDriver.App.csproj)
-# Requer: .NET SDK 10 e Docker (para o nfpm e o makepkg; ou nfpm/makepkg instalados no PATH).
+# Requer: .NET SDK 10, Python 3 e Docker (para o nfpm e o makepkg; ou nfpm/makepkg instalados no PATH).
 # arm64 é publicado por compilação cruzada (sem emulação); só é testado no CI, num executor ARM.
 set -euo pipefail
 
@@ -29,6 +29,7 @@ DIST="$ROOT/dist"
 DOTNET="$(command -v dotnet || echo "$HOME/.dotnet/dotnet")"
 
 echo "→ craftDriver $VERSION ($ARCHES)"
+python3 "$ROOT/packaging/metainfo.py" --check --tag "v$VERSION"
 rm -rf "$DIST"
 mkdir -p "$DIST/aur"
 
@@ -56,7 +57,7 @@ for A in $ARCHES; do
   # obj/ limpo: o ILLink reaproveita a saída de um publish anterior com outras opções (medido: TrimMode ignorado)
   rm -rf "$ROOT"/src/*/obj/Release/net10.0/"linux-$A"
   "$DOTNET" publish "$CSPROJ" -c Release -r "linux-$A" --self-contained \
-    -p:PublishTrimmed=true -p:DebugType=none -p:Version="$VERSION" -o "$STAGING/lib" >/dev/null
+    -warnaserror -p:PublishSingleFile=false -p:PublishTrimmed=true -p:DebugType=none -p:Version="$VERSION" -o "$STAGING/lib" >/dev/null
   mv "$STAGING/lib/CraftDriver.App" "$STAGING/lib/craftdriver" # o apphost acha CraftDriver.App.dll ao lado
   # modos uniformes (os .so do NuGet vêm 0744): 0644 em tudo, 0755 no executável, nas bibliotecas nativas e no createdump
   find "$STAGING/lib" -type f -exec chmod 644 {} +
@@ -65,6 +66,8 @@ for A in $ARCHES; do
   ln -s lib/craftdriver "$STAGING/craftdriver"
 
   cp -r "$ROOT/packaging/share" "$STAGING/share"
+  python3 "$ROOT/packaging/metainfo.py" --output "$STAGING/share/metainfo/io.github.kaike_png.craftdriver.metainfo.xml"
+  install -m755 "$ROOT/packaging/install-user.sh" "$STAGING/install-user.sh"
   install -Dm644 "$ROOT/src/CraftDriver.App/Assets/app-256.png" "$STAGING/share/icons/hicolor/256x256/apps/craftdriver.png"
   chmod 755 "$STAGING/share/kio/servicemenus/craftdriver.desktop"
   # Extensões sem compilação (o plugin C++ do Dolphin é pacote separado, ver o cabeçalho)
