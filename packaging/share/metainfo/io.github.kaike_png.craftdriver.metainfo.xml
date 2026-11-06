@@ -77,15 +77,39 @@
     <release version="0.3.0" date="2026-11-06">
       <description>
         <ul>
-          <li>Atualizações: aviso de versão nova (Visão geral, notificação e bandeja) e "Atualizar agora", que baixa o pacote certo (pacman, .deb, .rpm ou install-user.sh), confere o SHA256 e instala; craftdriver update [--check].</li>
+          <li>Atualizações: o craftDriver avisa quando sai uma versão nova (aviso na Visão geral com o resumo das novidades, notificação e item na bandeja) e Atualizar agora baixa o pacote certo para a sua instalação (pacman, .deb, .rpm ou install-user.sh), confere o SHA256 e instala — com a senha de administrador para pacotes do sistema, sem senha na instalação do usuário. "Ignorar esta versão", opção nas Configurações e craftdriver update [--check].</li>
           <li>Envios em paralelo (3 por padrão), sem deixar a sincronização da nuvem esperando um envio grande.</li>
-          <li>Perda de dados: arquivo apagado e recriado durante o envio não some mais; exclusão recusada pela nuvem não duplica o nome.</li>
-          <li>Erro de servidor perene num item vai para Problemas após 50 tentativas; o painel da fila mostra o que está parado e por quê.</li>
-          <li>rm -rf, pastas grandes e cópias grandes fazem bem menos consultas; corrigida uma corrida rara que deixava uma operação do sistema de arquivos sem resposta.</li>
-          <li>Desligar/religar ou remover uma biblioteca com envio em andamento não envia duas vezes; limites de banda valem na hora.</li>
-          <li>App: "Reiniciar agora" cancelado não reabre sozinho; disco cheio mostra o erro real; "Sair" da bandeja confirma com transferências; craftdriver quit espera o app terminar.</li>
-          <li>Pasta atrás de link simbólico funciona no app, CLI, Nautilus e Dolphin; Dolphin mostra emblemas em pastas vistas antes da montagem.</li>
-          <li>Pacotes .deb com libssl3 e ca-certificates; plugin do Dolphin em .deb/.rpm; instalador em modo usuário no tarball.</li>
+          <li>Pastas grandes listam mais rápido; menos idas ao chaveiro do sistema.</li>
+          <li>Atividade com busca, filtro de erros e copiar; tema aplicado na hora; ícones vetoriais (sem depender de fonte emoji).</li>
+          <li>Plugin do Dolphin também em .deb/.rpm (Debian 13, Ubuntu 25.04, Fedora 41); Nautilus 42 (Ubuntu 22.04) suportado.</li>
+          <li>O tarball traz um instalador em modo usuário (sem precisar do SDK do .NET).</li>
+          <li>Pacotes .deb: faltavam libssl3 e ca-certificates — num Debian 12 ou Ubuntu 24.04 mínimo o login falhava.</li>
+          <li>Edições que nunca subiam: arquivo ainda aberto para escrita ao encerrar (ou numa queda) e escritas feitas depois de um conflito de edição com o arquivo aberto agora são enviadas.</li>
+          <li>Arquivos criados durante uma sincronização completa ou de pasta compartilhada não são mais apagados localmente.</li>
+          <li>mv sobre um nome que outro dispositivo acabou de criar não substitui mais o arquivo dele; apagar e recriar com o mesmo nome não vira cópia de conflito.</li>
+          <li>A fila de envios não trava mais com um arquivo bloqueado no SharePoint (Excel Online) nem depois de descartar o aviso de uma pasta que não pôde ser criada; o painel mostra o que está segurando a fila.</li>
+          <li>Arquivo renomeado ou apagado na nuvem com o gerenciador de arquivos aberto: o nome novo abre na hora (antes dava "arquivo não encontrado" e, depois, erro de E/S até remontar).</li>
+          <li>Nomes com caracteres inválidos não sobrescrevem mais outro arquivo; fstat em arquivo apagado mas aberto funciona.</li>
+          <li>"Entrar novamente" pela notificação com a janela na bandeja não fecha mais o app; erros inesperados vão para o log em vez de derrubar o processo.</li>
+          <li>Abrir o app de novo enquanto ele espera o chaveiro não derruba mais a montagem da primeira instância.</li>
+          <li>systemctl --user stop, logout e SIGTERM encerram limpo (desmonta, salva a configuração).</li>
+          <li>Limite de banda acima de ~13 MB/s agora é respeitado; cópias de conflito desnecessárias (só metadados mudaram, ou conteúdo idêntico) não são mais criadas.</li>
+          <li>Arquivo recriado sumindo: apagar um arquivo durante o envio (ou renomear para temporário) e recriá-lo com o mesmo nome não apaga mais o novo; nomes com acento em maiúsculas/minúsculas (Ação/AÇÃO) não viram cópia de conflito.</li>
+          <li>Exclusão recusada pela nuvem (412) não deixa mais dois arquivos com o mesmo nome: a versão da nuvem volta como "nome (conflito - data)".</li>
+          <li>Erro de servidor que nunca passa (5xx, 429…) num item vai para Problemas após 50 tentativas em vez de ficar oculto; uma exclusão em Problemas segura o envio do mesmo nome até você tentar de novo ou descartar, e o painel diz isso.</li>
+          <li>rm -rf de pasta não espera mais o envio de um arquivo dela terminar; desligar/religar ou remover uma biblioteca com envio em andamento não envia duas vezes nem deixa exclusão órfã.</li>
+          <li>Valores inválidos no config.json (lotes ou tentativas ≤ 0) são corrigidos ao carregar em vez de travar o delta.</li>
+          <li>Mudar o limite de envio vale na hora, também para o pedaço em andamento.</li>
+          <li>A montagem não deixa mais uma operação (open/fsync/rename) sem resposta numa corrida rara da fila interna; rm -rf, enumeração de pastas grandes e cópia de arquivos grandes fazem bem menos consultas ao banco.</li>
+          <li>Nome de arquivo inexistente com bytes inválidos responde "não encontrado" (antes, erro de codificação).</li>
+          <li>"Reiniciar agora" cancelado não reabre mais o app sozinho depois; disco cheio ou sem permissão em /run mostra o erro real em vez de "já está em execução"; um 2º Ctrl+C/SIGTERM durante o encerramento força a saída.</li>
+          <li>"Sair" da bandeja pede a mesma confirmação com transferências ativas; Ctrl+S só salva na aba Configurações.</li>
+          <li>craftdriver quit espera o app terminar; o install-user.sh não deixa mais o app fechado ao atualizar com ele aberto, e --uninstall remove as ações do Thunar.</li>
+          <li>Pasta do craftDriver atrás de um link simbólico: menus e emblemas do Nautilus/Dolphin e o CLI funcionam.</li>
+          <li>Dolphin: emblemas aparecem em pastas vistas antes da montagem, não lê atributos fora do craftDriver e não aborta ao fechar com a montagem travada. Nautilus não fica relendo para sempre um item preso em "sincronizando".</li>
+          <li>Notificação "sessão expirada" diz onde entrar de novo quando o servidor de notificações não mostra botões.</li>
+          <li>Uma 2ª instância --headless sai com código 3 (antes 0); duas configurações com a mesma pasta não montam juntas.</li>
+          <li>O serviço systemd usa graphical-session.target quando a sessão o oferece (GNOME/KDE/uwsm).</li>
         </ul>
       </description>
     </release>
