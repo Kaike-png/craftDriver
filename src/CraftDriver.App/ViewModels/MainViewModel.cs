@@ -379,6 +379,8 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
             EngineStatus.DeleteConfirmation => "warning",
             _ => "cloud",
         };
+        // fixado de compartilhado só tem caminho depois que a sub-drive sobe
+        if (Pinned.Any(p => p.Path.Length == 0)) RebuildPinned();
         var pending = Host.Db.PendingOps();
         CurrentStatus = st;
         PendingCount = pending;

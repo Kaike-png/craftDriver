@@ -534,18 +534,30 @@ public sealed class AppHost
         return rel == null ? null : Fs.Resolve(rel, includeExcluded)?.Item;
     }
 
+    /// <summary>
+    /// Caminho na montagem. Drives da conta saem da configuração + raiz gravada no banco: a janela monta a lista de
+    /// fixados antes do Host.Start (motor sem drives) e o caminho vinha vazio a cada abertura. Sub-drives
+    /// (compartilhados) só existem com o motor iniciado: "" até lá.
+    /// </summary>
     public string LocalPathOf(Item item)
     {
-        var drive = Engine.GetDrive(item.DriveId);
-        if (drive == null) return "";
+        string? name = null;
+        long rootLid = 0;
+        if (Engine.GetDrive(item.DriveId) is { } drive) (name, rootLid) = (drive.Config.DisplayName, drive.RootLid);
+        if ((name == null || rootLid == 0) && Config.Drives.FirstOrDefault(d => d.DriveId == item.DriveId) is { } dc
+            && Db.GetDrive(item.DriveId) is { RootLid: > 0 } st)
+            (name, rootLid) = (dc.DisplayName, st.RootLid);
+        if (name == null || rootLid == 0) return "";
         var parts = new List<string>();
         var cur = item;
-        while (cur != null && cur.Lid != drive.RootLid)
+        var seen = new HashSet<long>();
+        while (cur != null && cur.Lid != rootLid && seen.Add(cur.Lid))
         {
             parts.Add(cur.Name);
             cur = Db.Get(cur.ParentLid);
         }
-        parts.Add(drive.Config.DisplayName.Replace('/', '-'));
+        if (cur == null || cur.Lid != rootLid) return "";
+        parts.Add(name.Replace('/', '-'));
         parts.Reverse();
         return Path.Combine([Config.MountPoint, .. parts]);
     }
