@@ -1,7 +1,6 @@
 using System.Diagnostics;
 using System.Reflection;
 using System.Runtime.InteropServices;
-using CraftDriver.Core.Config;
 using CraftDriver.Core.State;
 using CraftDriver.Core.Vfs;
 using CraftDriver.Fuse;
@@ -329,27 +328,24 @@ public class Rodada4FuseVfsTests(ITestOutputHelper output)
     [Fact]
     public void R24_10_pagina_grande_do_delta_nao_segura_o_lookup()
     {
-        // Calibrado na própria máquina: a MESMA página aplicada numa transação só (referência) × em lotes do padrão.
-        // Limite absoluto em ms falhava no CI (Release + cobertura, executor ~2,5× mais lento que aqui).
-        var (piorUnica, duracaoUnica) = MedirEsperaDoGetattrDuranteODelta(lote: 10_000);
-        var (pior, duracao) = MedirEsperaDoGetattrDuranteODelta(lote: new AppConfig().DeltaBatchSize);
-        // sem lotes as duas medições ficam iguais (±20 %); com lotes aqui ~0,15 e no executor ARM do CI ~0,4
-        Assert.True(pior < piorUnica * 0.6,
-            $"getattr esperou {pior} ms atrás do delta em lotes (página aplicada em {duracao} ms); numa transação só, " +
-            $"{piorUnica} ms (em {duracaoUnica} ms) — os lotes não estão soltando o Db.Lock");
-    }
-
-    (long pior, long duracao) MedirEsperaDoGetattrDuranteODelta(int lote)
-    {
-        using var h = new Harness(c => c.DeltaBatchSize = lote);
+        // Sem depender de tempo (limites em ms falhavam no CI: Release + cobertura, pausas de ~200 ms do executor):
+        // conta quantos getattr concorrentes TERMINAM enquanto a página é aplicada, entre o 10º e o 90º % dos inserts
+        // (ItemChanged dispara dentro da transação). Todo getattr precisa do Db.Lock: numa transação só, nenhum termina.
+        using var h = new Harness();
         h.Remote.RemoteCreate("/", "P", null, folder: true);
         h.Remote.RemoteCreate("/", "fixo.txt", "x");
         h.Settle();
-        const int N = 4000;
+        const int N = 12_000;
         for (var i = 0; i < N; i++) h.Remote.RemoteCreate("/P", $"f{i:D5}.txt", "x");
+        long concluidas = 0, noInicio = -1, noFim = -1;
+        h.Db.ItemChanged += (antes, depois) =>
+        {
+            if (antes != null || depois?.Name is not { } nome) return;
+            if (nome == $"f{N / 10:D5}.txt") noInicio = Interlocked.Read(ref concluidas);
+            if (nome == $"f{N * 9 / 10:D5}.txt") noFim = Interlocked.Read(ref concluidas);
+        };
         var parar = false;
-        long pior = 0, chamadas = 0;
-        var esperas = new List<long>();
+        long pior = 0;
         var medidor = new Thread(() =>
         {
             var sw = new Stopwatch();
@@ -359,10 +355,8 @@ public class Rodada4FuseVfsTests(ITestOutputHelper output)
                 sw.Restart();
                 h.Fs.GetAttr(h.P("/fixo.txt"), out _);
                 h.Fs.GetAttr(h.P($"/P/nunca-{n++}.txt"), out _); // caminho novo: caminhada no banco
-                var ms = sw.ElapsedMilliseconds;
-                lock (esperas) esperas.Add(ms);
-                if (ms > pior) pior = ms;
-                chamadas++;
+                pior = Math.Max(pior, sw.ElapsedMilliseconds);
+                Interlocked.Increment(ref concluidas);
                 Thread.Sleep(1);
             }
         })
@@ -374,10 +368,12 @@ public class Rodada4FuseVfsTests(ITestOutputHelper output)
         Volatile.Write(ref parar, true);
         medidor.Join();
         Assert.NotNull(h.Fs.Resolve(h.P($"/P/f{N - 1:D5}.txt")));
-        Out($"[24.10b] lote {lote}: página de {N} itens aplicada em {duracao} ms; getattr concorrente: {chamadas} chamadas, " +
-            $"pior espera {pior} ms (maiores: {string.Join(", ", esperas.OrderDescending().Take(5))}; " +
-            $"mediana {esperas.Order().ElementAtOrDefault(esperas.Count / 2)} ms)");
-        return (pior, duracao);
+        Assert.True(noInicio >= 0 && noFim >= 0, "os inserts da página não foram observados (ItemChanged)");
+        var durante = noFim - noInicio;
+        Out($"[24.10b] página de {N} itens aplicada em {duracao} ms; getattr concluídos entre 10 % e 90 % da página: " +
+            $"{durante} (total {concluidas}, pior espera {pior} ms)");
+        Assert.True(durante >= 1,
+            $"só {durante} getattr terminaram durante a aplicação da página (em {duracao} ms): o delta não solta o Db.Lock entre lotes");
     }
 
     // ---------- §28 loop do FUSE não termina após setattr + desmontar (arm64) ----------
