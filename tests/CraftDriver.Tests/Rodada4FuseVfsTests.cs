@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Reflection;
 using System.Runtime.InteropServices;
+using CraftDriver.Core.Config;
 using CraftDriver.Core.State;
 using CraftDriver.Core.Vfs;
 using CraftDriver.Fuse;
@@ -328,13 +329,24 @@ public class Rodada4FuseVfsTests(ITestOutputHelper output)
     [Fact]
     public void R24_10_pagina_grande_do_delta_nao_segura_o_lookup()
     {
-        using var h = new Harness();
+        // Calibrado na própria máquina: a MESMA página aplicada numa transação só (referência) × em lotes do padrão.
+        // Limite absoluto em ms falhava no CI (Release + cobertura, executor ~2,5× mais lento que aqui).
+        var (piorUnica, duracaoUnica) = MedirEsperaDoGetattrDuranteODelta(lote: 10_000);
+        var (pior, duracao) = MedirEsperaDoGetattrDuranteODelta(lote: new AppConfig().DeltaBatchSize);
+        // sem lotes as duas medições ficam iguais (±20 %); com lotes aqui ~0,15 e no executor ARM do CI ~0,4
+        Assert.True(pior < piorUnica * 0.6,
+            $"getattr esperou {pior} ms atrás do delta em lotes (página aplicada em {duracao} ms); numa transação só, " +
+            $"{piorUnica} ms (em {duracaoUnica} ms) — os lotes não estão soltando o Db.Lock");
+    }
+
+    (long pior, long duracao) MedirEsperaDoGetattrDuranteODelta(int lote)
+    {
+        using var h = new Harness(c => c.DeltaBatchSize = lote);
         h.Remote.RemoteCreate("/", "P", null, folder: true);
         h.Remote.RemoteCreate("/", "fixo.txt", "x");
         h.Settle();
         const int N = 4000;
         for (var i = 0; i < N; i++) h.Remote.RemoteCreate("/P", $"f{i:D5}.txt", "x");
-        var lotes = new List<long>();
         var parar = false;
         long pior = 0, chamadas = 0;
         var esperas = new List<long>();
@@ -362,10 +374,10 @@ public class Rodada4FuseVfsTests(ITestOutputHelper output)
         Volatile.Write(ref parar, true);
         medidor.Join();
         Assert.NotNull(h.Fs.Resolve(h.P($"/P/f{N - 1:D5}.txt")));
-        Out($"[24.10b] página de {N} itens aplicada em {duracao} ms; getattr concorrente: {chamadas} chamadas, pior espera {pior} ms " +
-            $"(maiores: {string.Join(", ", esperas.OrderDescending().Take(5))}; mediana {esperas.Order().ElementAtOrDefault(esperas.Count / 2)} ms)");
-        Assert.True(pior < Math.Max(250, duracao / 3),
-            $"getattr esperou {pior} ms atrás da transação do delta (página de {N} itens aplicada em {duracao} ms)");
+        Out($"[24.10b] lote {lote}: página de {N} itens aplicada em {duracao} ms; getattr concorrente: {chamadas} chamadas, " +
+            $"pior espera {pior} ms (maiores: {string.Join(", ", esperas.OrderDescending().Take(5))}; " +
+            $"mediana {esperas.Order().ElementAtOrDefault(esperas.Count / 2)} ms)");
+        return (pior, duracao);
     }
 
     // ---------- §28 loop do FUSE não termina após setattr + desmontar (arm64) ----------
