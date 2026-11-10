@@ -108,9 +108,11 @@ public sealed partial class StateDb
     long _geracaoFixados;
 
     /// <summary>
-    /// Inserção, mudança de pasta/nome/tipo/drive, exclusão seletiva ou rollback: invalida o cache de caminhos do
-    /// FUSE (<see cref="ItemsVersion"/>) e o conjunto de fixados. Apagar um item NÃO precisa: o acerto do cache
-    /// revalida o lid com Get (lid nunca é reaproveitado) e apagar uma pasta apaga a subárvore.
+    /// Mudança de pasta/nome/tipo/drive, exclusão seletiva ou rollback: invalida o cache de caminhos do FUSE
+    /// (<see cref="ItemsVersion"/>) e o conjunto de fixados. Apagar ou inserir um item NÃO precisa: o cache só guarda
+    /// mapeamentos positivos (caminho → lid), o acerto revalida o lid com Get (lid nunca é reaproveitado) e um lid
+    /// apagado volta para a caminhada, que acha o item recriado. Apagar PASTA sobe (o atalho "pai já resolvido" usa
+    /// o lid do pai sem Get).
     /// </summary>
     void MudouCaminhos()
     {

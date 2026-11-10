@@ -150,9 +150,10 @@ public class StreamingTests
         try
         {
             ReadAll(h, fh, data.Length);
-            Harness.WaitUntil(() => h.Engine.Activity.Entries.Any(e => e.Kind == ActivityKind.Error && e.Text.Contains("não confere")),
-                "verificação final reprovada");
-            Assert.True(discardedWhenReported, "o aviso de descarte saiu antes de os blocos serem descartados");
+            // espera o HANDLER ter visto o aviso, não só a entrada na lista: Add enfileira e grava o log em arquivo
+            // antes de disparar Changed, e conferir Entries aqui corria contra o handler (instável sob a suíte inteira)
+            Harness.WaitUntil(() => { lock (h) return discardedWhenReported != null; }, "verificação final reprovada");
+            lock (h) Assert.True(discardedWhenReported, "o aviso de descarte saiu antes de os blocos serem descartados");
             Assert.Null(h.Db.Get(lid)!.CachedCTag);
             Assert.False(h.Engine.Cache.Exists(FakeGraph.DriveId, lid));
 
@@ -451,7 +452,7 @@ public class StreamingFuseTests
             py?.Dispose();
             h.Engine.Stop();
             FuseHost.Unmount();
-            Assert.True(await loop.WithinAsync(TimeSpan.FromSeconds(15)), "loop do FUSE não terminou após desmontar");
+            Assert.True(await loop.WithinAsync(TimeSpan.FromSeconds(15)), "loop do FUSE não terminou após desmontar: " + FuseHost.Diagnostico());
         }
     }
 }

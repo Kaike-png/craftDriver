@@ -148,7 +148,7 @@ public class NamesAndDrivesTests
         finally
         {
             FuseHost.Unmount();
-            Assert.True(loop.Wait(TimeSpan.FromSeconds(15)), "loop do FUSE não terminou após desmontar");
+            Assert.True(loop.Wait(TimeSpan.FromSeconds(15)), "loop do FUSE não terminou após desmontar: " + FuseHost.Diagnostico());
         }
     }
 

@@ -56,7 +56,7 @@ public class FileOpsTests
         public void Dispose()
         {
             FuseHost.Unmount();
-            Assert.True(_loop.Wait(TimeSpan.FromSeconds(15)), "loop do FUSE não terminou após desmontar");
+            Assert.True(_loop.Wait(TimeSpan.FromSeconds(15)), "loop do FUSE não terminou após desmontar: " + FuseHost.Diagnostico());
             H.Dispose();
         }
     }
@@ -145,8 +145,9 @@ public class FileOpsTests
         Assert.Equal(0, Sh($"setfattr -n user.xdg.origin.url -v https://exemplo.com '{src}'", m.H.Dir).code);
         var cp = Sh($"cp -a '{src}' .", m.Root);
         Assert.True(cp.code == 0, "cp -a falhou: " + cp.output);
-        m.H.Settle();
-        Assert.Equal("pdf", m.H.Remote.ReadText("/baixado.pdf"));
+        // o RELEASE do kernel é assíncrono ao close() do cp (o envio só entra na fila nele): Settle logo depois podia ver
+        // a fila vazia e terminar antes (falhou 1× sob a suíte inteira)
+        Harness.WaitUntil(() => m.H.Remote.ReadText("/baixado.pdf") == "pdf", "cp -a enviado");
     }
 
     [Fact]

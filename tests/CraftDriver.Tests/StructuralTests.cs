@@ -44,7 +44,7 @@ public class InterruptTests
         {
             h.Engine.Stop(); // solta um handler que tenha ficado preso no download (token global)
             FuseHost.Unmount();
-            Assert.True(await loop.WithinAsync(TimeSpan.FromSeconds(15)), "loop do FUSE não terminou após desmontar");
+            Assert.True(await loop.WithinAsync(TimeSpan.FromSeconds(15)), "loop do FUSE não terminou após desmontar: " + FuseHost.Diagnostico());
         }
     }
 }
@@ -216,7 +216,7 @@ public class NonBlockingFuseTests
             foreach (var c in cats) { try { c.Kill(); } catch { } c.Dispose(); }
             h.Engine.Stop();
             FuseHost.Unmount();
-            Assert.True(await loop.WithinAsync(TimeSpan.FromSeconds(15)), "loop do FUSE não terminou após desmontar");
+            Assert.True(await loop.WithinAsync(TimeSpan.FromSeconds(15)), "loop do FUSE não terminou após desmontar: " + FuseHost.Diagnostico());
         }
     }
 }

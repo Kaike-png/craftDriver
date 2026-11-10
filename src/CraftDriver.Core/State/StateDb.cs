@@ -351,7 +351,10 @@ public sealed partial class StateDb : IDisposable
                 VALUES($drive,$item,$parent,$name,$dir,$size,$mtime,$ctime,$etag,$ctag,$hash,$cached,$dirty,$gen,$pinned,$local,$access,$mode,$namekey);
                 SELECT last_insert_rowid();
                 """, Params(i));
-            MudouCaminhos();
+            // Item novo não muda nenhum caminho já resolvido: o cache de caminhos do VirtualFs só guarda mapeamentos
+            // positivos e revalida o lid (Get) no acerto — lid apagado cai na caminhada (§24.9). Os fixados sim: um
+            // filho novo de pasta fixada passa a ser fixado.
+            _geracaoFixados++;
             i.Lid = (long)cmd.ExecuteScalar()!;
             AvisarItem(null, i);
             return i.Lid;
@@ -387,7 +390,10 @@ public sealed partial class StateDb : IDisposable
         lock (Lock)
         {
             var antes = !DeveNotificar ? null : Get(lid);
-            Exec("DELETE FROM items WHERE lid=$l", ("$l", lid));
+            using var cmd = Cmd("DELETE FROM items WHERE lid=$l RETURNING is_dir", [("$l", lid)]);
+            // Pasta apagada invalida o cache de caminhos: o atalho "pai já resolvido" do VirtualFs usa o lid do pai sem
+            // Get, e uma pasta recriada no mesmo caminho tem lid novo (Insert não sobe a geração, §24.9). Arquivo não.
+            if (cmd.ExecuteScalar() is long dir && dir != 0) MudouCaminhos();
             DefinirFracaoMtime(lid, 0, 0);
             if (antes != null) AvisarItem(antes, null);
         }
@@ -702,22 +708,13 @@ public sealed partial class StateDb : IDisposable
         }
     }
 
+    /// <summary>Op mais antiga da drive (só testes/diagnóstico; o motor reserva com <see cref="ClaimOps"/>).</summary>
     public Op? PeekOp(string driveId)
     {
         lock (Lock)
         {
-            using var cmd = Cmd("SELECT id,drive_id,kind,lid,remote_id,attempts,next_try,last_error,parent_remote,name,created,upload_url,upload_snap,upload_gen,is_dir,etag FROM ops WHERE drive_id=$d ORDER BY id LIMIT 1", [("$d", driveId)]);
-            using var r = cmd.ExecuteReader();
-            if (!r.Read()) return null;
-            return new Op
-            {
-                Id = r.GetInt64(0), DriveId = r.GetString(1), Kind = r.GetString(2), Lid = r.GetInt64(3),
-                RemoteId = r.IsDBNull(4) ? null : r.GetString(4), Attempts = (int)r.GetInt64(5), NextTry = r.GetInt64(6),
-                LastError = r.IsDBNull(7) ? null : r.GetString(7), ParentRemote = r.IsDBNull(8) ? null : r.GetString(8),
-                Name = r.IsDBNull(9) ? null : r.GetString(9), Created = r.GetInt64(10),
-                UploadUrl = r.IsDBNull(11) ? null : r.GetString(11), UploadSnapshot = r.IsDBNull(12) ? null : r.GetString(12),
-                UploadGen = r.GetInt64(13), IsDir = r.GetInt64(14) != 0, ETag = r.IsDBNull(15) ? null : r.GetString(15),
-            };
+            using var cmd = Cmd("SELECT id FROM ops WHERE drive_id=$d ORDER BY id LIMIT 1", [("$d", driveId)]);
+            return cmd.ExecuteScalar() is long id ? ReadOp(id) : null;
         }
     }
 

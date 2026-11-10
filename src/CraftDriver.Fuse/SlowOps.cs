@@ -16,6 +16,9 @@ public static class SlowOps
 
     public static int Threads => Rede.Threads + Local.Threads;
 
+    /// <summary>Threads, ociosas e trabalhos na fila de cada pool (diagnóstico de desmontagem).</summary>
+    public static string Diagnostico() => $"SlowOps rede={Rede.Estado} local={Local.Estado}";
+
     public static void Run(Action work, bool network = false) => (network ? Rede : Local).Run(work);
 
     sealed class Fila(int limite, string nome)
@@ -25,6 +28,7 @@ public static class SlowOps
         int _threads, _idle;
 
         public int Threads => Volatile.Read(ref _threads);
+        public string Estado => $"{Threads} threads/{Volatile.Read(ref _idle)} ociosas/{_queue.Count} na fila";
 
         public void Run(Action work)
         {

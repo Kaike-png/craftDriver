@@ -87,7 +87,7 @@ public class FuseIntegrationTests
         finally
         {
             FuseHost.Unmount();
-            Assert.True(await loop.WithinAsync(TimeSpan.FromSeconds(15)), "loop do FUSE não terminou após desmontar");
+            Assert.True(await loop.WithinAsync(TimeSpan.FromSeconds(15)), "loop do FUSE não terminou após desmontar: " + FuseHost.Diagnostico());
         }
     }
 
@@ -114,7 +114,7 @@ public class FuseIntegrationTests
             finally
             {
                 FuseHost.Unmount();
-                Assert.True(loop.Wait(TimeSpan.FromSeconds(15)), "loop do FUSE não terminou após desmontar");
+                Assert.True(loop.Wait(TimeSpan.FromSeconds(15)), "loop do FUSE não terminou após desmontar: " + FuseHost.Diagnostico());
             }
         }
 
@@ -184,7 +184,7 @@ public class FuseIntegrationTests
         finally
         {
             FuseHost.Unmount();
-            Assert.True(await loop.WithinAsync(TimeSpan.FromSeconds(15)), "loop do FUSE não terminou após desmontar");
+            Assert.True(await loop.WithinAsync(TimeSpan.FromSeconds(15)), "loop do FUSE não terminou após desmontar: " + FuseHost.Diagnostico());
         }
     }
 }

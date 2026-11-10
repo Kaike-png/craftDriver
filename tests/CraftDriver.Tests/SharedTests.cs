@@ -345,7 +345,7 @@ public class SharedTests
         {
             h.Engine.Stop();
             FuseHost.Unmount();
-            Assert.True(await loop.WithinAsync(TimeSpan.FromSeconds(15)), "loop do FUSE não terminou após desmontar");
+            Assert.True(await loop.WithinAsync(TimeSpan.FromSeconds(15)), "loop do FUSE não terminou após desmontar: " + FuseHost.Diagnostico());
         }
         Assert.Equal(0, o.DeniedWrites + o.Uploads + o.Deletes);
     }

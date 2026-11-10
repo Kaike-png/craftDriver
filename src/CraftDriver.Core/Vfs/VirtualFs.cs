@@ -158,9 +158,14 @@ public sealed class VirtualFs
             if (!includeExcluded && _resolved.TryGetValue(key, out var lid))
             {
                 var posicao = _posicoesCaminhos[key];
-                _lruCaminhos.Remove(posicao);
-                _lruCaminhos.AddLast(posicao);
-                return Db.Get(lid) is { } hit ? new Node(false, drive, hit) : null;
+                if (Db.Get(lid) is { } hit)
+                {
+                    _lruCaminhos.Remove(posicao);
+                    _lruCaminhos.AddLast(posicao);
+                    return new Node(false, drive, hit);
+                }
+                // lid apagado (Delete/Insert não sobem a geração): o caminho pode ter um item novo — caminhada
+                Esquecer(key);
             }
             // Pai já resolvido nesta geração (rm -rf, ls -l, find: um lookup por filho): só o último nível. O lid do
             // pai continua válido sem Get — mudar pasta/nome/exclusão sobe a geração, e apagar a pasta apaga os filhos.
@@ -168,9 +173,14 @@ public sealed class VirtualFs
                 && _resolved.TryGetValue((drive.Config.DriveId, path[..path.LastIndexOf('/')]), out var paiLid))
             {
                 var filho = Db.GetChild(paiLid, parts[^1]);
-                if (filho == null || Db.IsExcluded(filho.Lid)) return null;
-                Lembrar(key, filho.Lid);
-                return new Node(false, drive, filho);
+                if (filho != null)
+                {
+                    if (Db.IsExcluded(filho.Lid)) return null;
+                    Lembrar(key, filho.Lid);
+                    return new Node(false, drive, filho);
+                }
+                // negativo: o pai continua vivo nesta geração (apagar pasta sobe a geração, StateDb.Delete)
+                return null;
             }
             var cur = Db.Get(startLid);
             for (var i = 1; i < parts.Length && cur != null; i++)
@@ -184,6 +194,13 @@ public sealed class VirtualFs
             Lembrar(key, cur.Lid);
             return new Node(false, drive, cur);
         }
+    }
+
+    void Esquecer((string drive, string path) key)
+    {
+        if (!_posicoesCaminhos.Remove(key, out var posicao)) return;
+        _lruCaminhos.Remove(posicao);
+        _resolved.Remove(key);
     }
 
     /// <summary>Guarda o lid do caminho no LRU (sob Db.Lock). Só lid: tamanho/mtime/dirty sempre vêm frescos do banco.</summary>
@@ -545,7 +562,9 @@ public sealed class VirtualFs
 
     public bool OpenNeedsNetwork(string? path, int flags)
     {
-        if (path == null || (flags & OpenFlags.Trunc) != 0) return false;
+        // create (O_CREAT só chega aqui pelo handler create: no open o kernel tira O_CREAT/O_EXCL) vem depois de um
+        // lookup negativo — se o arquivo apareceu nesse meio tempo o handler lento trata. Não consultar o banco no loop.
+        if (path == null || (flags & (OpenFlags.Trunc | OpenFlags.Creat)) != 0) return false;
         var item = Resolve(path)?.Item;
         return item != null && !SyncEngine.IsContentCurrent(item, _e.Cache);
     }

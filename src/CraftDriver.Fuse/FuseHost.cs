@@ -788,7 +788,7 @@ public static unsafe class FuseHost
                 _fs.Release(fh);
             }
             return 0;
-        }, slow: true, cleanup: () => NativeMemory.Free(copy), network: _fs.OpenNeedsNetwork(p, flags));
+        }, slow: true, cleanup: () => NativeMemory.Free(copy)); // create vem após lookup negativo: sem rede (§24.9)
     }
 
     [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
@@ -869,7 +869,14 @@ public static unsafe class FuseHost
         catch { }
     }
 
-    static void RunFusermount(string flag, string path)
+    /// <summary>Último fusermount (para <see cref="Diagnostico"/>).</summary>
+    static volatile string _ultimoFusermount = "nenhum";
+
+    /// <summary>
+    /// Executa fusermount3 (ou fusermount) e devolve o código de saída e o stderr. rc -1 = não terminou em 10 s;
+    /// 127 = nenhum dos dois instalado.
+    /// </summary>
+    internal static (int rc, string stderr) RunFusermount(string flag, string path)
     {
         foreach (var bin in new[] { "fusermount3", "fusermount" })
         {
@@ -878,12 +885,28 @@ public static unsafe class FuseHost
                 var psi = new System.Diagnostics.ProcessStartInfo(bin) { RedirectStandardError = true, RedirectStandardOutput = true };
                 psi.ArgumentList.Add(flag);
                 psi.ArgumentList.Add(path);
-                using var p = System.Diagnostics.Process.Start(psi);
-                p?.WaitForExit(10_000);
-                return;
+                using var p = System.Diagnostics.Process.Start(psi)!;
+                var err = p.StandardError.ReadToEndAsync();
+                _ = p.StandardOutput.ReadToEndAsync();
+                var rc = p.WaitForExit(10_000) ? p.ExitCode : -1;
+                var stderr = err.Wait(1000) ? err.Result.Trim() : "";
+                _ultimoFusermount = $"{bin} {flag}: rc={rc}{(stderr.Length > 0 ? " (" + stderr + ")" : "")}";
+                return (rc, stderr);
             }
             catch (System.ComponentModel.Win32Exception) { }
         }
+        _ultimoFusermount = $"fusermount {flag}: não encontrado";
+        return (127, "fusermount3/fusermount não encontrado");
+    }
+
+    static bool EmProcMounts(string mountPoint)
+    {
+        try
+        {
+            var full = mountPoint.TrimEnd('/');
+            return File.ReadLines("/proc/self/mounts").Any(l => l.Split(' ') is { Length: > 2 } p && p[1].Replace("\\040", " ") == full);
+        }
+        catch (IOException) { return false; }
     }
 
     /// <summary>
@@ -940,6 +963,8 @@ public static unsafe class FuseHost
         }
 
         var notificacoes = new KernelNotifications(fs, _inodes, se);
+        _notificacoes = notificacoes;
+        _fase = "montado (loop iniciando)";
         var tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var thread = new Thread(() =>
         {
@@ -947,18 +972,22 @@ public static unsafe class FuseHost
             fuse_loop_cfg_set_max_threads(cfg, (uint)maxThreads);
             try
             {
+                _fase = "loop rodando";
                 var rc = fuse_session_loop_mt(se, cfg);
                 Log?.Invoke($"Loop FUSE terminou (rc={rc})");
             }
             finally
             {
+                _fase = "loop retornou; esperando respostas em voo";
                 fuse_loop_cfg_destroy(cfg);
                 // Respostas assíncronas ainda pendentes escrevem no fd da sessão: destruir antes delas seria
                 // escrever num fd fechado (ou reaproveitado por outro arquivo).
                 var deadline = Environment.TickCount64 + 15_000;
                 while (Volatile.Read(ref _inflight) > 0 && Environment.TickCount64 < deadline) Thread.Sleep(20);
                 var pending = Volatile.Read(ref _inflight);
+                _fase = "encerrando fuse-notify";
                 var notificacoesEncerradas = notificacoes.Stop();
+                _fase = "destruindo a sessão";
                 lock (MountLock)
                 {
                     // zera antes de destruir: Unmount não pode chamar fuse_session_exit numa sessão liberada
@@ -973,6 +1002,7 @@ public static unsafe class FuseHost
                     }
                 }
                 FreeArgs();
+                _fase = pending > 0 || !notificacoesEncerradas ? "terminado (sessão vazada)" : "terminado";
                 tcs.TrySetResult();
             }
         })
@@ -981,7 +1011,31 @@ public static unsafe class FuseHost
         return tcs.Task;
     }
 
-    /// <summary>Desmonta (faz o loop terminar).</summary>
+    static volatile string _fase = "nunca montado";
+    static volatile string? _ultimoPonto;
+    static KernelNotifications? _notificacoes;
+
+    /// <summary>
+    /// Estado do FUSE para mensagens de falha (testes) e log: fase do loop, respostas em voo, threads do SlowOps,
+    /// fila do fuse-notify, último fusermount e se o ponto ainda aparece em /proc/self/mounts. Não pega lock.
+    /// </summary>
+    public static string Diagnostico()
+    {
+        var ponto = MountPoint ?? _ultimoPonto;
+        return $"FUSE: fase={_fase}; _inflight={Volatile.Read(ref _inflight)}; {SlowOps.Diagnostico()}; " +
+               $"fuse-notify pendentes={_notificacoes?.Pendentes ?? 0}; último fusermount={_ultimoFusermount}; " +
+               $"ponto={ponto ?? "-"} em /proc/self/mounts={(ponto != null && EmProcMounts(ponto) ? "sim" : "não")}";
+    }
+
+    /// <summary>Prazo das novas tentativas de <c>fusermount -u</c> com a montagem ocupada antes do <c>-uz</c>.</summary>
+    public static TimeSpan PrazoDesmontarOcupada { get; set; } = TimeSpan.FromSeconds(3);
+
+    /// <summary>
+    /// Desmonta e faz o loop terminar. Montagem ocupada (processo com cwd/arquivo aberto lá dentro: EBUSY): registra
+    /// rc + stderr, acorda o loop (na libfuse 3.14 o fuse_session_exit só marca a saída; o loop_mt fica no sem_wait
+    /// até um trabalhador receber uma requisição), tenta de novo por <see cref="PrazoDesmontarOcupada"/> e então
+    /// desmonta com <c>-uz</c> (lazy: some do namespace; o kernel solta quando o último processo sair).
+    /// </summary>
     public static void Unmount()
     {
         string? mp;
@@ -989,8 +1043,42 @@ public static unsafe class FuseHost
         {
             mp = MountPoint;
             if (_session == IntPtr.Zero || mp == null) return;
+            _ultimoPonto = mp;
+            _fase = "desmontando (fuse_session_exit)";
             fuse_session_exit(_session); // só marca o loop para sair; a destruição acontece na thread do loop
         }
-        RunFusermount("-u", mp);
+        var (rc, err) = RunFusermount("-u", mp);
+        if (rc == 0) return;
+        Log?.Invoke($"FUSE: fusermount -u {mp} falhou (rc={rc}): {err}");
+        AcordarLoop(mp);
+        var prazo = Environment.TickCount64 + (long)PrazoDesmontarOcupada.TotalMilliseconds;
+        while (EmProcMounts(mp) && Environment.TickCount64 < prazo)
+        {
+            Thread.Sleep(250);
+            if ((rc = RunFusermount("-u", mp).rc) == 0) return;
+        }
+        if (!EmProcMounts(mp)) return; // o loop desmontou ao sair (fuse_session_unmount/auto_unmount)
+        (rc, err) = RunFusermount("-uz", mp);
+        Log?.Invoke(rc == 0
+            ? $"FUSE: montagem ocupada em {mp}; desmontada com fusermount -uz (some quando o último processo sair)"
+            : $"FUSE: fusermount -uz {mp} falhou (rc={rc}): {err}");
+    }
+
+    /// <summary>
+    /// Uma requisição qualquer faz um trabalhador do loop sair do read() de /dev/fuse, ver a sessão encerrada e
+    /// dar sem_post (libfuse 3.14). Lookup de nome único: nunca vem do cache negativo do kernel. Em outra thread
+    /// com prazo — se o loop estiver travado, quem desmonta não pode travar junto.
+    /// </summary>
+    static void AcordarLoop(string mp)
+    {
+        var nome = Path.Combine(mp, ".craftdriver-acordar-" + Guid.NewGuid().ToString("N"));
+        var t = new Thread(() =>
+        {
+            try { _ = File.Exists(nome); }
+            catch { }
+        })
+        { IsBackground = true, Name = "fuse-acordar" };
+        t.Start();
+        t.Join(2000);
     }
 }

@@ -37,6 +37,9 @@ sealed class KernelNotifications
         _thread.Start();
     }
 
+    /// <summary>Invalidações ainda na fila (diagnóstico).</summary>
+    public int Pendentes => _fila.Count;
+
     void Enfileirar(Item? antes, Item? depois)
     {
         lock (_gate)

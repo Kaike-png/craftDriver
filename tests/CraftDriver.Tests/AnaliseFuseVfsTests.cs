@@ -60,7 +60,7 @@ public class AnaliseFuseVfsTests
         {
             h.Engine.Stop();
             FuseHost.Unmount();
-            Assert.True(await loop.WithinAsync(TimeSpan.FromSeconds(15)), "loop do FUSE não terminou após desmontar");
+            Assert.True(await loop.WithinAsync(TimeSpan.FromSeconds(15)), "loop do FUSE não terminou após desmontar: " + FuseHost.Diagnostico());
         }
     }
 
