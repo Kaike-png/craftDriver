@@ -176,6 +176,7 @@ public sealed partial class StateDb : IDisposable
             """);
         EnsureTrash(); // aqui (e não sob demanda): a Lixeira é lida pela conexão só de leitura, que não cria tabela
         InicializarVfs();
+        InicializarCopiasOffline();
         LoadExcluded();
         Exec("""
             CREATE TABLE IF NOT EXISTS shared_roots(

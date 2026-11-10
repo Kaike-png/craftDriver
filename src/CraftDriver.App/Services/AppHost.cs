@@ -240,6 +240,7 @@ public sealed class AppHost
             if (!Config.ReadOnly) TrySaveConfig("Configuração padrão");
         }
         Activity.Add(ActivityKind.Info, $"Iniciado. Tokens em: {Auth.CacheStorage}");
+        ImportOfflineCopies(); // antes do motor: o delta não pode adotar a versão da nuvem antes do envio do que mudou
         Engine.Start();
         Mount();
         Updates.Start();
@@ -309,6 +310,39 @@ public sealed class AppHost
         return false;
     }
 
+    /// <summary>
+    /// Ao encerrar, já desmontado: deixa os fixados na pasta real do ponto de montagem, para continuarem disponíveis
+    /// com o app fechado (docs/copias-offline.md). Montagem presa (pasta em uso) ou de outro processo: não grava.
+    /// </summary>
+    void MaterializeOfflineCopies()
+    {
+        if (Mounted || OfflineCopies.IsMountPoint(Config.MountPoint)) return;
+        var r = OfflineCopies.Materialize(Engine, Fs, Config.MountPoint);
+        if (r.Files > 0)
+            Activity.Log("INFO", $"Cópias offline: {r.Files} arquivo(s) fixado(s) em {Config.MountPoint}" + (r.Skipped > 0 ? $" ({r.Skipped} ainda não baixado(s) ficaram de fora)" : ""));
+    }
+
+    /// <summary>Na abertura: importa o que mudou nas cópias offline com o app fechado e tira as cópias da pasta.</summary>
+    void ImportOfflineCopies()
+    {
+        try
+        {
+            if (OfflineCopies.Import(Engine) is not { AnyChange: true } r) return;
+            var parts = new List<string>();
+            if (r.Edited > 0) parts.Add($"{r.Edited} editado(s)");
+            if (r.Created > 0) parts.Add($"{r.Created} novo(s)");
+            if (r.Moved > 0) parts.Add($"{r.Moved} movido(s)/renomeado(s)");
+            if (r.Unpinned > 0) parts.Add($"{r.Unpinned} apagado(s) da cópia (só desfixado(s); nada apagado na nuvem)");
+            if (parts.Count > 0) Activity.Add(ActivityKind.Info, "Alterações feitas com o craftDriver fechado: " + string.Join(", ", parts));
+            if (r.Recovered > 0)
+                Activity.Add(ActivityKind.Error, $"{r.Recovered} item(ns) da pasta offline não puderam ser sincronizados e foram movidos para {r.RecoveryDir}");
+        }
+        catch (Exception ex)
+        {
+            Activity.Add(ActivityKind.Error, "Não foi possível importar as alterações feitas com o app fechado: " + ex.Message);
+        }
+    }
+
     /// <summary>Motivo mostrado quando o fusermount -u recusa (EBUSY).</summary>
     public const string BusyMountText =
         "a pasta está em uso (um programa com arquivo aberto ou um terminal dentro dela). Feche-os e tente de novo";
@@ -344,7 +378,9 @@ public sealed class AppHost
         }
         await Step("timer", async () => { if (_sessionTimer != null) await _sessionTimer.DisposeAsync(); });
         await Step("atualizações", () => { Updates.Dispose(); return Task.CompletedTask; });
+        var wasMounted = Mounted; // só quem montou de verdade deixa cópias (testes/instância sem FUSE não mexem na pasta)
         await Step("desmontar", UnmountAsync);
+        if (wasMounted) await Step("cópias offline", () => { MaterializeOfflineCopies(); return Task.CompletedTask; });
         await Step("motor", () => { Engine.Stop(); return Task.CompletedTask; });
         await Step("IPC", () => { _ipc?.Dispose(); return Task.CompletedTask; });
         if (!Config.ReadOnly) TrySaveConfig("Configuração ao encerrar"); // somente leitura: já avisado ao iniciar

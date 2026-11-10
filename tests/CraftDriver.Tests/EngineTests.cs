@@ -9,8 +9,8 @@ namespace CraftDriver.Tests;
 /// <summary>Motor + VFS + Graph falso, em diretório temporário.</summary>
 public sealed class Harness : IDisposable
 {
-    public readonly string Dir = Path.Combine(Path.GetTempPath(), "craftdriver-test-" + Guid.NewGuid().ToString("N")[..8]);
-    public readonly FakeGraph Remote = new();
+    public readonly string Dir;
+    public readonly FakeGraph Remote;
     public readonly AppConfig Config;
     public readonly StateDb Db;
     public string DbPath => Path.Combine(Dir, "state.db");
@@ -19,8 +19,16 @@ public sealed class Harness : IDisposable
     public const string Name = "OneDrive - Teste";
 
     /// <param name="configure">Ajustes na configuração antes de o motor existir (ex.: cache em outro sistema de arquivos).</param>
-    public Harness(Action<AppConfig>? configure = null)
+    public Harness(Action<AppConfig>? configure = null) : this(configure, null, null, null) { }
+
+    /// <summary>
+    /// Reabrir o "app": mesma pasta (banco e cache) e mesma nuvem falsa de uma instância anterior já parada;
+    /// <paramref name="beforeStart"/> roda com o motor criado e ainda não iniciado (como o AppHost.Start).
+    /// </summary>
+    public Harness(Action<AppConfig>? configure, string? dir, FakeGraph? remote, Action<SyncEngine>? beforeStart)
     {
+        Dir = dir ?? Path.Combine(Path.GetTempPath(), "craftdriver-test-" + Guid.NewGuid().ToString("N")[..8]);
+        Remote = remote ?? new FakeGraph();
         // menor que o padrão (3 s) para a suíte ficar rápida, mas maior que a pausa do teste de salvamento
         Directory.CreateDirectory(Dir);
         Config = new AppConfig
@@ -35,6 +43,7 @@ public sealed class Harness : IDisposable
         Db = new StateDb(DbPath);
         Engine = new SyncEngine(Config, Db, new ContentCache(Config.CacheDir), new ActivityLog(Path.Combine(Dir, "log.txt")), _ => Remote);
         Fs = new VirtualFs(Engine);
+        beforeStart?.Invoke(Engine);
         Engine.Start();
         WaitUntil(() => Engine.GetDrive(FakeGraph.DriveId)?.LastSync != null, "carga inicial");
     }
@@ -84,10 +93,25 @@ public sealed class Harness : IDisposable
         return System.Text.Encoding.UTF8.GetString(buf, 0, n);
     }
 
+    /// <summary>Para o motor e fecha o banco sem apagar a pasta (para reabrir com o outro construtor).</summary>
+    public void Close()
+    {
+        if (_closed) return;
+        _closed = true;
+        Engine.Stop();
+        Thread.Sleep(300); // laços terminando a volta atual antes de fechar o banco
+        Db.Dispose();
+    }
+
+    bool _closed;
+
     public void Dispose()
     {
-        Engine.Stop();
-        Db.Dispose();
+        if (!_closed)
+        {
+            Engine.Stop();
+            Db.Dispose();
+        }
         try { Directory.Delete(Dir, true); } catch { }
     }
 }
