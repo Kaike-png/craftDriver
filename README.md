@@ -22,7 +22,7 @@ arquivos **sob demanda** (aparecem na pasta sem ocupar espaço e são baixados a
 | Conflitos | Edição dos dois lados → a sua versão vira `nome (conflito - host data).ext` (If-Match/eTag). Criação com mesmo nome idem |
 | Salvamento atômico | `sed -i`, gedit, kate, LibreOffice (temp + rename) viram **nova versão do mesmo item** (preserva histórico de versões) |
 | Sempre disponível / Liberar espaço | Pela interface, pela CLI ou pelo menu de contexto do Dolphin/Nautilus/Nemo |
-| Link de compartilhamento | Menu de contexto "Copiar link de compartilhamento" ou `craftdriver share [--edit] arquivo`: cria o link (`createLink`), copia (wl-copy no Wayland; xclip/xsel no X11) e notifica com "Abrir no navegador". Tenta "qualquer pessoa com o link"; se a organização proíbe, cai para "pessoas da organização" e avisa |
+| Link de compartilhamento | Menu de contexto "Copiar link de compartilhamento" ou `craftdriver share [--edit] arquivo`: cria o link (`createLink`), copia (wl-copy no Wayland; xclip/xsel no X11) e notifica com "Abrir no navegador". Conta pessoal: "qualquer pessoa com o link"; conta de trabalho/escola: "pessoas da organização" (`--anyone` pede "qualquer pessoa com o link" e dá erro se a política proibir). O escopo criado aparece no texto/notificação |
 | Versões anteriores | Menu "Versões anteriores…" ou `craftdriver versions arquivo`: janela com as versões da nuvem (data, tamanho, autor), **Restaurar** (vira a versão atual; nenhuma é apagada) e **Baixar cópia** (`nome (versão AAAA-MM-DD HHMM).ext` ao lado). Recusa restaurar se o arquivo tem alterações locais ainda não enviadas |
 | Lixeira | `craftdriver trash` / bandeja "Lixeira…": lista o que o craftDriver viu ser excluído; no OneDrive pessoal restaura pela API, nas contas corporativas/SharePoint abre a Lixeira no navegador (a API de lá ainda é beta) |
 | Limite de cache | LRU para arquivos não fixados (padrão 10 GB) |
@@ -120,7 +120,7 @@ craftdriver status [arquivos]  # status geral ou de itens
 craftdriver pin   <arquivos>   # sempre manter neste dispositivo
 craftdriver unpin <arquivos>   # liberar espaço (somente online)
 craftdriver deletes [confirm|restore]   # exclusão em massa aguardando confirmação
-craftdriver share [--edit] <arquivos>   # link de compartilhamento (copiado para a área de transferência)
+craftdriver share [--edit] [--anyone] <arquivos>   # link de compartilhamento (copiado; --anyone: qualquer pessoa, em conta de trabalho)
 craftdriver versions <arquivo> [--list | --restore=ID | --copy=ID]   # versões anteriores
 craftdriver trash [restore N | open]    # excluídos recentes / restaurar da Lixeira
 craftdriver update --check     # procura versão nova (0 = atualizado, 10 = há versão nova, 1 = erro)

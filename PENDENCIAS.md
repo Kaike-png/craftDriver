@@ -18,19 +18,27 @@ existente (DELETE com If-Match + Move com `fail` aceitos pelo SharePoint); `rm`+
 sem divergência; 6 arquivos Office da biblioteca com tamanho da Graph = bytes baixados; Lixeira lista (restaurar só pelo
 navegador, como documentado); envio de 150 MB interrompido por SIGKILL termina inteiro, 1 versão, sem duplicata.
 
-- [ ] **`craftdriver share` cria link "qualquer pessoa com o link" por padrão**, também em conta corporativa cujo tenant
+- [x] **`craftdriver share` cria link "qualquer pessoa com o link" por padrão**, também em conta corporativa cujo tenant
   permite (o de "organização" só entra se a política recusar). Para quem usa conta de trabalho o padrão deveria ser
   "organização", com `--anyone` explícito para o anônimo; a interface deveria mostrar o escopo antes de criar.
-- [ ] Retomada de envio não registra o offset retomado: na verificação real não deu para distinguir "retomou" de
+  **Feito (rodada 4):** trabalho/escola → "organization"; `--anyone` pede o anônimo e, se a política recusar, dá erro
+  claro (sem trocar de escopo em silêncio); pessoal continua anônimo. Sem diálogo (decisão): o escopo sai no texto/
+  notificação. O "Copiar link" das extensões em conta de trabalho passa a gerar link da organização. Provas:
+  `ItemActionsTests`, `ShareVersionsTests`, `AnaliseR4MotorGraphTests.Link_em_conta_de_trabalho…`; 6 mutações pegas.
+- [x] Retomada de envio não registra o offset retomado: na verificação real não deu para distinguir "retomou" de
   "recomeçou" (o resultado final está certo). Logar `Debug` com o offset de `NextExpectedOffsetAsync`.
+  **Feito (rodada 4):** `IUploadSessionStore.Resumed(offset)` (chamado na retomada e após 416) → Debug "Retomando envio
+  de X a partir de N bytes (de T)". Provas: `AnaliseR4RetomadaLogTests`, 2 testes em `GraphProtocolTests`; 3 mutações.
 
-**Ainda abertos:** instalação em modo usuário das extensões Thunar/PCManFM/Nautilus (§6); bandeja com PNG em vez de ícone
+**Ainda abertos:** bandeja com PNG em vez de ícone
 simbólico (§6); pacote Arch arm64 e app montando FUSE num ARM instalado (§9); Graph real: escrita numa biblioteca de equipe
 (só leitura testada), 416 em retry, `conflictBehavior=fail` num nome criado por outro dispositivo, sessão concluída, papéis
 `sp.*` (o único compartilhado da conta foi detectado como gravável — não conferido), delta por pasta (§11/§21); i18n (§18).
-**Teste instável a investigar:** `StreamingTests.Hash_final_divergente_nao_vira_cache_e_descarta_os_blocos` falhou 1× em ~9
+**Teste instável (resolvido na rodada 4):** `StreamingTests.Hash_final_divergente_nao_vira_cache_e_descarta_os_blocos` falhou 1× em ~9
 rodadas completas (só sob a suíte inteira; 30/30 isolado) e a mensagem não foi capturada. Não é a inscrição tardia na
-Atividade (descartado com atraso induzido de 1,5 s). Travamento do UiTests no CI da v0.2.0: o CI agora usa
+Atividade (descartado com atraso induzido de 1,5 s). **Causa (rodada 4):** corrida no TESTE — `ActivityLog.Add` enfileira e grava o log antes de disparar
+`Changed`; o teste conferia `Entries` e via a entrada antes do handler. Agora espera o handler; atraso de 300 ms entre log e
+`Changed` (antes RED determinístico) fica verde e avisar antes de descartar continua pego. Travamento do UiTests no CI da v0.2.0: o CI agora usa
 `--blame-hang-timeout`, que vai dizer qual teste é.
 
 ## 1. Bugs — perda/corrupção de dados
@@ -162,10 +170,11 @@ Atividade (descartado com atraso induzido de 1,5 s). Travamento do UiTests no CI
   data cria uma SEGUNDA versão a cada envio (3 edições de um .txt = 6 versões; o arquivo grande, por sessão, tinha
   1). Agora todo arquivo com conteúdo sobe por sessão, com a data no `createUploadSession` (POST + PUT: as mesmas
   2 chamadas); só o vazio usa PUT + PATCH. Conferido no real: 1 versão por envio e data de 2020 preservada.
-- [ ] Uploads/downloads seriais por drive; sem paralelismo nem limite de banda.
+- [x] Uploads/downloads seriais por drive; sem paralelismo nem limite de banda.
   **Feito:** downloads paralelos por drive (`DownloadConcurrency` = 4, sob demanda e fixados juntos) e limite de banda
   por drive e direção (`DownloadBytesPerSecond`/`UploadBytesPerSecond` no `config.json`, ≤ 0 = sem limite; sem tela).
-  **Pendente:** uploads paralelos — a fila só tem `PeekOp`, sem reserva atômica nem dependências pai/filho.
+  **Feito (depois):** uploads paralelos com `ClaimOps` (`ParallelUploads` = 3, dependência pai/filho e mesmo nome).
+  Prova: `FilaA2Tests.Uploads_paralelos…` (cai com `ParallelUploads` = 1), `IntegracaoFilaTests`.
 
 ## 4. Remover
 
@@ -236,7 +245,8 @@ Atividade (descartado com atraso induzido de 1,5 s). Travamento do UiTests no CI
 - [x] Thunar (`uca.xml`), PCManFM, extensão Nautilus real (não "Scripts").
   **Feito para os pacotes** (`.deb`/`.rpm`/tarball/`craftdriver-bin`): PCManFM com `ShowIfTrue` pelo xattr; Thunar com
   instalador `/usr/share/craftdriver/thunar/install-uca.py` (Thunar não filtra por caminho). Testados só sem os
-  programas. **Pendente:** instalação em modo usuário (sem pacote) desses três.
+  programas. Modo usuário: o `install-user.sh` copia os três do `share` do tarball, reescreve TryExec/Exec do PCManFM,
+  roda o `install-uca.py` e remove no `--uninstall` (conferido na rodada 4; só lido, sem os programas reais).
 - [x] `.desktop`: `Actions=` (Abrir pasta/Sincronizar/Pausar), AppStream metainfo, SVG em `hicolor/scalable`, ícone simbólico de bandeja.
   **Feito:** ações com o novo `craftdriver open`; metainfo `io.github.kaike_png.craftdriver` (validado com
   `appstreamcli`); SVGs scalable e `craftdriver-symbolic` nos pacotes. **Não feito:** a bandeja ainda usa os PNGs de
@@ -661,8 +671,9 @@ servidor de notificações real, Nautilus 42 e Dolphin reais.
   256 KiB por chamada; `Streaming.cs:336` 4 MiB por bloco. `ArrayPool`.
 - [x] Token MSAL por requisição — `GraphClient.cs:55` chama `_token` em todo `SendAsync` → `AcquireTokenSilent` → `MsalCacheHelper`
   relê o chaveiro (D-Bus/libsecret). Um bloco de streaming = uma ida ao chaveiro. HIPÓTESE no custo; cachear até perto de expirar.
-- [~] `InodeTable.Subtree` é varredura linear de `_byPath` (`InodeTable.cs:159-164`) por `unlink`/`rmdir`/`rename`: após um `find`
+- [x] `InodeTable.Subtree` é varredura linear de `_byPath` (`InodeTable.cs:159-164`) por `unlink`/`rmdir`/`rename`: após um `find`
   com 100 k caminhos, `rm -rf` de 10 k = 10 k × 100 k `StartsWith` sob o lock. Índice de filhos por diretório.
+  **Conferido (rodada 4):** `_kids` (índice de filhos) já existe e `Subtree` percorre por ele; o `rm -rf` real foi o §24.4.
 - [x] Lookup negativo não é cacheado — `FuseHost.cs:273-276` responde `ENOENT` em vez de `fuse_reply_entry` com `ino=0` +
   `entry_timeout` → `git status`, shells sondando PATH, Dolphin procurando `.directory` repetem o round-trip.
 - [x] `readdirplus` refaz um SELECT por entrada para achar o lid que `ReadDir` já tinha (`FuseHost.cs:582` → `Peek` → `Resolve`;
@@ -725,6 +736,8 @@ remoções numa tabela de 100 k: 16,7 s → 31 ms isolado, mas o `rm -rf` real n
   `NoTrayCloseWindow.axaml:12` com `IsDefault` em "Encerrar" (oposto à regra da `ConfirmWindow`); tema só aplica ao Salvar;
   glifos ☁✔⟳📁🗑 em texto dependem de fonte emoji (só "recommends") → ícones vetoriais; "Adicionar biblioteca" sem `CanExecute`
   (ativo sem conta corporativa); i18n por recursos (tudo pt-BR inline).
+  **Conferido (rodada 4):** tudo feito na interface redesenhada, exceto i18n (fora de escopo). Último glifo (✕ da
+  barra de mensagens) virou `PathIcon` (`Rodada4CUiTests`; "✕" entrou na lista do teste de glifos).
 - [~] Plugin do Dolphin em `.deb/.rpm` para distros KF6 (Fedora, Ubuntu 24.10+, Debian 13) compilado em contêiner no CI;
   `aarch64` no PKGBUILD dele; publicação automática no AUR (segredo SSH); metainfo `<releases>` gerada do CHANGELOG.
 
@@ -826,12 +839,16 @@ deps `libssl`/`krb5`, versão 0.2.0 coerente). O que segue é o que ainda diverg
   não reinvalida"**: a confirmação do upload (`SyncEngine.cs:2232-2242`, `Update` fora de `MutacaoLocal`) dispara
   `notify_inval_inode` para todo arquivo enviado — descarta páginas/atributos do arquivo recém-gravado. Inofensivo, mas é o
   "reenviar notify" que a nota diz evitar.
-- [~] **§17 "código morto removido"** — continuam: `StateDb.ConflictCount` (:918), `StateDb.PeekOp` (:700, só testes; duplica
+- [x] **§17 "código morto removido"** — continuam: `StateDb.ConflictCount` (:918), `StateDb.PeekOp` (:700, só testes; duplica
   `ReadOp` :788), `StateDb.HasChildren` (:345), `ContentCache.TotalBytesAsync` (`Support.cs:361`), `GraphDrive.OwnerName`
   (`Models.cs:73`), `GraphClient.ParseCanWrite` (:630, zero usos), `fields` (:200) duplica `ItemFields` (:600),
   `LoginErrors.cs:50/:56` testam `AADSTS90094/90095` duas vezes, `AppHost.CreateAsync()` sem parâmetros, `App.HostOrNull`.
   Novo estático mutável: `AuthService.HttpClientFactory` (`:49`). `_mtimeOverride` (`VirtualFs.cs:65,327,615,655,1140`) só é
   escrito, nunca lido — estado morto. Comentário `SyncEngine.cs:1841` "Stop aguarda Busy": nada aguarda `Busy`.
+  **Feito (rodada 4):** removidos `TotalBytesAsync` e `GraphDrive.OwnerName`; `PeekOp` fica como ajuda de teste mas
+  lê via `ReadOp` (sem SELECT/mapeamento duplicado); `OfflineImportResult.Unpinned` saiu. Mantidos de propósito:
+  `AppHost.CreateAsync()` (atalho dos UiTests) e `AuthService.HttpClientFactory` (costura do `FakeMicrosoftLogin`). O
+  resto já tinha saído.
 - [x] `docs/inicio-e-janela.md:17-18` ainda diz "o socket de IPC só abre depois do AppHost; abrir o app de novo durante a espera
   inicia uma segunda instância" — contradiz §15.3. `docs/desempenho-fuse.md` não lista `copy_file_range`/fila local dos SlowOps.
 - [x] **§15.4 SIGTERM** só vale depois de `OnShutdownSignal` definido (`App.axaml.cs:67`; `Program.cs:345` no headless, após a
@@ -940,10 +957,22 @@ do 409; Move/mkdir ainda esperam todos os envios em execução.
   recriado entre páginas → `Bind(path, inoVelho)` faz `Unbind` do inode novo → `getattr(inoNovo)` ENOENT até revalidação.
 - [x] HIPÓTESE: `lookup` de nome não-UTF-8 → `EILSEQ` em vez de `ENOENT` (`git status`/`find` com Latin-1 no índice podem tratar
   como erro). `touch ~/OneDrive` e `touch <raiz da drive>` retornam 0 sem efeito (`VirtualFs.cs:1124,1133`).
-- [ ] `Open`/`Create`/`SetAttr`/`Rename` avaliam `OpenNeedsNetwork`/`RenameNeedsNetwork` na thread do loop (`FuseHost.cs:395,448,
+- [x] `Open`/`Create`/`SetAttr`/`Rename` avaliam `OpenNeedsNetwork`/`RenameNeedsNetwork` na thread do loop (`FuseHost.cs:395,448,
   481,783`) = `Resolve` extra por operação; em `Create` o caminho não existe → caminhada completa não cacheada. Padrão Dolphin
   por arquivo (cache hit): ~2 SELECT + 3 stat sem plugin; ~6 SELECT + 4 stat com os 4 xattrs.
-- [ ] `Write` roda inline no loop (16 threads) e precisa de `Db.Lock`: transação longa do delta congela a montagem (conhecido).
+  **Feito (rodada 4):** create não consulta o banco para decidir rede (o kernel só chama create após lookup negativo);
+  `Insert` não sobe mais `ItemsVersion` (não há cache negativo no LRU; acerto com lid apagado volta à caminhada; apagar
+  PASTA sobe a geração via `DELETE … RETURNING is_dir`). Medido na montagem: create 25,9 → 12,0 SELECTs; open 5,0.
+  Open/SetAttr/Rename mantêm o Resolve (o estado pode mudar até o handler lento; acerto = 1 `Get`). Provas: `R24_9_*`
+  em `Rodada4FuseVfsTests`; mutações pegas.
+- [~] `Write` roda inline no loop (16 threads) e precisa de `Db.Lock`: transação longa do delta congela a montagem (conhecido).
+  **Rodada 4:** reproduzido (pwrite num fd aberto e em cache esperou 3 s com `Db.Lock` preso; stat também). A parte do
+  delta já estava resolvida: páginas aplicadas em lotes de `DeltaBatchSize` = 32 (maior transação medida 39 ms); prova
+  nova `R24_10_pagina_grande_do_delta_nao_segura_o_lookup` (4.000 itens: pior espera do getattr ~120–220 ms; com a
+  página numa transação só, 1.026 ms e o teste cai). **Pendente:** write sem `Db.Lock` — `R24_10_write…` está
+  `Explicit`. Desenho: trava e contador de escritas pendentes por Handle, gravados no flush/release/fsync ou quando o
+  motor pedir (antes do snapshot e no `CommitUploadAsync`, sob `Db.Lock`); `ApplyRemote` tratando escrita pendente como
+  Dirty; getattr mostrando o mtime pendente; `MoveOpenHandles` (412) zerando as pendentes sob a trava do handle.
 
 **Feito (rodada 3):** testes em `Rodada3FuseTests` (FUSE real, 3 rodadas). 24.1: worker relê a fila após `_idle++` e
 sai de `_threads` antes de reler no timeout (10 M iterações sem perda). 24.2: `Notificar` sem SQL para inodes que o
@@ -952,7 +981,7 @@ continuam (inerentes). 24.4: `RemoveItem` em transação, CTE só para pasta, re
 11,8 → 7,8 statements/arquivo; 1,4 → 0,9 s para 1.000). 24.5: `ItemsVersion` só em mudança de pasta/nome/tipo/drive,
 Insert, exclusão seletiva e rollback; fixados com geração própria. 24.6: `SetExcluded` emite `ItemChanged`. 24.7:
 `ReaddirEntry` revalida lid velho. 24.8: lookup/unlink/rmdir de nome não-UTF-8 = ENOENT; `touch` na raiz continua 0
-(EPERM quebraria `rsync -a`/`cp -a`; teste de caracterização). **Abertos:** 24.9 (Resolve extra no loop) e 24.10.
+(EPERM quebraria `rsync -a`/`cp -a`; teste de caracterização). 24.9 feito e 24.10 parcial na rodada 4.
 
 ## 25. Bugs — app, UI, integração
 
@@ -1058,7 +1087,7 @@ coverlet (134) e classes de UI que trocam `CRAFTDRIVER_HOME` fora da coleção s
 
 ## 28. Testes instáveis vistos no CI (a investigar)
 
-- [ ] `Rodada3FuseTests.R24_8_touch_na_raiz…` no executor arm64 (run 42297941034): "loop do FUSE não terminou após
+- [~] `Rodada3FuseTests.R24_8_touch_na_raiz…` no executor arm64 (run 42297941034): "loop do FUSE não terminou após
   desmontar" (15 s) e, em cascata, "Já montado" nos testes FUSE seguintes. A mesma árvore de FUSE passou no arm64 em
   outros 3 runs e 15× seguidas aqui (x64). Não reproduzido; hipótese a testar: desmontagem com a thread de
   notificações (`fuse-notify`) ou um worker do `SlowOps` ainda dentro da sessão. Se repetir, pegar o dump do
@@ -1070,6 +1099,20 @@ coverlet (134) e classes de UI que trocam `CRAFTDRIVER_HOME` fora da coleção s
   mensagem do teste; suspeitas: resposta assíncrona perdida (modelo de memória do ARM no `SlowOps`) ou
   `notify_inval_inode` preso numa página travada (modo cache de página da libfuse 3.14). Efeito no app: encerrar pode
   demorar até 30 s no arm64 e a sessão ser vazada (o processo sai mesmo assim). Release v0.3.0 saiu com rerun do job.
+  **Rodada 4:** não reproduzido (300× aqui e no ubuntu:24.04, inclusive com 1 CPU). As duas hipóteses caem (setattr
+  sem tamanho roda inline; mutações dos handlers não notificam). Mecanismo achado: montagem OCUPADA (cwd de um processo)
+  → `fusermount -u` falhava em silêncio e, na libfuse 3.14, `fuse_session_exit` não acorda o `sem_wait` do loop_mt →
+  "loop não terminou" + "Já montado" em cascata. **Feito:** `RunFusermount` devolve rc+stderr (vai para o log); o
+  `Unmount` acorda o loop com um lookup, tenta `-u` por 3 s e então `-uz`; `FuseHost.Diagnostico()` (fase do loop,
+  `_inflight`, pools do SlowOps, fila do fuse-notify, último fusermount, se ainda montado) na mensagem "loop do FUSE não
+  terminou" dos testes. Prova: `R28_desmontar_com_montagem_ocupada_forca_e_termina_o_loop` (3.14: 311 ms; sem acordar
+  o loop, 18 s e cai). Falta: saber o que deixa a montagem ocupada só no arm64 — o diagnóstico novo vai dizer no CI.
+- [ ] UiTests no arm64 (run 42850253097, 1ª tentativa): o primeiro `[AvaloniaFact]` (`SplashTests.Inicio_rapido…`) caiu
+  como "Test Case Cleanup Failure" dentro de `HeadlessUnitTestSession.EnsureIsolatedApplication`
+  (`DefaultRenderLoop.Add` → "a different thread owns it"), antes do corpo do teste. Visto 1 vez; o rerun passou e o x64
+  passou com a mesma árvore. Suspeita: `[Fact]` comum que toca estáticos do Avalonia (Dispatcher/AppHost) rodando em
+  paralelo com a criação da sessão headless. Se repetir, conferir quais `[Fact]` sem `[AvaloniaFact]` criam
+  `AppHost`/janela (`NotificationTests`, `Rodada3AppTests.S25_2`, `ShareVersionsTests`, `UpdateTests`).
 - [x] `DisplayScalingTests.Le_monitores…` (x64): servidor falso no ThreadPool demorava mais que os 500 ms do
   `HyprRequest` com o executor ocupado. **Feito:** prazo de 10 s só no teste (produção continua 500 ms e já trata o erro).
 
@@ -1083,9 +1126,13 @@ coverlet (134) e classes de UI que trocam `CRAFTDRIVER_HOME` fora da coleção s
   (`_deferredFolderDeletes`, aplicadas antes de gravar o deltaLink); o nome ocupado por uma pasta pendente é liberado na
   hora quando outro item vai usá-lo; reaparecer na mesma rodada cancela a exclusão. `DeltaExclusaoAdiadaTests` (6) com
   RED antes da correção e 5 mutações pegas.
-- [ ] Não coberto: pasta excluída e recriada com o mesmo nome na mesma rodada, com uma SUBPASTA movida da antiga para a
+- [x] Não coberto: pasta excluída e recriada com o mesmo nome na mesma rodada, com uma SUBPASTA movida da antiga para a
   nova — a liberação do nome apaga a antiga antes de o movimento chegar e a subpasta volta vazia. Raro; a saída seria
   ressincronizar a pasta (listagem por children) quando um item já conhecido volta como novo na mesma rodada.
+  **Feito (rodada 4)** de outro jeito (ressincronizar não serve: quando a subpasta chega, a linha dela já saiu do
+  banco): liberar o nome move a pasta antiga para um pai-limbo (`parent_lid = -RootLid`, só no banco, sem op, invisível
+  no caminho/listagem) e ela continua pendente; o fim da rodada apaga o que sobrou nela e também sobras de rodadas
+  interrompidas. Provas: `Subpasta_movida…`, `Rodada4LimboTests` (rodada interrompida; token expirado).
 
 ## 30. Fixados com o app encerrado
 
@@ -1102,12 +1149,20 @@ coverlet (134) e classes de UI que trocam `CRAFTDRIVER_HOME` fora da coleção s
   Depois limpa a pasta. Prova: `OfflineCopiesTests` (12, sem FUSE) + `OfflineCopiesFuseTests` (montagem real); 8
   mutações pegas. Encerrar só grava se a instância montou de verdade (`wasMounted`): os UiTests usam o `~/OneDrive`
   real como ponto de montagem.
-- [ ] Não coberto:
+- [~] Não coberto:
   - o app morto/travado não grava as cópias;
   - um arquivo apagado dentro de uma pasta fixada volta na próxima abertura;
   - suíte não rodada no contêiner Ubuntu 24.04 (libfuse 3.14) nem no CI.
 
-## Ordem sugerida (rodada 3 — concluída, exceto §24.9/§24.10)
+  **Rodada 4:** apagado com o app fechado (o próprio fixado ou algo dentro de pasta fixada) agora vira PENDÊNCIA
+  (`offline_deletions`; nada muda na nuvem nem no fixado) e o app PERGUNTA na abertura (decisão do usuário): "Apagar
+  no OneDrive" (fila normal → Lixeira) ou "Manter" (padrão; volta como antes). Esc/fechar não decide e a pergunta
+  volta na próxima abertura; minimizado na bandeja, notificação; `craftdriver status` mostra a contagem. Pasta apagada
+  inteira vira uma pendência só se tudo nela estava nas cópias. Provas: `OfflineCopiesTests` (pendência, Confirm,
+  Keep, item que sumiu), `Rodada4PUiTests` (9); mutações pegas. Suíte inteira verde no ubuntu:24.04 (libfuse 3.14).
+  **Continua:** app morto/travado não grava as cópias (limite; `docs/copias-offline.md`). CI ainda não rodou.
+
+## Ordem sugerida (rodada 3 — concluída; §24.9 e §24.10(b) feitos na rodada 4, §24.10(a) aberto)
 
 1. §24.1 (SlowOps — syscall pendurada), §25.1–25.3 (relaunch órfão, `.lock` em disco cheio, `install-user.sh` com app aberto)
    e §25.16 (rodar `-warnaserror` local e enviar os 5 commits para o CI).
