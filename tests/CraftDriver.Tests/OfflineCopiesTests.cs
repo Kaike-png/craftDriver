@@ -135,16 +135,67 @@ public class OfflineCopiesTests
     }
 
     [Fact]
-    public void Pasta_fixada_apagada_inteira_fica_so_desfixada()
+    public void Pasta_fixada_apagada_inteira_vira_uma_pendencia_e_continua_fixada()
     {
+        // decisão (rodada 4): apagado com o app fechado → perguntar; até lá nada muda na nuvem nem no fixado
         using var c = new Cenario();
         c.Encerrar();
         Directory.Delete(c.Real("/Fixada"), true);
         c.Abrir();
-        Assert.Equal(1, c.Importado!.Unpinned);
-        Assert.False(c.H.Fs.Resolve(c.H.P("/Fixada"))!.Value.Item!.Pinned);
+        Assert.Equal(1, c.Importado!.PendingDeletes);
+        Assert.True(c.Importado.AnyChange);
+        var fixada = c.H.Fs.Resolve(c.H.P("/Fixada"))!.Value.Item!;
+        Assert.True(fixada.Pinned);
+        var p = Assert.Single(OfflineDeletions.Pending(c.H.Engine));
+        Assert.Equal(new OfflineDeletion(fixada.Lid, "/" + Harness.Name + "/Fixada"), p);
         Assert.Equal("versão A", c.H.Remote.ReadText("/Fixada/a.txt"));
         Assert.Equal("versão C", c.H.Remote.ReadText("/Fixada/Sub/c.txt"));
+        // encerrar sem responder: nada da pasta pendente volta nas cópias
+        Assert.Equal(0, OfflineCopies.Materialize(c.H.Engine, c.H.Fs, c.Mount).Files);
+        Assert.False(Directory.Exists(c.Real("/Fixada")));
+
+        Assert.Equal(1, OfflineDeletions.ConfirmDelete(c.H.Engine, [fixada.Lid]));
+        c.H.Settle();
+        Assert.Null(c.H.Remote.ReadText("/Fixada/a.txt"));
+        Assert.DoesNotContain(c.H.Remote.ListPaths(), x => x.StartsWith("/Fixada", StringComparison.Ordinal));
+        Assert.Empty(OfflineDeletions.Pending(c.H.Engine));
+    }
+
+    [Fact]
+    public void Pasta_apagada_com_conteudo_que_nao_estava_nas_copias_vira_pendencia_por_arquivo()
+    {
+        // a pasta tinha algo que o usuário não viu nas cópias (só local, nunca copiado): não se pergunta pela pasta
+        // inteira, só pelos arquivos que ele de fato apagou
+        using var c = new Cenario();
+        c.H.WriteFile("/Fixada/Sub/nota:1.txt", "só local");
+        Assert.True(c.H.Fs.Resolve(c.H.P("/Fixada/Sub/nota:1.txt"))!.Value.Item!.LocalOnly);
+        c.Encerrar();
+        Directory.Delete(c.Real("/Fixada"), true);
+        c.Abrir();
+        var paths = OfflineDeletions.Pending(c.H.Engine).Select(d => d.Path).ToList();
+        string P(string rel) => "/" + Harness.Name + rel;
+        Assert.Equal([P("/Fixada/Sub/c.txt"), P("/Fixada/a.txt"), P("/Fixada/b.txt")], paths.Order(StringComparer.Ordinal));
+        Assert.Equal("só local", c.H.ReadFile("/Fixada/Sub/nota:1.txt"));
+    }
+
+    [Fact]
+    public void Pendencia_cujo_item_sumiu_da_nuvem_e_descartada_sem_erro()
+    {
+        using var c = new Cenario();
+        c.Encerrar();
+        File.Delete(c.Real("/Fixada/b.txt"));
+        File.Delete(c.Real("/Fixada/a.txt"));
+        c.Abrir();
+        var pend = OfflineDeletions.Pending(c.H.Engine);
+        Assert.Equal(2, pend.Count);
+        var b = pend.Single(p => p.Path.EndsWith("/b.txt", StringComparison.Ordinal)).Lid;
+        // outro dispositivo apagou os dois antes de o usuário responder
+        c.H.Remote.RemoteDelete("/Fixada/b.txt");
+        c.H.Remote.RemoteDelete("/Fixada/a.txt");
+        c.H.Settle();
+        Assert.Equal(0, OfflineDeletions.ConfirmDelete(c.H.Engine, [b]));
+        Assert.Empty(OfflineDeletions.Pending(c.H.Engine)); // a.txt sumiu: não aparece mais na pergunta
+        Assert.Equal(0, c.H.Db.PendingOps());
     }
 
     [Fact]

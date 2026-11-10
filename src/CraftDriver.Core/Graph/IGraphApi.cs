@@ -5,6 +5,9 @@ public interface IUploadSessionStore
 {
     string? Url { get; }
     void Save(string? url);
+    /// <summary>O envio retomou a sessão a partir de <paramref name="offset"/> bytes (no início do envio ou depois de um
+    /// 416 recusar uma parte já recebida). O GraphClient não registra nada; quem guarda a sessão decide (o motor loga em Debug).</summary>
+    void Resumed(long offset) { }
 }
 
 /// <summary>

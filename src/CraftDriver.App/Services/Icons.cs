@@ -37,6 +37,7 @@ public static class Icons
         ["play"] = "M8 5v14l11-7z",
         ["folder-open"] = "M20 6h-8l-2-2H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2zm0 12H4V8h16v10z",
         ["chevron"] = "M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z",
+        ["close"] = "M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z",
     };
 
     static readonly Dictionary<string, Geometry> Cache = new();
@@ -60,6 +61,7 @@ public static class Icons
     public static Geometry Account => Get("account");
     public static Geometry Business => Get("business");
     public static Geometry Chevron => Get("chevron");
+    public static Geometry Close => Get("close");
 
     /// <summary>Conversor chave → desenho para <c>PathIcon.Data</c>.</summary>
     public static readonly IValueConverter ToGeometry = new FuncValueConverter<string?, Geometry>(Get);

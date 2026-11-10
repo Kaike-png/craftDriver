@@ -75,20 +75,15 @@ public class PerformanceCoreTests(ITestOutputHelper output)
     }
 
     [Fact]
-    public async Task Total_do_cache_tem_api_off_thread_e_cancelavel_sem_valores_stale()
+    public void Total_do_cache_inclui_parciais_sem_valores_stale()
     {
         using var h = new Harness();
         var cache = h.Engine.Cache;
         File.WriteAllBytes(cache.PathFor("totals", 1), new byte[123]);
         File.WriteAllBytes(cache.NewTempFile(), new byte[77]);
-        Assert.Equal(200, await cache.TotalBytesAsync(TestContext.Current.CancellationToken));
+        Assert.Equal(200, cache.TotalBytes());
         cache.Delete("totals", 1);
-        Assert.Equal(77, await cache.TotalBytesAsync(TestContext.Current.CancellationToken));
-        using var cancelled = new CancellationTokenSource();
-        cancelled.Cancel();
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(async () =>
-            await cache.TotalBytesAsync(cancelled.Token));
-        Assert.Equal(77, cache.TotalBytes()); // API síncrona compatível, usada pelo motor
+        Assert.Equal(77, cache.TotalBytes());
     }
 
     [Theory]

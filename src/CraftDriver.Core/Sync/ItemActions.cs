@@ -9,8 +9,8 @@ namespace CraftDriver.Core.Sync;
 /// <summary>Erro de ação pedida pelo usuário (menu/CLI/janela) com mensagem pronta para mostrar.</summary>
 public sealed class ItemActionException(string message, Exception? inner = null) : Exception(message, inner);
 
-/// <summary>Resultado de "copiar link": <see cref="FellBackToOrganization"/> quando a política do tenant recusou "qualquer pessoa".</summary>
-public sealed record ShareResult(string Url, string Type, string Scope, bool FellBackToOrganization);
+/// <summary>Resultado de "copiar link": <see cref="Scope"/> é o escopo que o servidor efetivamente criou.</summary>
+public sealed record ShareResult(string Url, string Type, string Scope);
 
 /// <summary>
 /// Ações sob demanda sobre um item da nuvem: link de compartilhamento, versões anteriores e Lixeira.
@@ -48,37 +48,28 @@ public sealed class ItemActions(SyncEngine engine, VirtualFs fs)
     // ---------- link de compartilhamento ----------
 
     /// <summary>
-    /// Cria (ou reaproveita — a Graph devolve o link existente) um link de compartilhamento. Tenta primeiro
-    /// "qualquer pessoa com o link" (anonymous); em conta corporativa/escolar cuja política proíbe esse tipo,
-    /// cai para "pessoas da organização". No OneDrive pessoal "organization" não existe: o erro é repassado.
+    /// Cria (ou reaproveita — a Graph devolve o link existente) um link de compartilhamento. Conta de trabalho/escola:
+    /// "pessoas da organização" por padrão; <paramref name="anyone"/> pede "qualquer pessoa com o link" e, se a
+    /// política do tenant recusar, dá erro claro — sem trocar de escopo em silêncio. Conta pessoal: sempre "qualquer
+    /// pessoa com o link" (organization não existe no OneDrive pessoal).
     /// </summary>
-    public async Task<ShareResult> CreateShareLinkAsync(long lid, bool edit, CancellationToken ct)
+    public async Task<ShareResult> CreateShareLinkAsync(long lid, bool edit, bool anyone, CancellationToken ct)
     {
         var (item, drive) = Remote(lid, fileOnly: false);
         var type = edit ? "edit" : "view";
+        var personal = drive.Config.Kind == "personal";
+        var scope = personal || anyone ? "anonymous" : "organization";
         try
         {
-            try
-            {
-                var link = await drive.Api.CreateLinkAsync(drive.ApiDriveId, item.ItemId!, type, "anonymous", ct);
-                return new ShareResult(link.WebUrl, link.Type, link.Scope, false);
-            }
-            catch (GraphException g) when (drive.Config.Kind != "personal" && IsPolicyRefusal(g))
-            {
-                engine.Activity.Debug($"Link anônimo recusado para {item.Name} ({g.Message}); usando escopo da organização");
-                try
-                {
-                    var link = await drive.Api.CreateLinkAsync(drive.ApiDriveId, item.ItemId!, type, "organization", ct);
-                    return new ShareResult(link.WebUrl, link.Type, link.Scope, true);
-                }
-                catch (GraphException second)
-                {
-                    // o 400 genérico também cai aqui (o código de "política" não é documentado): se a 2ª tentativa
-                    // também falha, o motivo que interessa é o do pedido original
-                    engine.Activity.Debug($"Link da organização também recusado para {item.Name}: {second.Message}");
-                    throw g;
-                }
-            }
+            var link = await drive.Api.CreateLinkAsync(drive.ApiDriveId, item.ItemId!, type, scope, ct);
+            return new ShareResult(link.WebUrl, link.Type, link.Scope);
+        }
+        catch (GraphException g) when (!personal && anyone && IsPolicyRefusal(g))
+        {
+            engine.Activity.Debug($"Link para qualquer pessoa recusado para {item.Name}: {g.Message}");
+            throw new ItemActionException(
+                "Não foi possível criar o link para qualquer pessoa: a política da sua organização não permite esse tipo de link " +
+                $"({g.Message}). Sem --anyone, o link vale para pessoas da sua organização.", g);
         }
         catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
         {

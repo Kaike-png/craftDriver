@@ -223,7 +223,8 @@ sealed class Program
               craftdriver deletes [confirm|restore]   exclusão em massa retida
               craftdriver retry                tenta de novo o que falhou (lista em "status")
               craftdriver open                 abre a pasta sincronizada no gerenciador de arquivos
-              craftdriver share [--edit] <arquivos…>   cria link de compartilhamento e copia (--edit: pode editar)
+              craftdriver share [--edit] [--anyone] <arquivos…>   cria link de compartilhamento e copia (--edit: pode editar;
+                                               conta de trabalho/escola: pessoas da organização, --anyone: qualquer pessoa com o link)
               craftdriver versions <arquivo> [--list | --restore=ID | --copy=ID]   versões anteriores
               craftdriver trash [restore N | open]    excluídos recentes / restaurar da Lixeira
               craftdriver sync | pause | resume

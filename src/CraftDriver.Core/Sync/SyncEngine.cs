@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Globalization;
 using System.Net;
 using CraftDriver.Core.Auth;
 using CraftDriver.Core.Config;
@@ -1561,21 +1562,41 @@ public sealed class DriveSync
     /// <summary>Fim da rodada do delta: aplica as exclusões de pasta adiadas (o que saiu delas já foi movido). Sob Db.Lock.</summary>
     void ApplyDeferredFolderDeletes()
     {
-        if (_deferredFolderDeletes is not { Count: > 0 } pending) return;
-        foreach (var r in pending.Values.ToList())
-            if (Db.GetByRemote(DriveId, r.Id) is { } existing) RemoveRemoteDeleted(existing, r); // a pai pode ter levado junto
-        pending.Clear();
+        if (_deferredFolderDeletes is { Count: > 0 } pending)
+        {
+            foreach (var r in pending.Values.ToList())
+                if (Db.GetByRemote(DriveId, r.Id) is { } existing) RemoveRemoteDeleted(existing, r); // a pai pode ter levado junto
+            pending.Clear();
+        }
+        // Sobras do limbo: rodada anterior interrompida cuja repetição não trouxe mais a exclusão (ex.: token expirado →
+        // enumeração completa, que limpa as pendências). Tudo que ficou lá foi excluído na nuvem.
+        foreach (var orphan in Db.GetChildren(LimboLid))
+        {
+            if (Shared == null && orphan.ItemId != null) Db.AddTrash(DriveId, orphan.ItemId, orphan.Name, orphan.IsDir);
+            RemoveLocal(orphan);
+        }
     }
 
     /// <summary>
+    /// Pai "limbo" da drive (não existe como item, nunca é alcançado por caminho): onde fica a pasta excluída na nuvem cujo
+    /// nome foi ocupado por outra na mesma rodada do delta, até o fim da rodada (§29).
+    /// </summary>
+    long LimboLid => -RootLid;
+
+    /// <summary>
     /// Nome que <paramref name="r"/> vai ocupar está com uma pasta cuja exclusão foi adiada (ex.: excluída e recriada na
-    /// nuvem com o mesmo nome): aplica a exclusão agora, senão ficariam duas entradas com o mesmo nome. Sob Db.Lock.
+    /// nuvem com o mesmo nome): tira a pasta antiga do namespace (pai limbo) sem apagar a subárvore — o que for movido
+    /// para fora dela ainda nesta rodada sobrevive; o resto sai em <see cref="ApplyDeferredFolderDeletes"/>. Sem op
+    /// local (só banco). Se a rodada cair antes do fim, o deltaLink não avançou: a repetição traz a exclusão de novo. Sob Db.Lock.
     /// </summary>
     void ReleaseNameFromDeferredDelete(long parentLid, RemoteItem r)
     {
         if (_deferredFolderDeletes is not { Count: > 0 } pending) return;
-        if (Db.GetChildNoCase(parentLid, r.Name) is { ItemId: { } id } occupant && id != r.Id && pending.Remove(id, out var deleted))
-            RemoveRemoteDeleted(occupant, deleted);
+        if (Db.GetChildNoCase(parentLid, r.Name) is { ItemId: { } id } occupant && id != r.Id && pending.ContainsKey(id))
+        {
+            occupant.ParentLid = LimboLid;
+            Db.Update(occupant);
+        }
     }
 
     static bool SameRow(Item a, Item b) =>
@@ -2177,9 +2198,11 @@ public sealed class DriveSync
     sealed class RetryNowException : Exception;
 
     /// <summary>Sessão de upload guardada na própria operação da fila (sobrevive a reinícios).</summary>
-    sealed class OpUploadSession(StateDb db, long opId, string? url, string snapshot, long gen) : IUploadSessionStore
+    sealed class OpUploadSession(StateDb db, long opId, string? url, string snapshot, long gen, Action<long>? resumed = null) : IUploadSessionStore
     {
         public string? Url { get; private set; } = url;
+
+        public void Resumed(long offset) => resumed?.Invoke(offset);
 
         public void Save(string? newUrl)
         {
@@ -2393,9 +2416,11 @@ public sealed class DriveSync
             await CommitUploadAsync(item, op, already, gen, ct);
             return;
         }
-        var session = new OpUploadSession(Db, op.Id, resume ? op.UploadUrl : null, snap, gen);
+        var snapLength = new FileInfo(snap).Length;
+        var session = new OpUploadSession(Db, op.Id, resume ? op.UploadUrl : null, snap, gen, offset => Log.Debug(
+            string.Create(CultureInfo.InvariantCulture, $"Retomando envio de {item.Name} a partir de {offset} bytes (de {snapLength})")));
         var keepSnapshot = false;
-        var transfer = Log.StartTransfer(item.Name, new FileInfo(snap).Length, upload: true);
+        var transfer = Log.StartTransfer(item.Name, snapLength, upload: true);
         RemoteItem r;
         try
         {

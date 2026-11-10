@@ -1,0 +1,30 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="CraftDriver.App.Views.OfflineDeletionsWindow"
+        Title="craftDriver" Width="560" SizeToContent="Height" CanResize="False"
+        WindowStartupLocation="CenterOwner" ShowInTaskbar="False">
+    <!-- §30(a): apagar no OneDrive o que foi apagado das cópias offline com o app fechado? Manter = padrão seguro;
+         Esc/fechar não decide (a pergunta volta na próxima abertura) — por isso nenhum botão é IsCancel. -->
+    <StackPanel Margin="24,22,24,20" Spacing="12">
+        <TextBlock x:Name="TitleText" Classes="h2" TextWrapping="Wrap" />
+        <TextBlock x:Name="BodyText" TextWrapping="Wrap" />
+        <Border BorderThickness="1" BorderBrush="{DynamicResource CdLine}" Background="{DynamicResource CdSurface}" CornerRadius="6">
+            <ScrollViewer x:Name="PathsScroll" MaxHeight="220" HorizontalScrollBarVisibility="Auto"
+                          AutomationProperties.Name="Arquivos apagados">
+                <ItemsControl x:Name="PathsList" Margin="10,6">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate x:DataType="x:String">
+                            <TextBlock Text="{Binding}" Margin="0,2" />
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </ScrollViewer>
+        </Border>
+        <TextBlock Classes="muted" TextWrapping="Wrap"
+                   Text="Manter: os arquivos continuam no OneDrive e voltam para a pasta. Fechar esta janela sem escolher: a pergunta volta na próxima abertura." />
+        <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right" Margin="0,8,0,0">
+            <Button x:Name="DeleteButton" Classes="danger" Content="Apagar no OneDrive" />
+            <Button x:Name="KeepButton" Classes="accent" Content="Manter" IsDefault="True" />
+        </StackPanel>
+    </StackPanel>
+</Window>

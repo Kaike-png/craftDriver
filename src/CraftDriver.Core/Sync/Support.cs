@@ -363,9 +363,7 @@ public sealed class ContentCache
             if (!keep.Contains(f)) try { File.Delete(f); } catch (IOException) { }
     }
 
-    /// <summary>Varredura fora da thread chamadora (UI). O resultado inclui parciais e snapshots, sem total obsoleto.</summary>
-    public Task<long> TotalBytesAsync(CancellationToken ct = default) => Task.Run(() => ScanBytes(ct), ct);
-
+    /// <summary>Varre o cache (inclui parciais e snapshots, sem total obsoleto).</summary>
     public long TotalBytes() => ScanBytes(CancellationToken.None);
 
     long ScanBytes(CancellationToken ct)

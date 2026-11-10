@@ -19,24 +19,47 @@ public class ItemActionsTests
         using var h = new Harness();
         var n = h.Remote.RemoteCreate("/", "foto.jpg", "x");
         h.Settle();
-        var r = await Actions(h).CreateShareLinkAsync(Lid(h, "foto.jpg"), edit: false, CancellationToken.None);
+        var r = await Actions(h).CreateShareLinkAsync(Lid(h, "foto.jpg"), edit: false, anyone: false, CancellationToken.None);
         Assert.Equal($"https://1drv.ms/fake/{n.Id}?view&anonymous", r.Url);
-        Assert.False(r.FellBackToOrganization);
         Assert.Equal([(n.Id, "view", "anonymous")], h.Remote.LinkRequests);
     }
 
     [Fact]
-    public async Task Link_corporativo_cai_para_organizacao_quando_a_politica_recusa_anonimo()
+    public async Task Link_corporativo_com_anyone_pede_qualquer_pessoa_com_o_link()
+    {
+        using var h = new Harness();
+        h.Config.Drives[0].Kind = "business";
+        var n = h.Remote.RemoteCreate("/", "plano.xlsx", "x");
+        h.Settle();
+        var r = await Actions(h).CreateShareLinkAsync(Lid(h, "plano.xlsx"), edit: true, anyone: true, CancellationToken.None);
+        Assert.Equal("anonymous", r.Scope);
+        Assert.Equal([(n.Id, "edit", "anonymous")], h.Remote.LinkRequests);
+    }
+
+    [Fact]
+    public async Task Link_corporativo_com_anyone_recusado_pela_politica_da_erro_claro_sem_trocar_de_escopo()
     {
         using var h = new Harness();
         h.Config.Drives[0].Kind = "business";
         h.Remote.RefuseAnonymousLinks = true;
         var n = h.Remote.RemoteCreate("/", "plano.xlsx", "x");
         h.Settle();
-        var r = await Actions(h).CreateShareLinkAsync(Lid(h, "plano.xlsx"), edit: true, CancellationToken.None);
-        Assert.True(r.FellBackToOrganization);
-        Assert.Equal("organization", r.Scope);
-        Assert.Equal([(n.Id, "edit", "anonymous"), (n.Id, "edit", "organization")], h.Remote.LinkRequests);
+        var e = await Assert.ThrowsAsync<ItemActionException>(() =>
+            Actions(h).CreateShareLinkAsync(Lid(h, "plano.xlsx"), edit: true, anyone: true, CancellationToken.None));
+        Assert.Contains("qualquer pessoa", e.Message);
+        Assert.Contains("política da sua organização", e.Message);
+        Assert.Equal([(n.Id, "edit", "anonymous")], h.Remote.LinkRequests); // nada de cair para organization
+    }
+
+    [Fact]
+    public async Task Link_pessoal_com_anyone_continua_qualquer_pessoa()
+    {
+        using var h = new Harness(); // pessoal: organization não existe; --anyone não muda nada
+        var n = h.Remote.RemoteCreate("/", "foto.jpg", "x");
+        h.Settle();
+        var r = await Actions(h).CreateShareLinkAsync(Lid(h, "foto.jpg"), edit: false, anyone: true, CancellationToken.None);
+        Assert.Equal("anonymous", r.Scope);
+        Assert.Equal([(n.Id, "view", "anonymous")], h.Remote.LinkRequests);
     }
 
     [Fact]
@@ -46,7 +69,7 @@ public class ItemActionsTests
         h.Remote.RefuseAnonymousLinks = true;
         h.Remote.RemoteCreate("/", "a.txt", "x");
         h.Settle();
-        var e = await Assert.ThrowsAsync<ItemActionException>(() => Actions(h).CreateShareLinkAsync(Lid(h, "a.txt"), false, CancellationToken.None));
+        var e = await Assert.ThrowsAsync<ItemActionException>(() => Actions(h).CreateShareLinkAsync(Lid(h, "a.txt"), false, anyone: false, CancellationToken.None));
         Assert.Contains("sem permissão", e.Message);
         Assert.Single(h.Remote.LinkRequests);
     }
@@ -57,7 +80,7 @@ public class ItemActionsTests
         using var h = new Harness();
         h.Remote.BeforeUpload = (_, ct) => Task.Delay(Timeout.Infinite, ct); // envio nunca termina
         h.WriteFile("novo.txt", "rascunho");
-        var e = await Assert.ThrowsAsync<ItemActionException>(() => Actions(h).CreateShareLinkAsync(Lid(h, "novo.txt"), false, CancellationToken.None));
+        var e = await Assert.ThrowsAsync<ItemActionException>(() => Actions(h).CreateShareLinkAsync(Lid(h, "novo.txt"), false, anyone: false, CancellationToken.None));
         Assert.Contains("ainda não foi enviado", e.Message);
         Assert.Empty(h.Remote.LinkRequests);
     }

@@ -165,7 +165,7 @@ public sealed class FakeGraph : IGraphApi
     {
         if (Route(driveId) is { } o) return o.GetDriveAsync(driveId, ct);
         Check();
-        return Task.FromResult(new GraphDrive(DriveId, "OneDrive", "personal", null, "Teste", 5L << 30, 1L << 30));
+        return Task.FromResult(new GraphDrive(DriveId, "OneDrive", "personal", null, 5L << 30, 1L << 30));
     }
 
     public Task<RemoteItem> GetRootAsync(string driveId, CancellationToken ct)

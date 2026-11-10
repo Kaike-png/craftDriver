@@ -122,17 +122,39 @@ public class ShareVersionsHostTests
     }
 
     [Fact]
-    public async Task Share_corporativo_com_anonimo_proibido_avisa_que_o_link_e_da_organizacao()
+    public async Task Share_corporativo_usa_organizacao_por_padrao_e_diz_o_escopo()
     {
         using var env = new Env(kind: "business");
-        env.Remote.RefuseAnonymousLinks = true;
-        env.Remote.RemoteCreate("/", "orçamento.xlsx", "x");
+        var n = env.Remote.RemoteCreate("/", "orçamento.xlsx", "x");
         env.Start();
         var resp = await env.Ipc("share", "--notify", env.Path("orçamento.xlsx"));
         Assert.True(resp.Ok, resp.Text);
-        Assert.Contains("pessoas da sua organização", resp.Text);
-        Assert.Contains("desativados pela sua organização", Assert.Single(env.Sent).Body);
+        Assert.Equal([(n.Id, "view", "organization")], env.Remote.LinkRequests);
+        Assert.Contains("orçamento.xlsx: pessoas da sua organização", resp.Text);
+        Assert.Contains("orçamento.xlsx: pessoas da sua organização podem ver.", Assert.Single(env.Sent).Body);
         Assert.EndsWith("organization", Assert.Single(env.Clipboard));
+    }
+
+    [Fact]
+    public async Task Share_corporativo_anyone_pede_qualquer_pessoa_e_recusa_da_erro_claro()
+    {
+        using var env = new Env(kind: "business");
+        var n = env.Remote.RemoteCreate("/", "orçamento.xlsx", "x");
+        env.Start();
+        var ok = await env.Ipc("share", "--anyone", env.Path("orçamento.xlsx"));
+        Assert.True(ok.Ok, ok.Text);
+        Assert.Equal([(n.Id, "view", "anonymous")], env.Remote.LinkRequests);
+        Assert.Contains("qualquer pessoa com o link", ok.Text);
+
+        env.Remote.LinkRequests.Clear();
+        env.Clipboard.Clear();
+        env.Remote.RefuseAnonymousLinks = true;
+        var resp = await env.Ipc("share", "--anyone", "--notify", env.Path("orçamento.xlsx"));
+        Assert.False(resp.Ok, resp.Text);
+        Assert.Contains("política da sua organização", resp.Text);
+        Assert.Equal([(n.Id, "view", "anonymous")], env.Remote.LinkRequests); // não troca de escopo em silêncio
+        Assert.Empty(env.Clipboard);
+        Assert.Equal("craftDriver — link não criado", Assert.Single(env.Sent).Title);
     }
 
     [Fact]

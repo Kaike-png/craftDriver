@@ -181,8 +181,19 @@ public partial class App : Application
                 w => CloseToTrayBehavior.AskWithDialog(w, Host.Config.MountPoint),
                 QuitWithConfirmation);
 
-            if (showWindow) ShowWindow();
+            if (showWindow) ShowWindow(); // a janela pergunta sobre as exclusões offline (motor já iniciado)
+            else _vm.NotifyOfflineDeletionsAtStart(() => Dispatcher.UIThread.Post(() => { if (!_quitting) ShowWindow(); }));
         }
+    }
+
+    /// <summary>
+    /// §30(a): arquivos apagados das cópias offline com o app fechado — pergunta ao mostrar a janela (uma vez por
+    /// abertura; o VM ignora as chamadas seguintes). Depois de mostrar: o diálogo precisa de dona visível.
+    /// </summary>
+    async void OfferOfflineDeletions()
+    {
+        try { await _vm.OfferOfflineDeletionsAsync(); }
+        catch (Exception e) { Host.Activity.Add(ActivityKind.Error, "Falha ao perguntar sobre os arquivos apagados com o app fechado: " + e.Message); }
     }
 
     /// <summary>Ícone durante a inicialização: só "mostrar progresso" e "Sair".</summary>
@@ -302,12 +313,15 @@ public partial class App : Application
         {
             EnsureWindow().Show();
             _window!.Activate();
-            return;
         }
-        _window.Show();
-        if (_window.WindowState == WindowState.Minimized)
-            _window.WindowState = Host.Config.WindowMaximized ? WindowState.Maximized : WindowState.Normal;
-        _window.Activate();
+        else
+        {
+            _window.Show();
+            if (_window.WindowState == WindowState.Minimized)
+                _window.WindowState = Host.Config.WindowMaximized ? WindowState.Maximized : WindowState.Normal;
+            _window.Activate();
+        }
+        Dispatcher.UIThread.Post(OfferOfflineDeletions);
     }
 
     void OnShowRequested() => Dispatcher.UIThread.Post(() => { if (!_quitting) ShowWindow(); });

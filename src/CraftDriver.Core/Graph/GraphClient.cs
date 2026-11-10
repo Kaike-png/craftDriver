@@ -401,7 +401,11 @@ public sealed class GraphClient : IGraphApi
         long offset = 0;
         if (uploadUrl != null)
         {
-            if (await NextExpectedOffsetAsync(uploadUrl, ct) is { } next) offset = next;
+            if (await NextExpectedOffsetAsync(uploadUrl, ct) is { } next)
+            {
+                offset = next;
+                session!.Resumed(offset);
+            }
             else
             {
                 uploadUrl = null; // expirou ou já terminou
@@ -455,6 +459,7 @@ public sealed class GraphClient : IGraphApi
                     // a parte já tinha chegado (a resposta se perdeu e o reenvio foi recusado): pergunta onde seguir
                     offset = await NextExpectedOffsetAsync(uploadUrl, ct)
                              ?? throw new GraphException(HttpStatusCode.ServiceUnavailable, "uploadSessionLost", "Sessão de upload perdida; recomeçando");
+                    session?.Resumed(offset);
                     continue;
                 }
                 using (resp)

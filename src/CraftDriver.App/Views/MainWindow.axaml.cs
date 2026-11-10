@@ -98,6 +98,13 @@ public partial class MainWindow : Window
                 await dlg.ShowDialog(this);
                 return dlg.Result;
             };
+            vm.OfflineDeletionsRequested += async request =>
+            {
+                EnsureVisibleOwner();
+                var dlg = new OfflineDeletionsWindow(request);
+                await dlg.ShowDialog(this);
+                return dlg.Result;
+            };
             vm.PickSettingsFolderRequested += async title =>
             {
                 EnsureVisibleOwner();

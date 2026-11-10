@@ -397,4 +397,47 @@ public class GraphProtocolTests
         await Assert.ThrowsAnyAsync<IOException>(() => client.DownloadRangeAsync("d", "i", whole, 4000, 1500, null, CancellationToken.None));
         Assert.Equal(0, whole.Length);
     }
+
+    // ---------- rodada 4: a retomada avisa o armazenamento da sessão de onde seguiu (o motor registra em Debug) ----------
+
+    sealed class StoreComRetomada(string? url = null) : IUploadSessionStore
+    {
+        public string? Url { get; private set; } = url;
+        public readonly List<long> Retomadas = [];
+        public void Save(string? u) => Url = u;
+        public void Resumed(long offset) => Retomadas.Add(offset);
+    }
+
+    [Fact]
+    public async Task Retomada_de_sessao_guardada_avisa_o_offset_ao_armazenamento()
+    {
+        var (client, server, file, _) = Setup(5 * 1024 * 1024);
+        try
+        {
+            var store = new StoreComRetomada();
+            using var cts = new CancellationTokenSource();
+            var progress = new Action<long>(n => { if (n >= Chunk * 6) cts.Cancel(); });
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+                client.UploadAsync("d", "p", "f.bin", null, null, file, DateTimeOffset.UtcNow, progress, cts.Token, store));
+            Assert.Empty(store.Retomadas); // sessão nova não é retomada
+            var recebido = server.Received;
+            await client.UploadAsync("d", "p", "f.bin", null, null, file, DateTimeOffset.UtcNow, null, CancellationToken.None, store);
+            Assert.Equal([recebido], store.Retomadas);
+        }
+        finally { File.Delete(file); }
+    }
+
+    [Fact]
+    public async Task Recalculo_apos_416_avisa_o_offset_ao_armazenamento()
+    {
+        var (client, server, file, _) = Setup(5 * 1024 * 1024);
+        try
+        {
+            server.LoseResponseAtOffset = Chunk * 3; // gravou e respondeu 500 → reenvio recebe 416 → consulta a sessão
+            var store = new StoreComRetomada();
+            await client.UploadAsync("d", "p", "f.bin", null, null, file, DateTimeOffset.UtcNow, null, CancellationToken.None, store);
+            Assert.Equal([(long)Chunk * 4], store.Retomadas);
+        }
+        finally { File.Delete(file); }
+    }
 }

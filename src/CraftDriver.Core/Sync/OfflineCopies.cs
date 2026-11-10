@@ -7,9 +7,11 @@ namespace CraftDriver.Core.Sync;
 
 public sealed record OfflineMaterializeResult(int Files, int Dirs, int Skipped);
 
-public sealed record OfflineImportResult(int Edited, int Created, int Moved, int Unpinned, int Recovered, string? RecoveryDir)
+/// <param name="PendingDeletes">Apagados com o app fechado: aguardam o usuário confirmar a exclusão na nuvem
+/// (<see cref="OfflineDeletions"/>).</param>
+public sealed record OfflineImportResult(int Edited, int Created, int Moved, int PendingDeletes, int Recovered, string? RecoveryDir)
 {
-    public bool AnyChange => Edited + Created + Moved + Unpinned + Recovered > 0;
+    public bool AnyChange => Edited + Created + Moved + PendingDeletes + Recovered > 0;
 }
 
 /// <summary>
@@ -18,8 +20,8 @@ public sealed record OfflineImportResult(int Edited, int Created, int Moved, int
 /// montagem (reflink no btrfs/XFS: sem gastar espaço) e um manifesto no banco. Na abertura seguinte, ANTES de o motor
 /// começar (o delta não pode adotar a versão da nuvem antes: o envio com o eTag antigo é o que gera a cópia de
 /// conflito), <see cref="Import"/> compara com o manifesto: edições e arquivos/pastas novos entram no cache como
-/// alterações locais a enviar; arquivo movido/renomeado vira mover; apagado NÃO apaga na nuvem (só desfixa se era ele o
-/// fixado). Depois as cópias saem da pasta — a montagem volta a mostrar o conteúdo. O que não dá para importar (fora
+/// alterações locais a enviar; arquivo movido/renomeado vira mover; apagado NÃO apaga na nuvem: vira pendência que o
+/// usuário confirma ou recusa (<see cref="OfflineDeletions"/>), e enquanto pendente não volta nas cópias. Depois as cópias saem da pasta — a montagem volta a mostrar o conteúdo. O que não dá para importar (fora
 /// de uma pasta conhecida, compartilhado só leitura, link simbólico) vai para "&lt;montagem&gt; (recuperados)".
 /// </summary>
 public static class OfflineCopies
@@ -30,6 +32,8 @@ public static class OfflineCopies
     {
         var db = e.Db;
         if (db.OfflineCopies().Count > 0) return new(0, 0, 0); // cópias anteriores ainda não importadas: não misturar
+        // apagados com o app fechado aguardando confirmação: não voltam nas cópias (nem o que estiver dentro deles)
+        var pendingDeletes = db.OfflineDeletions().Select(d => d.Lid).ToHashSet();
         Directory.CreateDirectory(root);
         var entries = new Dictionary<string, OfflineCopy>(StringComparer.Ordinal);
         int files = 0, dirs = 0, skipped = 0;
@@ -61,8 +65,15 @@ public static class OfflineCopies
             var withPath = new List<(string rel, Item item)>();
             foreach (var x in subtree)
                 if (fs.PathOfLid(x.Lid) is { } rel) withPath.Add((rel, x));
+            var withheld = new List<string>();
             foreach (var (rel, x) in withPath.OrderBy(p => p.rel, StringComparer.Ordinal))
             {
+                if (pendingDeletes.Contains(x.Lid) || withheld.Any(w => rel.StartsWith(w + "/", StringComparison.Ordinal)))
+                {
+                    if (x.IsDir) withheld.Add(rel);
+                    else skipped++;
+                    continue;
+                }
                 try
                 {
                     EnsureAncestors(rel);
@@ -121,7 +132,7 @@ public static class OfflineCopies
         var present = onDisk.Select(d => d.rel).ToHashSet(StringComparer.Ordinal);
         var missingFiles = manifest.Where(m => !m.IsDir && !present.Contains(m.Rel)).ToList();
 
-        int edited = 0, created = 0, moved = 0, unpinned = 0;
+        int edited = 0, created = 0, moved = 0, pendingDeletes = 0;
         var done = new List<string>();      // importados ou iguais: saem da pasta real
         var recover = new List<string>();   // não importáveis: vão para a pasta de recuperados
 
@@ -211,15 +222,23 @@ public static class OfflineCopies
             }
         }
 
-        // apagado com o app fechado: a nuvem fica como está; só deixa de estar fixado se era ele o item fixado
+        // Apagado com o app fechado: a nuvem fica como está e o fixado também; vira pendência que o usuário confirma
+        // (vai para a Lixeira) ou recusa (volta). Pasta só vira UMA pendência se tudo que há nela estava nas cópias (o
+        // usuário viu o que apagou); senão, cada arquivo ausente vira a sua. Debaixo de uma pasta pendente, nada mais.
+        var copied = manifest.Select(m => m.Lid).ToHashSet();
+        var covered = new List<string>();
         foreach (var m in manifest.Where(m => !present.Contains(m.Rel) && (m.IsDir || missingFiles.Contains(m))))
+        {
+            if (covered.Any(c => m.Rel.StartsWith(c + "/", StringComparison.Ordinal))) continue;
             lock (db.Lock)
-                if (db.Get(m.Lid) is { Pinned: true } it)
-                {
-                    it.Pinned = false;
-                    db.Update(it);
-                    unpinned++;
-                }
+            {
+                if (db.Get(m.Lid) is not { } it || it.IsDir != m.IsDir) continue;
+                if (it.IsDir && !db.GetSubtree(it.Lid).All(x => copied.Contains(x.Lid))) continue; // filhos tratados um a um
+                db.AddOfflineDeletion(it.Lid, it.DriveId, m.Rel);
+                if (it.IsDir) covered.Add(m.Rel);
+                pendingDeletes++;
+            }
+        }
 
         // não importáveis (sem pasta conhecida acima, compartilhado só leitura, link simbólico, erro): saem do caminho
         // da montagem para uma pasta ao lado, em vez de ficarem escondidos debaixo dela
@@ -242,7 +261,7 @@ public static class OfflineCopies
         foreach (var (rel, _) in onDisk.Where(o => o.info is DirectoryInfo).OrderByDescending(o => o.rel.Length))
             try { Directory.Delete(Full(root, rel)); } catch (IOException) { /* sobrou algo: fica */ }
         db.ClearOfflineCopies();
-        return new(edited, created, moved, unpinned, recover.Count, recoveryDir);
+        return new(edited, created, moved, pendingDeletes, recover.Count, recoveryDir);
     }
 
     // ---------- auxiliares ----------

@@ -211,7 +211,7 @@ public class Secao18UiTests
 
     // ---------- ícones ----------
 
-    static readonly string[] EmojiGlyphs = ["☁", "✔", "⟳", "📁", "📄", "🗑", "⏸", "⚠", "✖", "➜"];
+    static readonly string[] EmojiGlyphs = ["☁", "✔", "⟳", "📁", "📄", "🗑", "⏸", "⚠", "✖", "➜", "✕"];
 
     /// <summary>Os glifos dependiam de fonte de emoji (só "recommends" nos pacotes): sem ela viravam quadrados.</summary>
     [AvaloniaFact]
@@ -222,6 +222,7 @@ public class Secao18UiTests
         host.Activity.Add(ActivityKind.Move, "Movido: a → b");
         host.Activity.Add(ActivityKind.Error, "Falha");
         var vm = new MainViewModel(host);
+        vm.Message = "Mensagem com a barra aberta (botão de fechar)";
         foreach (var tab in new[] { 0, 3 })
         {
             var w = Show(vm, tab);

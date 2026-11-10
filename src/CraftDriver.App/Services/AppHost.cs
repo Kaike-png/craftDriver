@@ -25,6 +25,13 @@ public sealed class AppHost
     /// <summary>Link de compartilhamento, versões anteriores e Lixeira.</summary>
     public ItemActions Actions { get; }
 
+    /// <summary>Exclusões das cópias offline aguardando confirmação (troque nos testes).</summary>
+    public IOfflineDeletionsProvider OfflineDeletions
+    {
+        get => field ??= new EngineOfflineDeletions(Engine);
+        set;
+    }
+
     /// <summary>Verificação e instalação de versões novas (docs/atualizacoes.md).</summary>
     public UpdateService Updates { get; }
 
@@ -332,7 +339,7 @@ public sealed class AppHost
             if (r.Edited > 0) parts.Add($"{r.Edited} editado(s)");
             if (r.Created > 0) parts.Add($"{r.Created} novo(s)");
             if (r.Moved > 0) parts.Add($"{r.Moved} movido(s)/renomeado(s)");
-            if (r.Unpinned > 0) parts.Add($"{r.Unpinned} apagado(s) da cópia (só desfixado(s); nada apagado na nuvem)");
+            if (r.PendingDeletes > 0) parts.Add($"{r.PendingDeletes} apagado(s) (aguardando você confirmar se apaga também no OneDrive)");
             if (parts.Count > 0) Activity.Add(ActivityKind.Info, "Alterações feitas com o craftDriver fechado: " + string.Join(", ", parts));
             if (r.Recovered > 0)
                 Activity.Add(ActivityKind.Error, $"{r.Recovered} item(ns) da pasta offline não puderam ser sincronizados e foram movidos para {r.RecoveryDir}");
@@ -742,18 +749,25 @@ public sealed class AppHost
         _ => scope,
     };
 
+    /// <summary>"qualquer pessoa … pode ver" × "pessoas da sua organização podem ver".</summary>
+    static string CanText(string scope, string type) =>
+        (scope == "anonymous" ? "pode " : "podem ") + (type == "edit" ? "editar" : "ver");
+
     /// <summary>
-    /// "craftdriver share [--edit] [--notify] arquivos…": cria o link (view, ou edit), copia para a área de
-    /// transferência e imprime. Com --notify (menus) a notificação sai daqui, com "Abrir no navegador".
+    /// "craftdriver share [--edit] [--anyone] [--notify] arquivos…": cria o link (view, ou edit), copia para a área de
+    /// transferência e imprime. Conta de trabalho/escola: pessoas da organização, ou qualquer pessoa com --anyone
+    /// (recusado pela política = erro, sem trocar de escopo). Com --notify (menus) a notificação sai daqui, com
+    /// "Abrir no navegador"; o escopo criado vai no texto.
     /// </summary>
     async Task<IpcResponse> ShareAsync(string[] args)
     {
         var edit = args.Contains("--edit");
+        var anyone = args.Contains("--anyone");
         var notify = args.Contains("--notify");
         // sem sessão gráfica (serviço do systemd) a cópia fica para o CLI, que roda na sessão do usuário
         var cliCopies = args.Contains(CliShare.CliCopiesFlag) && ClipboardService.Plan(ClipboardEnv).Count == 0;
         var paths = Paths(args);
-        if (paths.Length == 0) return new(false, "Informe o arquivo ou a pasta: craftdriver share [--edit] <caminho>");
+        if (paths.Length == 0) return new(false, "Informe o arquivo ou a pasta: craftdriver share [--edit] [--anyone] <caminho>");
         var lines = new List<string>();
         var links = new List<(string Name, ShareResult Link)>();
         var errors = new List<string>();
@@ -763,10 +777,9 @@ public sealed class AppHost
             if (item == null) { errors.Add($"{p}: fora da pasta sincronizada ou não encontrado"); continue; }
             try
             {
-                var r = await Actions.CreateShareLinkAsync(item.Lid, edit, Engine.Token);
+                var r = await Actions.CreateShareLinkAsync(item.Lid, edit, anyone, Engine.Token);
                 links.Add((item.Name, r));
-                lines.Add($"{r.Url}  ({item.Name}: {ScopeText(r.Scope)}, {(r.Type == "edit" ? "pode editar" : "somente leitura")})" +
-                          (r.FellBackToOrganization ? " — a política da organização não permite links para qualquer pessoa" : ""));
+                lines.Add($"{r.Url}  ({item.Name}: {ScopeText(r.Scope)}, {(r.Type == "edit" ? "pode editar" : "somente leitura")})");
             }
             catch (ItemActionException e) { errors.Add($"{p}: {e.Message}"); }
         }
@@ -791,8 +804,7 @@ public sealed class AppHost
                 var (name, link) = links[0];
                 void Open() => OpenUrl(link.Url);
                 var body = links.Count == 1
-                    ? $"{name}: {ScopeText(link.Scope)} {(link.Type == "edit" ? "pode editar" : "pode ver")}." +
-                      (link.FellBackToOrganization ? " Links para qualquer pessoa estão desativados pela sua organização." : "")
+                    ? $"{name}: {ScopeText(link.Scope)} {CanText(link.Scope, link.Type)}."
                     : $"{links.Count} links criados.";
                 if (clipError != null) body += $"\nNão copiado ({clipError}): {string.Join(' ', links.Select(l => l.Link.Url))}";
                 if (errors.Count > 0) body += "\n" + string.Join('\n', errors);
@@ -886,6 +898,9 @@ public sealed class AppHost
             $"Montagem: {(Mounted ? Config.MountPoint : "não montado" + (MountError != null ? " (" + MountError + ")" : ""))}",
             $"Operações pendentes: {Db.PendingOps()}",
         };
+        // §30(a): apagados das cópias offline com o app fechado; a decisão (apagar na nuvem ou manter) é na janela
+        if (OfflineDeletions.Pending().Count is > 0 and var offline)
+            lines.Add($"Exclusões aguardando confirmação: {offline} (abra o app)");
         var failures = Db.Failures();
         if (failures.Count > 0)
         {

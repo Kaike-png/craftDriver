@@ -200,7 +200,7 @@ public class Section12Tests
         using var h = new Harness();
         var (o, _) = ShortcutSetup(h, writable: false);
         var a = o.FindByPath("/Projeto/a.txt")!;
-        var r = await new ItemActions(h.Engine, h.Fs).CreateShareLinkAsync(Lid(h, "Trabalho/Projeto do Dono/a.txt"), edit: false, CancellationToken.None);
+        var r = await new ItemActions(h.Engine, h.Fs).CreateShareLinkAsync(Lid(h, "Trabalho/Projeto do Dono/a.txt"), edit: false, anyone: false, CancellationToken.None);
         Assert.Equal($"https://1drv.ms/fake/{a.Id}?view&anonymous", r.Url);
     }
 

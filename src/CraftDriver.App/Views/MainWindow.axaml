@@ -110,9 +110,12 @@
                                          AutomationProperties.LiveSetting="Polite" />
                     <Button Grid.Column="1" Content="Reiniciar agora" Command="{Binding RestartCommand}" IsVisible="{Binding RestartNeeded}"
                             Margin="8,0,0,0" VerticalAlignment="Center" />
-                    <Button Grid.Column="2" Content="✕" Command="{Binding ClearMessageCommand}" Margin="8,0,0,0" Padding="9,3"
+                    <Button Grid.Column="2" Command="{Binding ClearMessageCommand}" Margin="8,0,0,0" Padding="8"
                             Background="Transparent" BorderThickness="0"
-                            VerticalAlignment="Center" ToolTip.Tip="Fechar mensagem" AutomationProperties.Name="Fechar mensagem" />
+                            VerticalAlignment="Center" ToolTip.Tip="Fechar mensagem" AutomationProperties.Name="Fechar mensagem">
+                        <!-- vetor, não o glifo ✕: a Inter embutida não o tem e sem fonte de símbolos vira quadrado -->
+                        <PathIcon Data="{x:Static svc:Icons.Close}" Width="12" Height="12" AutomationProperties.AccessibilityView="Raw" />
+                    </Button>
                 </Grid>
             </Border>
         </views:NavShell.ContentFooter>

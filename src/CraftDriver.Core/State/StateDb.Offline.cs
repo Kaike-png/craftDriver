@@ -13,6 +13,8 @@ public sealed partial class StateDb
         CREATE TABLE IF NOT EXISTS offline_copies(
           rel TEXT PRIMARY KEY, root TEXT NOT NULL, lid INTEGER NOT NULL, is_dir INTEGER NOT NULL,
           size INTEGER NOT NULL, mtime_ticks INTEGER NOT NULL);
+        CREATE TABLE IF NOT EXISTS offline_deletions(
+          lid INTEGER PRIMARY KEY, drive_id TEXT NOT NULL, path TEXT NOT NULL, detected_at INTEGER NOT NULL);
         """);
 
     public List<OfflineCopy> OfflineCopies()
@@ -38,4 +40,25 @@ public sealed partial class StateDb
     });
 
     public void ClearOfflineCopies() => Exec("DELETE FROM offline_copies");
+
+    // ---------- exclusões feitas com o app fechado, aguardando a confirmação do usuário (docs/copias-offline.md) ----------
+
+    /// <summary>Registra (ou renova) a pendência: o item sumiu das cópias offline. Nada é apagado na nuvem por isso.</summary>
+    public void AddOfflineDeletion(long lid, string driveId, string path) =>
+        Exec("INSERT OR REPLACE INTO offline_deletions(lid,drive_id,path,detected_at) VALUES($l,$d,$p,$t)",
+            ("$l", lid), ("$d", driveId), ("$p", path), ("$t", DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()));
+
+    public List<(long Lid, string DriveId, string Path)> OfflineDeletions()
+    {
+        lock (Lock)
+        {
+            using var cmd = Cmd("SELECT lid,drive_id,path FROM offline_deletions ORDER BY path", []);
+            using var r = cmd.ExecuteReader();
+            var list = new List<(long, string, string)>();
+            while (r.Read()) list.Add((r.GetInt64(0), r.GetString(1), r.GetString(2)));
+            return list;
+        }
+    }
+
+    public void RemoveOfflineDeletion(long lid) => Exec("DELETE FROM offline_deletions WHERE lid=$l", ("$l", lid));
 }

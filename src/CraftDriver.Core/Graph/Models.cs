@@ -70,7 +70,7 @@ public sealed class RemoteItem
 
 public sealed record DeltaPage(IReadOnlyList<RemoteItem> Items, string? NextLink, string? DeltaLink);
 
-public sealed record GraphDrive(string Id, string Name, string DriveType, string? WebUrl, string? OwnerName, long QuotaTotal, long QuotaUsed)
+public sealed record GraphDrive(string Id, string Name, string DriveType, string? WebUrl, long QuotaTotal, long QuotaUsed)
 {
     public static GraphDrive FromJson(JsonElement e)
     {
@@ -80,13 +80,7 @@ public sealed record GraphDrive(string Id, string Name, string DriveType, string
             total = q.TryGetProperty("total", out var t) && t.ValueKind == JsonValueKind.Number ? t.GetInt64() : 0;
             used = q.TryGetProperty("used", out var u) && u.ValueKind == JsonValueKind.Number ? u.GetInt64() : 0;
         }
-        string? owner = null;
-        if (e.TryGetProperty("owner", out var o))
-        {
-            if (o.TryGetProperty("user", out var ou)) owner = ou.Str("displayName");
-            else if (o.TryGetProperty("group", out var og)) owner = og.Str("displayName");
-        }
-        return new GraphDrive(e.Str("id") ?? "", e.Str("name") ?? "", e.Str("driveType") ?? "", e.Str("webUrl"), owner, total, used);
+        return new GraphDrive(e.Str("id") ?? "", e.Str("name") ?? "", e.Str("driveType") ?? "", e.Str("webUrl"), total, used);
     }
 }
 

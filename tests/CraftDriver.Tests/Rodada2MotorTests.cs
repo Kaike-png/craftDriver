@@ -187,7 +187,7 @@ public class Rodada2MotorTests(ITestOutputHelper output)
     // ---------- 13.12 ----------
 
     [Fact]
-    public async Task S13_12_fallback_organization_mantem_o_primeiro_erro_se_os_dois_falham()
+    public async Task S13_12_anyone_recusado_mostra_o_erro_do_pedido_sem_tentar_organizacao()
     {
         using var h = new Harness(c => c.Drives[0].Kind = "business");
         h.Remote.RemoteCreate("/", "doc.txt", "x");
@@ -196,10 +196,11 @@ public class Rodada2MotorTests(ITestOutputHelper output)
             ? new GraphException(HttpStatusCode.BadRequest, "invalidRequest", "Data de expiração inválida (primeiro pedido)")
             : new GraphException(HttpStatusCode.Forbidden, "accessDenied", "Escopo organization indisponível (segundo pedido)");
         var item = h.Fs.Resolve(h.P("doc.txt"))!.Value.Item!;
-        var ex = await Assert.ThrowsAsync<ItemActionException>(() => new ItemActions(h.Engine, h.Fs).CreateShareLinkAsync(item.Lid, false, Ct));
+        var ex = await Assert.ThrowsAsync<ItemActionException>(() => new ItemActions(h.Engine, h.Fs).CreateShareLinkAsync(item.Lid, false, anyone: true, Ct));
+        // decisão do usuário (rodada 4): com --anyone não se troca de escopo em silêncio — nem uma 2ª tentativa
         Assert.Contains("Data de expiração inválida", ex.Message);
         Assert.DoesNotContain("Escopo organization indisponível", ex.Message);
-        Assert.Equal(new[] { "anonymous", "organization" }, h.Remote.LinkRequests.Select(x => x.Scope));
+        Assert.Equal(new[] { "anonymous" }, h.Remote.LinkRequests.Select(x => x.Scope));
     }
 
     // ---------- 13.13 ----------
