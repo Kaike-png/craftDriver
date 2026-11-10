@@ -960,4 +960,16 @@ public sealed class FakeGraph : IGraphApi
 
     /// <summary>Status da recusa do delta por pasta quando <see cref="SupportsFolderDelta"/> é false (padrão 400).</summary>
     public HttpStatusCode FolderDeltaRefusal = HttpStatusCode.BadRequest;
+
+    /// <summary>Move feito em outro dispositivo: como no OneDrive, o delta traz só o item movido, não os filhos dele.</summary>
+    public void RemoteMove(string path, string newParentPath)
+    {
+        lock (_lock)
+        {
+            var n = FindByPath(path)!;
+            n.ParentId = FindByPath(newParentPath)!.Id;
+            n.MetaVersion++;
+            n.Seq = ++_seq;
+        }
+    }
 }

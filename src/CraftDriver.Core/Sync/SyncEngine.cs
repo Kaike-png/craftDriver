@@ -1274,6 +1274,10 @@ public sealed class DriveSync
     // Commits que aconteceram depois do início desta enumeração (inclusive scans de sub-drives).
     HashSet<long>? _scanProtected;
     readonly ConcurrentDictionary<long, (string Parent, string Name)> _uploadNames = new();
+    // Exclusões remotas de PASTAS recebidas nesta rodada do delta, aplicadas só no fim dela (sob Db.Lock). O delta traz
+    // só o item movido, não os filhos, e não garante a ordem: aplicando a exclusão do pai antigo primeiro, a pasta que
+    // tinha saído dela voltava como nova e vazia, e os filhos nunca mais chegavam.
+    Dictionary<string, RemoteItem>? _deferredFolderDeletes;
 
     public async Task RunDeltaAsync(CancellationToken ct)
     {
@@ -1298,6 +1302,13 @@ public sealed class DriveSync
             await RunSharedScanAsync(ct);
             return;
         }
+        lock (Db.Lock) _deferredFolderDeletes = new();
+        try { await RunOwnDeltaAsync(ct); }
+        finally { lock (Db.Lock) _deferredFolderDeletes = null; }
+    }
+
+    async Task RunOwnDeltaAsync(CancellationToken ct)
+    {
         var link = Db.GetDrive(DriveId)?.DeltaLink;
         var full = link == null;
         if (full && Db.DeltaProgress(DriveId) == null) Db.BeginDeltaProgress(DriveId);
@@ -1321,6 +1332,7 @@ public sealed class DriveSync
                 full = true;
                 seen = new();
                 deferred.Clear();
+                lock (Db.Lock) _deferredFolderDeletes?.Clear(); // a enumeração completa + Sweep resolve as exclusões
                 Db.BeginDeltaProgress(DriveId);
                 continue;
             }
@@ -1372,6 +1384,10 @@ public sealed class DriveSync
 
             if (deferred.Count > 0)
                 Log.Debug($"[{Config.DisplayName}] {deferred.Count} itens sem pasta pai conhecida foram ignorados");
+            // antes de gravar o deltaLink: se cair aqui, a rodada inteira (com as exclusões) é reaplicada
+            await _mutate.WaitAsync(ct);
+            try { Db.InTransaction(ApplyDeferredFolderDeletes); }
+            finally { _mutate.Release(); }
             if (full && seen != null)
             {
                 await _mutate.WaitAsync(ct);
@@ -1409,15 +1425,18 @@ public sealed class DriveSync
         var before = existing?.Clone();
         if (r.IsDeleted)
         {
-            if (existing != null)
+            if (existing is { IsDir: true } && _deferredFolderDeletes != null)
             {
-                // excluído em outro lugar: dá para restaurar (só nas drives próprias — a API de restaurar é da própria drive)
-                if (Shared == null) Db.AddTrash(DriveId, r.Id, existing.Name, existing.IsDir);
-                RemoveLocal(existing);
+                // o que saiu dela pode vir depois nesta rodada (ver _deferredFolderDeletes)
+                _deferredFolderDeletes[r.Id] = r;
+                return true;
             }
+            if (existing != null) RemoveRemoteDeleted(existing, r);
             else if (Shared == null) RemoveShortcut(r.Id);
             return true;
         }
+        // voltou a aparecer na mesma rodada (ex.: restaurada da Lixeira): a exclusão anterior não vale mais
+        _deferredFolderDeletes?.Remove(r.Id);
         if (r.IsPackage) return true;
         if (r.IsRemoteShortcut) return ApplyShortcut(r);
 
@@ -1437,6 +1456,7 @@ public sealed class DriveSync
                 Db.DeferUploadDelta(DriveId, uploading.Key, r);
                 return true;
             }
+            ReleaseNameFromDeferredDelete(parent.Lid, r);
             // item local ainda não enviado com o mesmo nome → conflito real
             var clash = Db.GetChildNoCase(parent.Lid, r.Name);
             if (!replayUpload && clash != null && Db.HasRunningUpload(clash.Lid))
@@ -1490,6 +1510,7 @@ public sealed class DriveSync
         var pendingMove = HasPendingOp(existing.Lid, OpKind.Move);
         if (!pendingMove && (existing.ParentLid != parent.Lid || existing.Name != r.Name))
         {
+            ReleaseNameFromDeferredDelete(parent.Lid, r);
             var clash = Db.GetChild(parent.Lid, r.Name);
             if (clash != null && clash.Lid != existing.Lid && clash.ItemId == null)
             {
@@ -1527,6 +1548,34 @@ public sealed class DriveSync
         // de caminhos do FUSE (ItemsVersion)
         if (!SameRow(before!, existing)) Db.Update(existing);
         return true;
+    }
+
+    /// <summary>Exclusão remota: some daqui e vai para a lista de restauráveis (só nas drives próprias — a API de
+    /// restaurar é da própria drive). Sob Db.Lock.</summary>
+    void RemoveRemoteDeleted(Item existing, RemoteItem r)
+    {
+        if (Shared == null) Db.AddTrash(DriveId, r.Id, existing.Name, existing.IsDir);
+        RemoveLocal(existing);
+    }
+
+    /// <summary>Fim da rodada do delta: aplica as exclusões de pasta adiadas (o que saiu delas já foi movido). Sob Db.Lock.</summary>
+    void ApplyDeferredFolderDeletes()
+    {
+        if (_deferredFolderDeletes is not { Count: > 0 } pending) return;
+        foreach (var r in pending.Values.ToList())
+            if (Db.GetByRemote(DriveId, r.Id) is { } existing) RemoveRemoteDeleted(existing, r); // a pai pode ter levado junto
+        pending.Clear();
+    }
+
+    /// <summary>
+    /// Nome que <paramref name="r"/> vai ocupar está com uma pasta cuja exclusão foi adiada (ex.: excluída e recriada na
+    /// nuvem com o mesmo nome): aplica a exclusão agora, senão ficariam duas entradas com o mesmo nome. Sob Db.Lock.
+    /// </summary>
+    void ReleaseNameFromDeferredDelete(long parentLid, RemoteItem r)
+    {
+        if (_deferredFolderDeletes is not { Count: > 0 } pending) return;
+        if (Db.GetChildNoCase(parentLid, r.Name) is { ItemId: { } id } occupant && id != r.Id && pending.Remove(id, out var deleted))
+            RemoveRemoteDeleted(occupant, deleted);
     }
 
     static bool SameRow(Item a, Item b) =>
