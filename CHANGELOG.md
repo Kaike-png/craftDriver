@@ -19,6 +19,8 @@ acrescentada automaticamente.
   Detalhes em `docs/copias-offline.md`.
 
 ### Correções
+- **Abrir na web** da conta pessoal abria uma página "File Not Found" (a Microsoft passou a informar um endereço de
+  conteúdo para a pasta); agora abre o onedrive.live.com.
 - Pasta movida em outro dispositivo para fora de uma pasta que foi excluída logo depois não aparece mais vazia aqui
   (o conteúdo dela sumia da montagem até uma ressincronização completa).
 

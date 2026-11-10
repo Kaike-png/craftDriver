@@ -256,6 +256,16 @@ public class ItemActionsTests
     [InlineData("business", null, "https://onedrive.live.com/?v=recyclebin")]
     public void Url_da_lixeira_no_navegador(string kind, string? webUrl, string expected) =>
         Assert.Equal(expected, ItemActions.RecycleBinUrl(new CraftDriver.Core.Config.DriveConfig { Kind = kind, WebUrl = webUrl }));
+
+    [Theory]
+    [InlineData("personal", "https://my.microsoftpersonalcontent.com/personal/4f28e9287facea47/Documents", "https://onedrive.live.com/")]
+    [InlineData("personal", null, "https://onedrive.live.com/")]
+    [InlineData("personal", "https://onedrive.live.com/?cid=4f28e9287facea47", "https://onedrive.live.com/?cid=4f28e9287facea47")]
+    [InlineData("business", "https://empresa-my.sharepoint.com/personal/u_empresa_com/Documents", "https://empresa-my.sharepoint.com/personal/u_empresa_com/Documents")]
+    [InlineData("documentLibrary", "https://empresa.sharepoint.com/sites/Setor/TI", "https://empresa.sharepoint.com/sites/Setor/TI")]
+    [InlineData("business", null, null)]
+    public void Url_da_biblioteca_no_navegador(string kind, string? webUrl, string? expected) =>
+        Assert.Equal(expected, ItemActions.BrowserUrl(new CraftDriver.Core.Config.DriveConfig { Kind = kind, WebUrl = webUrl }));
 }
 
 /// <summary>Protocolo HTTP de createLink, versões e restore contra um servidor falso que grava os pedidos.</summary>

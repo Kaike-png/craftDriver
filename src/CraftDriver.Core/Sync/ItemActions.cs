@@ -268,6 +268,18 @@ public sealed class ItemActions(SyncEngine engine, VirtualFs fs)
         return $"{u.Scheme}://{u.Host}{site}/_layouts/15/RecycleBin.aspx";
     }
 
+    /// <summary>
+    /// "Abrir na web" da biblioteca. OneDrive pessoal: a Graph passou a devolver como webUrl da drive um endereço de
+    /// conteúdo (my.microsoftpersonalcontent.com/personal/{cid}/Documents) que no navegador dá "File Not Found" —
+    /// abre onedrive.live.com (endereços antigos de lá continuam valendo). Demais: o webUrl da drive.
+    /// </summary>
+    public static string? BrowserUrl(DriveConfig d)
+    {
+        if (d.Kind != "personal") return d.WebUrl;
+        return Uri.TryCreate(d.WebUrl, UriKind.Absolute, out var u) && u.Host.Equals("onedrive.live.com", StringComparison.OrdinalIgnoreCase)
+            ? d.WebUrl : "https://onedrive.live.com/";
+    }
+
     /// <summary>Tira um item da Lixeira (OneDrive pessoal) e pede um delta para ele voltar à pasta local.</summary>
     public async Task<string> RestoreFromTrashAsync(long trashId, CancellationToken ct)
     {

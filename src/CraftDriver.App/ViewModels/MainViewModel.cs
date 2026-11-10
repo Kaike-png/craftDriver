@@ -113,7 +113,7 @@ public sealed partial class DriveVm(MainViewModel main, DriveConfig cfg) : ViewM
     partial void OnEnabledChanged(bool value) => main.SetDriveEnabled(this, value);
 
     [RelayCommand] Task Remove() => main.RemoveDriveAsync(this);
-    [RelayCommand] void OpenWeb() { if (Config.WebUrl != null) DesktopIntegration.OpenPath(Config.WebUrl); }
+    [RelayCommand] void OpenWeb() { if (ItemActions.BrowserUrl(Config) is { } url) DesktopIntegration.OpenPath(url); }
     [RelayCommand] void OpenFolder() => DesktopIntegration.OpenPath(Path.Combine(main.Host.Config.MountPoint, Config.DisplayName.Replace('/', '-')));
 }
 
