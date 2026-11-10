@@ -6,6 +6,8 @@ acrescentada automaticamente.
 
 ## [Não lançado]
 
+## [0.4.0] - 2026-11-10
+
 ### Novidades
 - **Interface redesenhada**: navegação numa barra lateral com a marca e o estado da sincronização sempre à vista
   (a cor do quadro é a mesma do ícone da bandeja), Sincronizar e Pausar à mão em qualquer aba, e Problemas/Conflitos
@@ -15,14 +17,25 @@ acrescentada automaticamente.
 - **Itens fixados continuam na pasta com o craftDriver encerrado**, como no OneDrive do Windows. Ao encerrar, os
   arquivos marcados como "Sempre manter neste dispositivo" ficam em `~/OneDrive` (no btrfs/XFS sem ocupar espaço a
   mais). Edições, arquivos novos e renomeações feitos com o app fechado são enviados na próxima abertura. Se o arquivo
-  também mudou na nuvem, as duas versões ficam (cópia de conflito). Apagar com o app fechado **não** apaga na nuvem.
+  também mudou na nuvem, as duas versões ficam (cópia de conflito). Apagou algo com o app fechado? Na abertura o
+  craftDriver pergunta se apaga também no OneDrive (vai para a Lixeira) ou mantém — nada some da nuvem sem você confirmar.
   Detalhes em `docs/copias-offline.md`.
 
 ### Correções
+- Pasta excluída e recriada com o mesmo nome em outro dispositivo, com uma subpasta movida da antiga para a nova: a
+  subpasta não volta mais vazia.
+- Encerrar com algum programa usando a pasta `~/OneDrive` (por exemplo um terminal aberto nela) não trava mais a
+  desmontagem; o erro vai para o log e a desmontagem é forçada depois de alguns segundos.
+- Criar arquivos na pasta ficou mais leve (menos consultas ao banco por arquivo criado).
 - **Abrir na web** da conta pessoal abria uma página "File Not Found" (a Microsoft passou a informar um endereço de
   conteúdo para a pasta); agora abre o onedrive.live.com.
 - Pasta movida em outro dispositivo para fora de uma pasta que foi excluída logo depois não aparece mais vazia aqui
   (o conteúdo dela sumia da montagem até uma ressincronização completa).
+
+### Mudanças de comportamento
+- `craftdriver share` (e o "Copiar link" das extensões) em conta de trabalho ou escola cria link para **pessoas da
+  organização** por padrão. Para um link que qualquer pessoa abre, use `--anyone`; se o administrador não permitir, o
+  craftDriver avisa em vez de trocar o tipo de link sozinho. Contas pessoais não mudam.
 
 ## [0.3.0] - 2026-11-06
 
@@ -188,7 +201,8 @@ Configuração e contas são mantidas.
 - Primeira versão: contas pessoais, corporativas e bibliotecas do SharePoint montadas em `~/OneDrive` via FUSE, com
   arquivos sob demanda, fixação ("Sempre manter neste dispositivo"), bandeja e menu do Dolphin.
 
-[Não lançado]: https://github.com/Kaike-png/craftDriver/compare/v0.3.0...HEAD
+[Não lançado]: https://github.com/Kaike-png/craftDriver/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/Kaike-png/craftDriver/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/Kaike-png/craftDriver/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/Kaike-png/craftDriver/compare/v0.1.4...v0.2.0
 [0.1.4]: https://github.com/Kaike-png/craftDriver/compare/v0.1.3...v0.1.4

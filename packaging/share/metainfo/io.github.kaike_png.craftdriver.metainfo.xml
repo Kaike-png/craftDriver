@@ -74,6 +74,20 @@
   <content_rating type="oars-1.1" />
 
   <releases>
+    <release version="0.4.0" date="2026-11-10">
+      <description>
+        <ul>
+          <li>Interface redesenhada: navegação numa barra lateral com a marca e o estado da sincronização sempre à vista (a cor do quadro é a mesma do ícone da bandeja), Sincronizar e Pausar à mão em qualquer aba, e Problemas/Conflitos com o ícone destacado quando há itens. Cada página abre com título, explicação e a ação principal; contas, pastas e listas viram linhas num painel, com as ações embaixo de cada item. Configurações em seções, com Salvar fixo no rodapé. Fonte IBM Plex Sans embutida, cores do ícone do craftDriver nos temas claro e escuro.</li>
+          <li>Itens fixados continuam na pasta com o craftDriver encerrado, como no OneDrive do Windows. Ao encerrar, os arquivos marcados como "Sempre manter neste dispositivo" ficam em ~/OneDrive (no btrfs/XFS sem ocupar espaço a mais). Edições, arquivos novos e renomeações feitos com o app fechado são enviados na próxima abertura. Se o arquivo também mudou na nuvem, as duas versões ficam (cópia de conflito). Apagou algo com o app fechado? Na abertura o craftDriver pergunta se apaga também no OneDrive (vai para a Lixeira) ou mantém — nada some da nuvem sem você confirmar. Detalhes em docs/copias-offline.md.</li>
+          <li>Pasta excluída e recriada com o mesmo nome em outro dispositivo, com uma subpasta movida da antiga para a nova: a subpasta não volta mais vazia.</li>
+          <li>Encerrar com algum programa usando a pasta ~/OneDrive (por exemplo um terminal aberto nela) não trava mais a desmontagem; o erro vai para o log e a desmontagem é forçada depois de alguns segundos.</li>
+          <li>Criar arquivos na pasta ficou mais leve (menos consultas ao banco por arquivo criado).</li>
+          <li>Abrir na web da conta pessoal abria uma página "File Not Found" (a Microsoft passou a informar um endereço de conteúdo para a pasta); agora abre o onedrive.live.com.</li>
+          <li>Pasta movida em outro dispositivo para fora de uma pasta que foi excluída logo depois não aparece mais vazia aqui (o conteúdo dela sumia da montagem até uma ressincronização completa).</li>
+          <li>craftdriver share (e o "Copiar link" das extensões) em conta de trabalho ou escola cria link para pessoas da organização por padrão. Para um link que qualquer pessoa abre, use --anyone; se o administrador não permitir, o craftDriver avisa em vez de trocar o tipo de link sozinho. Contas pessoais não mudam.</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.3.0" date="2026-11-06">
       <description>
         <ul>
