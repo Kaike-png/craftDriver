@@ -236,7 +236,9 @@ public class Rodada3MotorRedeTests
         await mutate.WaitAsync(Ct); // segura o commit do envio na entrada (_mutate)
         release.TrySetResult();
         Harness.WaitUntil(() => h.Remote.FindByPath("/b.txt") != null, "envio gravado na nuvem");
-        await Task.Delay(300, Ct); // worker parado em CommitUploadAsync: _mutate.WaitAsync
+        // o worker ainda grava o fim da sessão (SetOpUpload, precisa do Db.Lock) antes de CommitUploadAsync → _mutate:
+        // segurar o Db.Lock antes disso prendia o worker ali e o _mutate nunca era pego (só no ARM do CI; antes, Delay 300)
+        Harness.WaitUntil(() => h.Db.PeekOp(FakeGraph.DriveId) is null or { UploadSnapshot: null }, "sessão de envio encerrada");
         Monitor.Enter(h.Db.Lock);
         try
         {
