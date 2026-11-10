@@ -105,6 +105,9 @@ jobs:
       - name: Testes (com cobertura)
         env:
           CRAFTDRIVER_UI_OUT: ${{ runner.temp }}/craftdriver-ui
+          # SDK 10.0.404: o vstest confere a pasta de artefatos da sessão em $XDG_RUNTIME_DIR e, no executor ARM, falha
+          # com errno 22 depois de todos os testes passarem (exit 1). Os artefatos (trx/cobertura) vão para --results-directory.
+          VSTEST_DISABLE_ARTIFACTS_DIRECTORY_VERIFICATION: 1
         run: dotnet test CraftDriver.slnx -c Release -warnaserror --collect:"XPlat Code Coverage" --logger trx --results-directory coverage --blame-hang-timeout 5m --blame-hang-dump-type mini
       - name: Relatório de cobertura
         if: ${{ !cancelled() }}

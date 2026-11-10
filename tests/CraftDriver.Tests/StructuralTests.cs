@@ -296,6 +296,8 @@ public class TransferControlTests
 
         Assert.True(h.Engine.Activity.CancelTransfer(transfer.Id));
         Harness.WaitUntil(() => h.Remote.ListPaths().Contains("/depois.txt"), "fila seguiu depois do cancelamento");
+        // envios em paralelo: depois.txt pode chegar à nuvem antes de o cancelamento de lento.txt virar Problema
+        Harness.WaitUntil(() => h.Db.Failures().Count() == 1, "envio cancelado em Problemas");
         var failure = Assert.Single(h.Db.Failures());
         Assert.Contains("cancelado", failure.Error);
         Assert.DoesNotContain("/lento.txt", h.Remote.ListPaths());
