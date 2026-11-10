@@ -2,9 +2,10 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:vm="using:CraftDriver.App.ViewModels"
         xmlns:svc="using:CraftDriver.App.Services"
+        xmlns:views="using:CraftDriver.App.Views"
         x:Class="CraftDriver.App.Views.MainWindow"
         x:DataType="vm:MainViewModel"
-        Title="craftDriver" Width="920" Height="640" MinWidth="720" MinHeight="480"
+        Title="craftDriver" Width="980" Height="660" MinWidth="760" MinHeight="500"
         WindowStartupLocation="CenterScreen">
 
     <Window.KeyBindings>
@@ -16,87 +17,127 @@
         <KeyBinding Gesture="Ctrl+S" Command="{Binding SaveSettingsShortcutCommand}" />
     </Window.KeyBindings>
 
-    <DockPanel>
-        <!-- cabeçalho de status -->
-        <Border DockPanel.Dock="Top" Padding="20,16" Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}">
-            <Grid ColumnDefinitions="Auto,*,Auto">
-                <PathIcon x:Name="StatusIcon" Grid.Column="0" Data="{Binding StatusIcon, Converter={x:Static svc:Icons.ToGeometry}}"
-                          Width="34" Height="34" VerticalAlignment="Center" Margin="0,0,16,0"
-                          AutomationProperties.AccessibilityView="Raw" />
-                <StackPanel Grid.Column="1" VerticalAlignment="Center">
-                    <TextBlock Classes="h1" Text="{Binding StatusText}" />
-                    <TextBlock Classes="muted" Text="{Binding StatusDetail}" TextWrapping="Wrap" />
-                </StackPanel>
-                <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
-                    <Button Content="Abrir pasta" Command="{Binding OpenFolderCommand}" IsEnabled="{Binding IsMounted}" />
-                    <Button Content="Sincronizar agora" Command="{Binding SyncNowCommand}" ToolTip.Tip="Verificar alterações agora (F5)" />
-                    <Button Content="{Binding PauseText}" Command="{Binding TogglePauseCommand}" />
-                </StackPanel>
-            </Grid>
-        </Border>
+    <!-- abas na barra lateral (tema CdNavTabControl em Styles/CraftDriverStyles.axaml); Tag = ícone da aba -->
+    <TabControl Theme="{StaticResource CdNavTabControl}" SelectedIndex="{Binding SelectedTab}">
 
-        <!-- exclusão em massa aguardando confirmação -->
-        <ItemsControl DockPanel.Dock="Top" ItemsSource="{Binding DeleteAlerts}" IsVisible="{Binding HasDeleteAlerts}" Margin="12,10,12,0">
-            <ItemsControl.ItemTemplate>
-                <DataTemplate x:DataType="vm:DeleteAlertVm">
-                    <Border Classes="danger" Padding="14" Margin="0,0,0,6">
-                        <Grid ColumnDefinitions="Auto,*,Auto">
-                            <PathIcon Data="{x:Static svc:Icons.Warning}" Width="26" Height="26"
-                                      Foreground="{DynamicResource CdErrorBrush}" VerticalAlignment="Center" Margin="0,0,12,0"
-                                      AutomationProperties.AccessibilityView="Raw" />
-                            <StackPanel Grid.Column="1" VerticalAlignment="Center">
-                                <TextBlock Text="Excluir também na nuvem?" FontWeight="SemiBold" FontSize="15" />
-                                <TextBlock Text="{Binding Text}" TextWrapping="Wrap" />
-                                <Expander Header="Ver o que foi apagado" Margin="0,6,0,0" HorizontalAlignment="Stretch">
-                                    <StackPanel>
-                                        <ScrollViewer MaxHeight="180">
-                                            <ItemsControl ItemsSource="{Binding Items}">
-                                                <ItemsControl.ItemTemplate>
-                                                    <DataTemplate x:DataType="vm:DeletedEntryVm">
-                                                        <DockPanel>
-                                                            <PathIcon DockPanel.Dock="Left" Data="{Binding Icon, Converter={x:Static svc:Icons.ToGeometry}}"
-                                                                      Width="14" Height="14" Margin="0,0,6,0" AutomationProperties.AccessibilityView="Raw" />
-                                                            <TextBlock Text="{Binding Text}" TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding Text}" />
-                                                        </DockPanel>
-                                                    </DataTemplate>
-                                                </ItemsControl.ItemTemplate>
-                                            </ItemsControl>
-                                        </ScrollViewer>
-                                        <TextBlock Classes="muted" Text="{Binding More}" IsVisible="{Binding More, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
-                                    </StackPanel>
-                                </Expander>
-                            </StackPanel>
-                            <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center" Margin="12,0,0,0">
-                                <Button Content="Restaurar arquivos" Command="{Binding RestoreCommand}" />
-                                <Button Classes="accent" Content="Excluir na nuvem" Command="{Binding ConfirmCommand}" />
-                            </StackPanel>
-                        </Grid>
+        <!-- ===================== BARRA LATERAL: marca, estado e ações rápidas ===================== -->
+        <views:NavShell.SidebarHeader>
+            <StackPanel Margin="20,20,20,0">
+                <StackPanel Orientation="Horizontal" Spacing="10">
+                    <views:BrandMark Width="28" Height="28" />
+                    <TextBlock Classes="wordmark" Text="craftDriver" VerticalAlignment="Center" />
+                </StackPanel>
+
+                <!-- a cor do quadro é a do estado, a mesma do ícone na bandeja -->
+                <Grid ColumnDefinitions="Auto,*" Margin="0,26,0,0">
+                    <Border Classes="lamp" Background="{Binding StatusIcon, Converter={x:Static svc:StatusPalette.ToBrush}}">
+                        <PathIcon x:Name="StatusIcon" Data="{Binding StatusIcon, Converter={x:Static svc:Icons.ToGeometry}}"
+                                  AutomationProperties.AccessibilityView="Raw" />
                     </Border>
-                </DataTemplate>
-            </ItemsControl.ItemTemplate>
-        </ItemsControl>
+                    <StackPanel Grid.Column="1" Margin="12,0,0,0" VerticalAlignment="Center">
+                        <TextBlock Classes="nav-status" Text="{Binding StatusText}" AutomationProperties.LiveSetting="Polite" />
+                        <TextBlock Classes="nav-detail" Text="{Binding StatusDetail}" TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding StatusDetail}"
+                                   IsVisible="{Binding StatusDetail, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+                    </StackPanel>
+                </Grid>
 
-        <Border x:Name="MessageBar" DockPanel.Dock="Bottom" Padding="20,6,8,6" Classes.error="{Binding MessageIsError}"
-                IsVisible="{Binding Message, Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
-            <Grid ColumnDefinitions="*,Auto,Auto">
-                <SelectableTextBlock Text="{Binding Message}" TextWrapping="Wrap" VerticalAlignment="Center"
-                                     AutomationProperties.LiveSetting="Polite" />
-                <Button Grid.Column="1" Content="Reiniciar agora" Command="{Binding RestartCommand}" IsVisible="{Binding RestartNeeded}"
-                        Margin="8,0,0,0" VerticalAlignment="Center" />
-                <Button Grid.Column="2" Content="✕" Command="{Binding ClearMessageCommand}" Margin="8,0,0,0" Padding="8,2"
-                        VerticalAlignment="Center" ToolTip.Tip="Fechar mensagem" AutomationProperties.Name="Fechar mensagem" />
-            </Grid>
-        </Border>
+                <Grid ColumnDefinitions="*,Auto" Margin="0,18,0,0">
+                    <Button Classes="nav-action" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
+                            Command="{Binding SyncNowCommand}" ToolTip.Tip="Verificar alterações agora (F5)"
+                            AutomationProperties.Name="Sincronizar agora">
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <PathIcon Data="{x:Static svc:Icons.Sync}" Width="14" Height="14" AutomationProperties.AccessibilityView="Raw" />
+                            <TextBlock Text="Sincronizar agora" VerticalAlignment="Center" />
+                        </StackPanel>
+                    </Button>
+                    <Button Grid.Column="1" Classes="nav-action" Width="34" Padding="0" Margin="8,0,0,0" HorizontalContentAlignment="Center"
+                            Command="{Binding TogglePauseCommand}" ToolTip.Tip="{Binding PauseText}" AutomationProperties.Name="{Binding PauseText}">
+                        <PathIcon Data="{Binding PauseIcon, Converter={x:Static svc:Icons.ToGeometry}}" Width="14" Height="14"
+                                  AutomationProperties.AccessibilityView="Raw" />
+                    </Button>
+                </Grid>
+            </StackPanel>
+        </views:NavShell.SidebarHeader>
 
-        <TabControl Margin="12,4,12,0" SelectedIndex="{Binding SelectedTab}">
-            <!-- ===================== VISÃO GERAL ===================== -->
-            <TabItem Header="Visão geral">
-                <Grid RowDefinitions="Auto,Auto,Auto,Auto,Auto,*" Margin="4">
+        <!-- ===================== ACIMA DO CONTEÚDO: exclusão em massa aguardando confirmação ===================== -->
+        <views:NavShell.ContentHeader>
+            <ItemsControl ItemsSource="{Binding DeleteAlerts}" IsVisible="{Binding HasDeleteAlerts}" Margin="32,20,32,0">
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate x:DataType="vm:DeleteAlertVm">
+                        <Border Classes="danger" Padding="18,16" Margin="0,0,0,8">
+                            <Grid ColumnDefinitions="Auto,*">
+                                <PathIcon Data="{x:Static svc:Icons.Warning}" Width="22" Height="22" Classes="error"
+                                          VerticalAlignment="Top" Margin="0,1,14,0" AutomationProperties.AccessibilityView="Raw" />
+                                <StackPanel Grid.Column="1" Spacing="4">
+                                    <TextBlock Text="Excluir também na nuvem?" FontWeight="SemiBold" FontSize="16" />
+                                    <TextBlock Text="{Binding Text}" TextWrapping="Wrap" />
+                                    <Expander Header="Ver o que foi apagado" Margin="0,6,0,0" HorizontalAlignment="Stretch">
+                                        <StackPanel>
+                                            <ScrollViewer MaxHeight="180">
+                                                <ItemsControl ItemsSource="{Binding Items}">
+                                                    <ItemsControl.ItemTemplate>
+                                                        <DataTemplate x:DataType="vm:DeletedEntryVm">
+                                                            <DockPanel Margin="0,1">
+                                                                <PathIcon DockPanel.Dock="Left" Classes="muted" Data="{Binding Icon, Converter={x:Static svc:Icons.ToGeometry}}"
+                                                                          Width="14" Height="14" Margin="0,0,8,0" AutomationProperties.AccessibilityView="Raw" />
+                                                                <TextBlock Text="{Binding Text}" TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding Text}" />
+                                                            </DockPanel>
+                                                        </DataTemplate>
+                                                    </ItemsControl.ItemTemplate>
+                                                </ItemsControl>
+                                            </ScrollViewer>
+                                            <TextBlock Classes="muted" Text="{Binding More}" IsVisible="{Binding More, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+                                        </StackPanel>
+                                    </Expander>
+                                    <StackPanel Classes="toolbar" Margin="0,10,0,0">
+                                        <Button Content="Restaurar arquivos" Command="{Binding RestoreCommand}" />
+                                        <Button Classes="danger" Content="Excluir na nuvem" Command="{Binding ConfirmCommand}" />
+                                    </StackPanel>
+                                </StackPanel>
+                            </Grid>
+                        </Border>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+        </views:NavShell.ContentHeader>
+
+        <!-- ===================== ABAIXO DO CONTEÚDO: mensagens ===================== -->
+        <views:NavShell.ContentFooter>
+            <Border x:Name="MessageBar" Padding="32,8,12,8" Classes.error="{Binding MessageIsError}"
+                    IsVisible="{Binding Message, Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
+                <Grid ColumnDefinitions="*,Auto,Auto">
+                    <SelectableTextBlock Text="{Binding Message}" TextWrapping="Wrap" VerticalAlignment="Center"
+                                         AutomationProperties.LiveSetting="Polite" />
+                    <Button Grid.Column="1" Content="Reiniciar agora" Command="{Binding RestartCommand}" IsVisible="{Binding RestartNeeded}"
+                            Margin="8,0,0,0" VerticalAlignment="Center" />
+                    <Button Grid.Column="2" Content="✕" Command="{Binding ClearMessageCommand}" Margin="8,0,0,0" Padding="9,3"
+                            Background="Transparent" BorderThickness="0"
+                            VerticalAlignment="Center" ToolTip.Tip="Fechar mensagem" AutomationProperties.Name="Fechar mensagem" />
+                </Grid>
+            </Border>
+        </views:NavShell.ContentFooter>
+
+        <!-- ===================== VISÃO GERAL ===================== -->
+        <TabItem Header="Visão geral" Tag="overview">
+            <DockPanel Classes="page">
+                <!-- onde os arquivos estão: o caminho da pasta é o título da página -->
+                <Grid DockPanel.Dock="Top" ColumnDefinitions="*,Auto" Margin="0,0,0,20">
+                    <StackPanel Spacing="4">
+                        <TextBlock Classes="h1" Text="{Binding MountText}" Classes.error="{Binding !IsMounted}" TextWrapping="Wrap" />
+                        <TextBlock Classes="muted" Text="Pasta sincronizada neste computador" TextWrapping="Wrap" />
+                    </StackPanel>
+                    <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Top" Margin="16,0,0,0">
+                        <Button Content="Remontar" Command="{Binding RemountCommand}" />
+                        <Button Classes="accent" Content="Abrir pasta" Command="{Binding OpenFolderCommand}" IsEnabled="{Binding IsMounted}" />
+                    </StackPanel>
+                </Grid>
+
+                <Grid RowDefinitions="Auto,Auto,Auto,Auto,*">
                     <!-- versão nova disponível; durante a atualização, progresso/erro no mesmo painel -->
                     <Border x:Name="UpdatePanel" Grid.Row="0" Classes="card" Classes.danger="{Binding UpdateStatusIsError}" IsVisible="{Binding UpdateVisible}">
                         <Grid ColumnDefinitions="*,Auto">
                             <StackPanel Spacing="4">
-                                <TextBlock Text="{Binding UpdateTitle}" FontWeight="SemiBold" FontSize="15" TextWrapping="Wrap" />
+                                <TextBlock Text="{Binding UpdateTitle}" FontWeight="SemiBold" FontSize="16" TextWrapping="Wrap" />
                                 <ScrollViewer MaxHeight="150" IsVisible="{Binding UpdateNotes, Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
                                     <TextBlock Classes="muted" Text="{Binding UpdateNotes}" TextWrapping="Wrap" />
                                 </ScrollViewer>
@@ -106,7 +147,7 @@
                                            IsVisible="{Binding UpdateStatus, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
                                            AutomationProperties.LiveSetting="Polite" />
                             </StackPanel>
-                            <StackPanel Grid.Column="1" Spacing="6" VerticalAlignment="Top" Margin="12,0,0,0">
+                            <StackPanel Grid.Column="1" Spacing="6" VerticalAlignment="Top" Margin="16,0,0,0">
                                 <Button Classes="accent" Content="Atualizar agora" Command="{Binding UpdateNowCommand}" IsEnabled="{Binding UpdateCanStart}"
                                         IsVisible="{Binding !UpdateDone}" HorizontalAlignment="Stretch"
                                         ToolTip.Tip="Baixa o pacote desta instalação, confere o SHA256 e instala" />
@@ -119,26 +160,21 @@
                         </Grid>
                     </Border>
 
-                    <Border Grid.Row="1" Classes="card">
-                        <Grid ColumnDefinitions="*,Auto">
-                            <StackPanel>
-                                <TextBlock Text="Pasta sincronizada" FontWeight="SemiBold" />
-                                <TextBlock Classes="muted" Text="{Binding MountText}" TextWrapping="Wrap" />
+                    <Border Grid.Row="1" Classes="card" IsVisible="{Binding !HasAccounts}">
+                        <Grid ColumnDefinitions="Auto,*">
+                            <Border Classes="avatar">
+                                <PathIcon Data="{x:Static svc:Icons.Account}" AutomationProperties.AccessibilityView="Raw" />
+                            </Border>
+                            <StackPanel Grid.Column="1" Spacing="8" Margin="14,0,0,0">
+                                <TextBlock Classes="h2" Text="Conecte sua conta Microsoft" />
+                                <TextBlock TextWrapping="Wrap" MaxWidth="620" HorizontalAlignment="Left" Text="Pessoal, corporativa ou de estudante. Seus arquivos do OneDrive e do SharePoint aparecem na pasta sincronizada sem ocupar espaço: eles são baixados quando você os abre." />
+                                <Button Classes="accent" Content="Entrar com a conta Microsoft" Command="{Binding AddAccountCommand}" Margin="0,4,0,0" />
                             </StackPanel>
-                            <Button Grid.Column="1" Content="Remontar" Command="{Binding RemountCommand}" VerticalAlignment="Center" />
                         </Grid>
                     </Border>
 
-                    <Border Grid.Row="2" Classes="card" IsVisible="{Binding !HasAccounts}">
-                        <StackPanel Spacing="8">
-                            <TextBlock Classes="h2" Text="Bem-vindo!" />
-                            <TextBlock TextWrapping="Wrap" Text="Conecte sua conta Microsoft (pessoal, corporativa ou de estudante). Seus arquivos do OneDrive e do SharePoint aparecem na pasta sincronizada sem ocupar espaço: eles são baixados quando você os abre." />
-                            <Button Classes="accent" Content="Entrar com a conta Microsoft" Command="{Binding AddAccountCommand}" />
-                        </StackPanel>
-                    </Border>
-
                     <!-- falhas esperando nova tentativa; "Envio parado" só quando alguma segura alterações que dependem dela -->
-                    <Border Grid.Row="3" Classes="card" Classes.danger="{Binding QueueStalled}" Padding="12" Margin="0,0,0,8" IsVisible="{Binding HasQueueBlocked}">
+                    <Border Grid.Row="2" Classes="card" Classes.danger="{Binding QueueStalled}" IsVisible="{Binding HasQueueBlocked}">
                         <StackPanel Spacing="4">
                             <TextBlock Text="{Binding QueueHeader}" FontWeight="SemiBold" />
                             <ItemsControl ItemsSource="{Binding QueueBlocked}">
@@ -151,319 +187,407 @@
                         </StackPanel>
                     </Border>
 
-                    <StackPanel Grid.Row="4" IsVisible="{Binding HasTransfers}">
-                        <TextBlock Classes="h2" Text="Transferências" />
-                        <ItemsControl ItemsSource="{Binding Transfers}">
-                            <ItemsControl.ItemTemplate>
-                                <DataTemplate x:DataType="vm:TransferVm">
-                                    <Grid ColumnDefinitions="24,*,200,Auto" Margin="0,2">
-                                        <PathIcon Data="{Binding Direction, Converter={x:Static svc:Icons.ToGeometry}}" Width="14" Height="14"
-                                                  VerticalAlignment="Top" Margin="0,3,0,0" AutomationProperties.AccessibilityView="Raw" />
-                                        <StackPanel Grid.Column="1">
-                                            <TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding Name}" />
-                                            <TextBlock Classes="muted" FontSize="12" Text="{Binding Detail}" />
-                                        </StackPanel>
-                                        <ProgressBar Grid.Column="2" Value="{Binding Percent}" Maximum="100" VerticalAlignment="Center" />
-                                        <Button Grid.Column="3" Content="Cancelar" Margin="8,0,0,0" VerticalAlignment="Center"
-                                                Command="{Binding CancelCommand}" IsEnabled="{Binding !Cancelling}"
-                                                ToolTip.Tip="Download: o arquivo não abre agora (o que já veio fica guardado). Envio: vai para Problemas, para tentar de novo." />
-                                    </Grid>
-                                </DataTemplate>
-                            </ItemsControl.ItemTemplate>
-                        </ItemsControl>
+                    <StackPanel Grid.Row="3" IsVisible="{Binding HasTransfers}" Margin="0,4,0,16">
+                        <TextBlock Classes="h2" Text="Transferências" Margin="0,0,0,10" />
+                        <Border Classes="panel">
+                            <ItemsControl ItemsSource="{Binding Transfers}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate x:DataType="vm:TransferVm">
+                                        <Border Classes="row">
+                                            <Grid ColumnDefinitions="26,*,160,Auto">
+                                                <PathIcon Data="{Binding Direction, Converter={x:Static svc:Icons.ToGeometry}}" Width="16" Height="16" Classes="muted"
+                                                          VerticalAlignment="Top" Margin="0,2,0,0" AutomationProperties.AccessibilityView="Raw" />
+                                                <StackPanel Grid.Column="1" Margin="0,0,16,0">
+                                                    <TextBlock Text="{Binding Name}" FontWeight="Medium" TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding Name}" />
+                                                    <TextBlock Classes="caption" Text="{Binding Detail}" TextWrapping="Wrap" />
+                                                </StackPanel>
+                                                <ProgressBar Grid.Column="2" Value="{Binding Percent}" Maximum="100" MinWidth="0" VerticalAlignment="Center" />
+                                                <Button Grid.Column="3" Classes="link" Content="Cancelar" Margin="16,0,0,0" VerticalAlignment="Center"
+                                                        Command="{Binding CancelCommand}" IsEnabled="{Binding !Cancelling}"
+                                                        ToolTip.Tip="Download: o arquivo não abre agora (o que já veio fica guardado). Envio: vai para Problemas, para tentar de novo." />
+                                            </Grid>
+                                        </Border>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </Border>
                     </StackPanel>
 
-                    <DockPanel Grid.Row="5">
-                        <Grid DockPanel.Dock="Top" ColumnDefinitions="*,Auto,Auto,Auto">
-                            <TextBlock Classes="h2" Text="Atividade recente" VerticalAlignment="Center" />
-                            <TextBox Grid.Column="1" Width="220" Text="{Binding ActivityFilter}" PlaceholderText="Buscar na atividade"
+                    <DockPanel Grid.Row="4">
+                        <!-- a busca ocupa até 240 px e encolhe antes do título em janelas estreitas -->
+                        <Grid DockPanel.Dock="Top" Margin="0,4,0,10">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="4*" MaxWidth="240" />
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Classes="h2" Text="Atividade recente" VerticalAlignment="Center" Margin="0,0,16,0" />
+                            <TextBox Grid.Column="2" Text="{Binding ActivityFilter}" PlaceholderText="Buscar na atividade"
                                      AutomationProperties.Name="Buscar na atividade" VerticalAlignment="Center" />
-                            <CheckBox Grid.Column="2" Content="Só erros" IsChecked="{Binding ActivityErrorsOnly}" Margin="8,0,0,0" VerticalAlignment="Center" />
-                            <Button Grid.Column="3" Content="Copiar" Command="{Binding CopyActivityCommand}" Margin="8,0,0,0" VerticalAlignment="Center"
+                            <CheckBox Grid.Column="3" Content="Só erros" IsChecked="{Binding ActivityErrorsOnly}" Margin="12,0,0,0" VerticalAlignment="Center" />
+                            <Button Grid.Column="4" Content="Copiar" Command="{Binding CopyActivityCommand}" Margin="4,0,0,0" VerticalAlignment="Center"
                                     ToolTip.Tip="Copia as linhas mostradas (com o filtro) para a área de transferência" />
                         </Grid>
                         <TextBlock DockPanel.Dock="Top" Classes="empty" IsVisible="{Binding !HasActivity}"
                                    Text="Nenhuma atividade ainda. Arquivos enviados, baixados, movidos ou apagados aparecem aqui." />
-                        <ListBox ItemsSource="{Binding Activity}" Background="Transparent">
-                            <ListBox.ItemTemplate>
-                                <DataTemplate x:DataType="vm:ActivityVm">
-                                    <Grid ColumnDefinitions="70,24,*">
-                                        <TextBlock Classes="muted" Text="{Binding Time}" FontSize="12" VerticalAlignment="Center" />
-                                        <PathIcon Grid.Column="1" Data="{Binding Icon, Converter={x:Static svc:Icons.ToGeometry}}" Width="14" Height="14"
-                                                  Classes.error="{Binding IsError}" VerticalAlignment="Top" Margin="0,3,0,0"
-                                                  AutomationProperties.AccessibilityView="Raw" />
-                                        <TextBlock Grid.Column="2" Text="{Binding Text}" TextWrapping="Wrap" Classes.error="{Binding IsError}" />
-                                    </Grid>
-                                </DataTemplate>
-                            </ListBox.ItemTemplate>
-                        </ListBox>
+                        <Border Classes="panel" IsVisible="{Binding HasActivity}" VerticalAlignment="Top" Margin="0,0,0,24">
+                            <ListBox Classes="activity" ItemsSource="{Binding Activity}">
+                                <ListBox.ItemTemplate>
+                                    <DataTemplate x:DataType="vm:ActivityVm">
+                                        <Grid ColumnDefinitions="64,26,*">
+                                            <TextBlock Classes="caption" Text="{Binding Time}" VerticalAlignment="Top" Margin="0,2,0,0" />
+                                            <PathIcon Grid.Column="1" Data="{Binding Icon, Converter={x:Static svc:Icons.ToGeometry}}" Width="14" Height="14"
+                                                      Classes="muted" Classes.error="{Binding IsError}" VerticalAlignment="Top" Margin="0,3,0,0"
+                                                      AutomationProperties.AccessibilityView="Raw" />
+                                            <TextBlock Grid.Column="2" Text="{Binding Text}" TextWrapping="Wrap" Classes.error="{Binding IsError}" />
+                                        </Grid>
+                                    </DataTemplate>
+                                </ListBox.ItemTemplate>
+                            </ListBox>
+                        </Border>
                     </DockPanel>
                 </Grid>
-            </TabItem>
+            </DockPanel>
+        </TabItem>
 
-            <!-- ===================== CONTAS ===================== -->
-            <TabItem Header="Contas">
-                <DockPanel Margin="4">
-                    <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="8" Margin="0,0,0,8">
+        <!-- ===================== CONTAS ===================== -->
+        <TabItem Header="Contas" Tag="account">
+            <DockPanel Classes="page">
+                <StackPanel DockPanel.Dock="Top" Classes="page-head">
+                    <TextBlock Classes="h1" Text="Contas" />
+                    <TextBlock Classes="lead" Text="Cada conta traz o OneDrive dela. Contas de trabalho ou escola também dão acesso às bibliotecas do SharePoint." />
+                    <TextBlock Classes="caption" Text="{Binding TokenStorage, StringFormat='Tokens guardados em: {0}'}" TextWrapping="Wrap" />
+                    <StackPanel Classes="toolbar">
                         <Button Classes="accent" Content="Adicionar conta" Command="{Binding AddAccountCommand}" />
-                        <TextBlock Classes="muted" VerticalAlignment="Center" Text="{Binding TokenStorage, StringFormat='Tokens guardados em: {0}'}" />
                     </StackPanel>
-                    <TextBlock DockPanel.Dock="Top" Classes="empty" IsVisible="{Binding !HasAccounts}"
-                               Text="Ainda não há contas neste computador. Use &quot;Adicionar conta&quot; e entre com a conta Microsoft pessoal, corporativa ou de estudante." />
-                    <ScrollViewer>
-                    <ItemsControl ItemsSource="{Binding Accounts}">
-                        <ItemsControl.ItemTemplate>
-                            <DataTemplate x:DataType="vm:AccountVm">
-                                <Border Classes="card">
-                                    <Grid ColumnDefinitions="*,Auto">
-                                        <StackPanel Spacing="2">
-                                            <TextBlock Text="{Binding Username}" FontWeight="SemiBold" FontSize="15" />
-                                            <TextBlock Classes="muted" Text="{Binding TypeLabel}" />
-                                            <TextBlock Classes="muted" Text="{Binding Drives, StringFormat='Pastas: {0}'}" TextWrapping="Wrap" />
-                                            <TextBlock Classes="error" IsVisible="{Binding NeedsLogin}" Text="A sessão expirou — clique em Entrar novamente e use este mesmo usuário." TextWrapping="Wrap" />
-                                        </StackPanel>
-                                        <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
-                                            <Button Classes="accent" Content="Entrar novamente" Command="{Binding ReauthenticateCommand}" IsVisible="{Binding NeedsLogin}" />
-                                            <Button Content="Adicionar biblioteca do SharePoint" Command="{Binding AddLibraryCommand}" IsVisible="{Binding IsBusiness}" />
-                                            <Button Classes="danger" Content="Desvincular…" Command="{Binding RemoveCommand}" />
-                                        </StackPanel>
-                                    </Grid>
-                                </Border>
-                            </DataTemplate>
-                        </ItemsControl.ItemTemplate>
-                    </ItemsControl>
-                    </ScrollViewer>
-                </DockPanel>
-            </TabItem>
+                </StackPanel>
+                <TextBlock DockPanel.Dock="Top" Classes="empty" IsVisible="{Binding !HasAccounts}"
+                           Text="Ainda não há contas neste computador. Use &quot;Adicionar conta&quot; e entre com a conta Microsoft pessoal, corporativa ou de estudante." />
+                <ScrollViewer>
+                    <Border Classes="panel" IsVisible="{Binding HasAccounts}" VerticalAlignment="Top" Margin="0,0,0,24">
+                        <ItemsControl ItemsSource="{Binding Accounts}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate x:DataType="vm:AccountVm">
+                                    <Border Classes="row">
+                                        <Grid ColumnDefinitions="Auto,*">
+                                            <Border Classes="avatar">
+                                                <PathIcon Data="{Binding TypeIcon, Converter={x:Static svc:Icons.ToGeometry}}" AutomationProperties.AccessibilityView="Raw" />
+                                            </Border>
+                                            <StackPanel Grid.Column="1" Spacing="2" Margin="14,0,0,0">
+                                                <TextBlock Classes="row-title" Text="{Binding Username}" />
+                                                <TextBlock Classes="muted" Text="{Binding TypeLabel}" />
+                                                <TextBlock Classes="muted" Text="{Binding Drives, StringFormat='Pastas: {0}'}" TextWrapping="Wrap" />
+                                                <TextBlock Classes="error" IsVisible="{Binding NeedsLogin}" Text="A sessão expirou — clique em Entrar novamente e use este mesmo usuário." TextWrapping="Wrap" />
+                                                <WrapPanel Classes="row-actions">
+                                                    <Button Classes="accent" Content="Entrar novamente" Command="{Binding ReauthenticateCommand}" IsVisible="{Binding NeedsLogin}" />
+                                                    <Button Classes="link" Content="Adicionar biblioteca do SharePoint" Command="{Binding AddLibraryCommand}" IsVisible="{Binding IsBusiness}" />
+                                                    <Button Classes="link danger" Content="Desvincular…" Command="{Binding RemoveCommand}" />
+                                                </WrapPanel>
+                                            </StackPanel>
+                                        </Grid>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </Border>
+                </ScrollViewer>
+            </DockPanel>
+        </TabItem>
 
-            <!-- ===================== PASTAS / BIBLIOTECAS ===================== -->
-            <TabItem Header="OneDrive e SharePoint">
-                <DockPanel Margin="4">
-                    <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="8" Margin="0,0,0,8">
-                        <Button Content="Adicionar biblioteca do SharePoint" Command="{Binding AddLibraryCommand}" />
-                        <TextBlock Classes="muted" VerticalAlignment="Center" Text="Cada item vira uma pasta dentro da pasta sincronizada." />
+        <!-- ===================== PASTAS / BIBLIOTECAS ===================== -->
+        <TabItem Header="OneDrive e SharePoint" Tag="cloud">
+            <DockPanel Classes="page">
+                <StackPanel DockPanel.Dock="Top" Classes="page-head">
+                    <TextBlock Classes="h1" Text="OneDrive e SharePoint" />
+                    <TextBlock Classes="lead" Text="Cada item vira uma pasta dentro da pasta sincronizada. A caixa ao lado do nome liga ou desliga a sincronização daquele item." />
+                    <StackPanel Classes="toolbar">
+                        <Button Classes="accent" Content="Adicionar biblioteca do SharePoint" Command="{Binding AddLibraryCommand}" />
                     </StackPanel>
-                    <TextBlock DockPanel.Dock="Top" Classes="empty" IsVisible="{Binding !HasDrives}"
-                               Text="Nada sendo sincronizado. O OneDrive aparece aqui ao adicionar uma conta; bibliotecas do SharePoint, pelo botão acima (conta corporativa)." />
-                    <ScrollViewer>
+                </StackPanel>
+                <TextBlock DockPanel.Dock="Top" Classes="empty" IsVisible="{Binding !HasDrives}"
+                           Text="Nada sendo sincronizado. O OneDrive aparece aqui ao adicionar uma conta; bibliotecas do SharePoint, pelo botão acima (conta corporativa)." />
+                <ScrollViewer>
+                    <Border Classes="panel" IsVisible="{Binding HasDrives}" VerticalAlignment="Top" Margin="0,0,0,24">
                         <ItemsControl ItemsSource="{Binding Drives}">
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate x:DataType="vm:DriveVm">
-                                    <Border Classes="card">
-                                        <Grid ColumnDefinitions="Auto,*,Auto">
-                                            <CheckBox IsChecked="{Binding Enabled}" VerticalAlignment="Top" ToolTip.Tip="Sincronizar esta pasta"
+                                    <Border Classes="row">
+                                        <Grid ColumnDefinitions="Auto,*">
+                                            <CheckBox IsChecked="{Binding Enabled}" VerticalAlignment="Top" Margin="0,-4,6,0" ToolTip.Tip="Sincronizar esta pasta"
                                                       AutomationProperties.Name="{Binding DisplayName, StringFormat='Sincronizar {0}'}" />
-                                            <StackPanel Grid.Column="1" Spacing="2">
-                                                <TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold" FontSize="15" />
-                                                <TextBlock Classes="muted" Text="{Binding KindLabel}" />
+                                            <StackPanel Grid.Column="1" Spacing="3">
+                                                <WrapPanel ItemSpacing="10" LineSpacing="4">
+                                                    <TextBlock Classes="row-title" Text="{Binding DisplayName}" VerticalAlignment="Center" />
+                                                    <Border Classes="chip">
+                                                        <TextBlock Text="{Binding KindLabel}" />
+                                                    </Border>
+                                                </WrapPanel>
                                                 <TextBlock Classes="muted" Text="{Binding Account}" />
-                                                <TextBlock Text="{Binding State}" />
-                                                <TextBlock Classes="muted" Text="{Binding Stats}" />
-                                                <StackPanel Orientation="Horizontal" Spacing="8" IsVisible="{Binding Quota, Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
-                                                    <ProgressBar Width="180" Value="{Binding QuotaPercent}" Maximum="100" />
-                                                    <TextBlock Classes="muted" Text="{Binding Quota}" />
+                                                <TextBlock Text="{Binding State}" Margin="0,4,0,0" />
+                                                <TextBlock Classes="caption" Text="{Binding Stats}"
+                                                           IsVisible="{Binding Stats, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+                                                <StackPanel Orientation="Horizontal" Spacing="10" Margin="0,4,0,0"
+                                                            IsVisible="{Binding Quota, Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
+                                                    <ProgressBar Width="180" Value="{Binding QuotaPercent}" Maximum="100" VerticalAlignment="Center"
+                                                                 AutomationProperties.Name="{Binding Quota, StringFormat='Espaço usado: {0}'}" />
+                                                    <TextBlock Classes="caption" Text="{Binding Quota}" VerticalAlignment="Center" />
                                                 </StackPanel>
-                                            </StackPanel>
-                                            <StackPanel Grid.Column="2" Spacing="6">
-                                                <Button Content="Abrir pasta" Command="{Binding OpenFolderCommand}" HorizontalAlignment="Stretch" />
-                                                <Button Content="Abrir na web" Command="{Binding OpenWebCommand}" HorizontalAlignment="Stretch" />
-                                                <Button Content="Escolher pastas…" Command="{Binding ChooseFoldersCommand}" HorizontalAlignment="Stretch" />
-                                                <Button Classes="danger" Content="Parar de sincronizar…" Command="{Binding RemoveCommand}" IsVisible="{Binding CanRemove}" HorizontalAlignment="Stretch" />
+                                                <WrapPanel Classes="row-actions">
+                                                    <Button Classes="link" Content="Abrir pasta" Command="{Binding OpenFolderCommand}" />
+                                                    <Button Classes="link" Content="Abrir na web" Command="{Binding OpenWebCommand}" />
+                                                    <Button Classes="link" Content="Escolher pastas…" Command="{Binding ChooseFoldersCommand}" />
+                                                    <Button Classes="link danger" Content="Parar de sincronizar…" Command="{Binding RemoveCommand}" IsVisible="{Binding CanRemove}" />
+                                                </WrapPanel>
                                             </StackPanel>
                                         </Grid>
                                     </Border>
                                 </DataTemplate>
                             </ItemsControl.ItemTemplate>
                         </ItemsControl>
-                    </ScrollViewer>
-                </DockPanel>
-            </TabItem>
+                    </Border>
+                </ScrollViewer>
+            </DockPanel>
+        </TabItem>
 
-            <!-- ===================== ARQUIVOS OFFLINE ===================== -->
-            <TabItem Header="Arquivos sob demanda">
-                <DockPanel Margin="4">
-                    <StackPanel DockPanel.Dock="Top" Spacing="8" Margin="0,0,0,8">
-                        <TextBlock TextWrapping="Wrap" Text="Por padrão os arquivos ficam somente online e são baixados ao abrir. Pastas marcadas abaixo ficam sempre disponíveis neste dispositivo, mesmo sem internet. Você também pode usar o menu de contexto do gerenciador de arquivos (craftDriver ▸ Sempre manter neste dispositivo)." />
-                        <TextBlock Classes="muted" Text="{Binding CacheText}" TextWrapping="Wrap" />
-                        <StackPanel Orientation="Horizontal" Spacing="8">
-                            <Button Classes="accent" Content="Sempre manter uma pasta neste dispositivo…" Command="{Binding PinFolderCommand}" />
-                            <Button Content="Liberar espaço de tudo…" Command="{Binding FreeAllCommand}" />
-                        </StackPanel>
-                        <TextBlock Classes="empty" IsVisible="{Binding !HasPinned}"
-                                   Text="Nenhuma pasta fixada: tudo fica somente online e é baixado ao abrir." />
+        <!-- ===================== ARQUIVOS OFFLINE ===================== -->
+        <TabItem Header="Arquivos sob demanda" Tag="pin">
+            <DockPanel Classes="page">
+                <StackPanel DockPanel.Dock="Top" Classes="page-head">
+                    <TextBlock Classes="h1" Text="Arquivos sob demanda" />
+                    <TextBlock Classes="lead" Text="Por padrão os arquivos ficam somente online e são baixados ao abrir. Pastas marcadas abaixo ficam sempre disponíveis neste dispositivo, mesmo sem internet. Você também pode usar o menu de contexto do gerenciador de arquivos (craftDriver ▸ Sempre manter neste dispositivo)." />
+                    <TextBlock Classes="caption" Text="{Binding CacheText}" TextWrapping="Wrap" />
+                    <StackPanel Classes="toolbar">
+                        <Button Classes="accent" Content="Sempre manter uma pasta neste dispositivo…" Command="{Binding PinFolderCommand}" />
+                        <Button Content="Liberar espaço de tudo…" Command="{Binding FreeAllCommand}" />
                     </StackPanel>
-                    <ScrollViewer>
+                </StackPanel>
+                <TextBlock DockPanel.Dock="Top" Classes="empty" IsVisible="{Binding !HasPinned}"
+                           Text="Nenhuma pasta fixada: tudo fica somente online e é baixado ao abrir." />
+                <ScrollViewer>
+                    <Border Classes="panel" IsVisible="{Binding HasPinned}" VerticalAlignment="Top" Margin="0,0,0,24">
                         <ItemsControl ItemsSource="{Binding Pinned}">
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate x:DataType="vm:PinnedVm">
-                                    <Border Classes="card">
-                                        <Grid ColumnDefinitions="28,*,Auto">
-                                            <PathIcon Data="{Binding Icon, Converter={x:Static svc:Icons.ToGeometry}}" Width="18" Height="18"
+                                    <Border Classes="row">
+                                        <Grid ColumnDefinitions="30,*,Auto">
+                                            <PathIcon Data="{Binding Icon, Converter={x:Static svc:Icons.ToGeometry}}" Width="18" Height="18" Classes="muted"
                                                       HorizontalAlignment="Left" VerticalAlignment="Center" AutomationProperties.AccessibilityView="Raw" />
                                             <TextBlock Grid.Column="1" Text="{Binding Path}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"
                                                        ToolTip.Tip="{Binding Path}" />
-                                            <Button Grid.Column="2" Content="Liberar espaço" Command="{Binding UnpinCommand}" />
+                                            <Button Grid.Column="2" Classes="link" Content="Liberar espaço" Command="{Binding UnpinCommand}" Margin="16,0,0,0" />
                                         </Grid>
                                     </Border>
                                 </DataTemplate>
                             </ItemsControl.ItemTemplate>
                         </ItemsControl>
-                    </ScrollViewer>
-                </DockPanel>
-            </TabItem>
+                    </Border>
+                </ScrollViewer>
+            </DockPanel>
+        </TabItem>
 
-            <!-- ===================== PROBLEMAS ===================== -->
-            <TabItem Header="{Binding FailuresHeader}">
-                <DockPanel Margin="4">
-                    <StackPanel DockPanel.Dock="Top" Spacing="8" Margin="0,0,0,8">
-                        <TextBlock TextWrapping="Wrap" Text="Alterações que a nuvem recusou e que não serão tentadas de novo sozinhas. Os arquivos continuam neste computador com suas alterações: corrija a causa (nome, tamanho, permissão…) e tente de novo." />
-                        <TextBlock Classes="muted" Text="Nenhum problema de sincronização." IsVisible="{Binding !HasFailures}" />
-                        <Button Classes="accent" Content="Tentar tudo de novo" Command="{Binding RetryAllCommand}" IsVisible="{Binding HasFailures}" />
+        <!-- ===================== PROBLEMAS ===================== -->
+        <TabItem Header="{Binding FailuresHeader}" Tag="problem" Classes.alert="{Binding HasFailures}">
+            <DockPanel Classes="page">
+                <StackPanel DockPanel.Dock="Top" Classes="page-head">
+                    <TextBlock Classes="h1" Text="Problemas" />
+                    <TextBlock Classes="lead" Text="Alterações que a nuvem recusou e que não serão tentadas de novo sozinhas. Os arquivos continuam neste computador com suas alterações: corrija a causa (nome, tamanho, permissão…) e tente de novo." />
+                    <StackPanel Classes="toolbar" IsVisible="{Binding HasFailures}">
+                        <Button Classes="accent" Content="Tentar tudo de novo" Command="{Binding RetryAllCommand}" />
                     </StackPanel>
-                    <!-- ListBox (virtualizado): com centenas de falhas, só as visíveis são criadas -->
+                </StackPanel>
+                <TextBlock DockPanel.Dock="Top" Classes="empty" Text="Nenhum problema de sincronização." IsVisible="{Binding !HasFailures}" />
+                <!-- ListBox (virtualizado): com centenas de falhas, só as visíveis são criadas -->
+                <Border Classes="panel" IsVisible="{Binding HasFailures}" VerticalAlignment="Top" Margin="0,0,0,24">
                     <ListBox Classes="plain" ItemsSource="{Binding Failures}">
                         <ListBox.ItemTemplate>
                             <DataTemplate x:DataType="vm:FailureVm">
-                                <Border Classes="card">
-                                    <Grid ColumnDefinitions="*,Auto">
-                                        <StackPanel Spacing="2">
-                                            <TextBlock Text="{Binding Path}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding Path}" />
-                                            <TextBlock Classes="muted" TextWrapping="Wrap">
-                                                <Run Text="{Binding When}" /><Run Text=" · não foi possível " /><Run Text="{Binding What}" /><Run Text=": " /><Run Text="{Binding Error}" />
-                                            </TextBlock>
-                                        </StackPanel>
-                                        <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center" Margin="8,0,0,0">
-                                            <Button Content="Tentar de novo" Command="{Binding RetryCommand}" />
-                                            <Button Content="Descartar aviso" Command="{Binding DismissCommand}" />
-                                        </StackPanel>
-                                    </Grid>
+                                <Border Classes="row">
+                                    <StackPanel Spacing="2">
+                                        <TextBlock Text="{Binding Path}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding Path}" />
+                                        <TextBlock Classes="muted" TextWrapping="Wrap">
+                                            <Run Text="{Binding When}" /><Run Text=", não foi possível " /><Run Text="{Binding What}" /><Run Text=": " /><Run Text="{Binding Error}" />
+                                        </TextBlock>
+                                        <WrapPanel Classes="row-actions">
+                                            <Button Classes="link" Content="Tentar de novo" Command="{Binding RetryCommand}" />
+                                            <Button Classes="link" Content="Descartar aviso" Command="{Binding DismissCommand}" />
+                                        </WrapPanel>
+                                    </StackPanel>
                                 </Border>
                             </DataTemplate>
                         </ListBox.ItemTemplate>
                     </ListBox>
-                </DockPanel>
-            </TabItem>
+                </Border>
+            </DockPanel>
+        </TabItem>
 
-            <!-- ===================== CONFLITOS ===================== -->
-            <TabItem Header="{Binding ConflictsHeader}">
-                <DockPanel Margin="4">
-                    <StackPanel DockPanel.Dock="Top" Spacing="8" Margin="0,0,0,8">
-                        <TextBlock TextWrapping="Wrap" Text="Quando o mesmo arquivo muda aqui e na nuvem, o craftDriver mantém as duas versões: a sua fica numa cópia com &quot;conflito&quot; no nome. Confira e apague a que não quiser; dispensar o aviso não apaga nada." />
-                        <TextBlock Classes="muted" Text="Nenhum conflito." IsVisible="{Binding !HasConflicts}" />
-                        <Button Content="Dispensar todos" Command="{Binding DismissAllConflictsCommand}" IsVisible="{Binding HasConflicts}" />
+        <!-- ===================== CONFLITOS ===================== -->
+        <TabItem Header="{Binding ConflictsHeader}" Tag="conflict" Classes.alert="{Binding HasConflicts}">
+            <DockPanel Classes="page">
+                <StackPanel DockPanel.Dock="Top" Classes="page-head">
+                    <TextBlock Classes="h1" Text="Conflitos" />
+                    <TextBlock Classes="lead" Text="Quando o mesmo arquivo muda aqui e na nuvem, o craftDriver mantém as duas versões: a sua fica numa cópia com &quot;conflito&quot; no nome. Confira e apague a que não quiser; dispensar o aviso não apaga nada." />
+                    <StackPanel Classes="toolbar" IsVisible="{Binding HasConflicts}">
+                        <Button Content="Dispensar todos" Command="{Binding DismissAllConflictsCommand}" />
                     </StackPanel>
+                </StackPanel>
+                <TextBlock DockPanel.Dock="Top" Classes="empty" Text="Nenhum conflito." IsVisible="{Binding !HasConflicts}" />
+                <Border Classes="panel" IsVisible="{Binding HasConflicts}" VerticalAlignment="Top" Margin="0,0,0,24">
                     <ListBox Classes="plain" ItemsSource="{Binding Conflicts}">
                         <ListBox.ItemTemplate>
                             <DataTemplate x:DataType="vm:ConflictVm">
-                                <Border Classes="card">
-                                    <Grid ColumnDefinitions="*,Auto">
-                                        <StackPanel Spacing="2">
-                                            <TextBlock Text="{Binding Path}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding Path}" />
-                                            <TextBlock Classes="muted" TextWrapping="Wrap">
-                                                <Run Text="{Binding When}" /><Run Text=" · " /><Run Text="{Binding Original}" /><Run Text=": " /><Run Text="{Binding Reason}" />
-                                            </TextBlock>
-                                        </StackPanel>
-                                        <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center" Margin="8,0,0,0">
-                                            <Button Content="Abrir pasta" Command="{Binding OpenFolderCommand}" IsVisible="{Binding CanOpen}" />
-                                            <Button Content="Dispensar" Command="{Binding DismissCommand}" />
-                                        </StackPanel>
-                                    </Grid>
+                                <Border Classes="row">
+                                    <StackPanel Spacing="2">
+                                        <TextBlock Text="{Binding Path}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding Path}" />
+                                        <TextBlock Classes="muted" TextWrapping="Wrap">
+                                            <Run Text="{Binding When}" /><Run Text=", " /><Run Text="{Binding Original}" /><Run Text=": " /><Run Text="{Binding Reason}" />
+                                        </TextBlock>
+                                        <WrapPanel Classes="row-actions">
+                                            <Button Classes="link" Content="Abrir pasta" Command="{Binding OpenFolderCommand}" IsVisible="{Binding CanOpen}" />
+                                            <Button Classes="link" Content="Dispensar" Command="{Binding DismissCommand}" />
+                                        </WrapPanel>
+                                    </StackPanel>
                                 </Border>
                             </DataTemplate>
                         </ListBox.ItemTemplate>
                     </ListBox>
-                </DockPanel>
-            </TabItem>
+                </Border>
+            </DockPanel>
+        </TabItem>
 
-            <!-- ===================== CONFIGURAÇÕES ===================== -->
-            <TabItem Header="Configurações">
+        <!-- ===================== CONFIGURAÇÕES (no pé da barra lateral) ===================== -->
+        <TabItem Header="Configurações" Tag="settings" DockPanel.Dock="Bottom">
+            <DockPanel>
+                <!-- Salvar sempre à vista, sem rolar até o fim -->
+                <Border DockPanel.Dock="Bottom" Background="{DynamicResource CdSurface}" BorderBrush="{DynamicResource CdLine}"
+                        BorderThickness="0,1,0,0" Padding="32,12">
+                    <Grid ColumnDefinitions="Auto,Auto,*,Auto">
+                        <Button Classes="accent" Content="Salvar" Command="{Binding SaveSettingsCommand}" ToolTip.Tip="Ctrl+S" />
+                        <Button Grid.Column="1" Content="Abrir log" Command="{Binding OpenLogCommand}" Margin="8,0,0,0" />
+                        <TextBlock Grid.Column="2" Classes="caption" Text="{Binding LogFile, StringFormat='Log: {0}'}" VerticalAlignment="Center"
+                                   Margin="14,0" TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding LogFile}" />
+                        <Button Grid.Column="3" Content="Sair do craftDriver" Command="{Binding QuitCommand}" />
+                    </Grid>
+                </Border>
                 <ScrollViewer>
-                    <StackPanel Spacing="10" Margin="4" MaxWidth="760" HorizontalAlignment="Left">
-                        <TextBlock Classes="h2" Text="Geral" />
-                        <CheckBox Content="Iniciar o craftDriver ao entrar na sessão" IsChecked="{Binding StartWithSystem}" />
-                        <StackPanel Margin="24,0,0,0" Spacing="4" IsVisible="{Binding CanUseSystemdAutostart}">
-                            <CheckBox Content="Usar serviço do systemd (sem janela nem bandeja)" IsChecked="{Binding UseSystemdAutostart}" IsEnabled="{Binding StartWithSystem}" />
-                            <TextBlock Classes="muted" FontSize="12" TextWrapping="Wrap"
-                                       Text="Hyprland e Sway não leem ~/.config/autostart. O serviço do systemd sincroniza sem interface e reinicia se cair; para ter a bandeja, use em vez disso &quot;exec-once = craftdriver --minimized&quot; no hyprland.conf (ou &quot;exec&quot; no Sway)." />
-                        </StackPanel>
-                        <CheckBox Content="Iniciar minimizado na bandeja" IsChecked="{Binding StartMinimized}" />
-                        <StackPanel Orientation="Horizontal" Spacing="8">
-                            <TextBlock x:Name="ThemeLabel" Text="Aparência:" VerticalAlignment="Center" />
-                            <ComboBox SelectedIndex="{Binding ThemeIndex}" Width="200" AutomationProperties.LabeledBy="{Binding #ThemeLabel}">
-                                <ComboBoxItem Content="Seguir o sistema" />
-                                <ComboBoxItem Content="Claro" />
-                                <ComboBoxItem Content="Escuro" />
-                            </ComboBox>
-                        </StackPanel>
-                        <Button Content="Instalar atalho no menu e itens no menu de contexto (Dolphin / Nautilus / Nemo)" Command="{Binding InstallIntegrationCommand}" />
-
-                        <TextBlock Classes="h2" Text="Atualizações" />
-                        <TextBlock Text="{Binding CurrentVersionText}" />
-                        <CheckBox Content="Procurar atualizações automaticamente" IsChecked="{Binding CheckForUpdates}"
-                                  ToolTip.Tip="Consulta o GitHub 2 minutos depois de abrir e uma vez por dia; nada é instalado sem você pedir" />
-                        <StackPanel Orientation="Horizontal" Spacing="8">
-                            <Button Content="Procurar agora" Command="{Binding CheckForUpdatesNowCommand}" IsEnabled="{Binding !CheckingForUpdates}" />
-                            <TextBlock Classes="muted" Text="{Binding UpdateCheckText}" VerticalAlignment="Center" TextWrapping="Wrap" />
+                    <StackPanel Spacing="16" Margin="32,26,32,28" MaxWidth="780" HorizontalAlignment="Left">
+                        <StackPanel Classes="page-head" Margin="0,0,0,4">
+                            <TextBlock Classes="h1" Text="Configurações" />
+                            <TextBlock Classes="lead" Text="As alterações valem ao salvar (Ctrl+S). As que dependem de reiniciar o craftDriver estão indicadas." />
                         </StackPanel>
 
-                        <TextBlock Classes="h2" Text="Pastas e cache" />
-                        <TextBlock x:Name="MountLabel" Text="Pasta sincronizada (precisa estar vazia; muda na hora ao salvar):" />
-                        <Grid ColumnDefinitions="*,Auto">
-                            <TextBox Text="{Binding MountPoint}" AutomationProperties.LabeledBy="{Binding #MountLabel}" />
-                            <Button Grid.Column="1" Content="Escolher…" Command="{Binding BrowseMountPointCommand}" Margin="8,0,0,0"
-                                    AutomationProperties.Name="Escolher a pasta sincronizada" />
-                        </Grid>
-                        <TextBlock x:Name="CacheLabel" Text="Cache de conteúdo (arquivos baixados; vale ao reiniciar):" />
-                        <Grid ColumnDefinitions="*,Auto">
-                            <TextBox Text="{Binding CacheDir}" AutomationProperties.LabeledBy="{Binding #CacheLabel}" />
-                            <Button Grid.Column="1" Content="Escolher…" Command="{Binding BrowseCacheDirCommand}" Margin="8,0,0,0"
-                                    AutomationProperties.Name="Escolher a pasta do cache" />
-                        </Grid>
-                        <StackPanel Orientation="Horizontal" Spacing="8">
-                            <TextBlock x:Name="CacheLimitLabel" Text="Limite do cache de arquivos não fixados (GB, 0 = sem limite):" VerticalAlignment="Center" />
-                            <NumericUpDown AutomationProperties.LabeledBy="{Binding #CacheLimitLabel}" Value="{Binding CacheLimitGB}" Minimum="0" Maximum="100000" Increment="1" Width="150" />
-                        </StackPanel>
-                        <StackPanel Orientation="Horizontal" Spacing="8">
-                            <TextBlock x:Name="MassDeleteLabel" Text="Pedir confirmação ao apagar mais que (itens; 0 = nunca):" VerticalAlignment="Center" />
-                            <NumericUpDown AutomationProperties.LabeledBy="{Binding #MassDeleteLabel}" Value="{Binding MassDeleteThreshold}" Minimum="0" Maximum="100000" Increment="10" Width="150" />
-                        </StackPanel>
-                        <StackPanel Orientation="Horizontal" Spacing="8">
-                            <TextBlock x:Name="PollLabel" Text="Verificar alterações na nuvem a cada (segundos):" VerticalAlignment="Center" />
-                            <NumericUpDown AutomationProperties.LabeledBy="{Binding #PollLabel}" Value="{Binding PollInterval}" Minimum="10" Maximum="3600" Increment="10" Width="150" />
-                        </StackPanel>
+                        <Border Classes="panel" Padding="22,18">
+                            <StackPanel Spacing="12">
+                                <TextBlock Classes="panel-title" Text="Geral" />
+                                <CheckBox Content="Iniciar o craftDriver ao entrar na sessão" IsChecked="{Binding StartWithSystem}" />
+                                <StackPanel Margin="28,0,0,0" Spacing="4" IsVisible="{Binding CanUseSystemdAutostart}">
+                                    <CheckBox Content="Usar serviço do systemd (sem janela nem bandeja)" IsChecked="{Binding UseSystemdAutostart}" IsEnabled="{Binding StartWithSystem}" />
+                                    <TextBlock Classes="caption" TextWrapping="Wrap"
+                                               Text="Hyprland e Sway não leem ~/.config/autostart. O serviço do systemd sincroniza sem interface e reinicia se cair; para ter a bandeja, use em vez disso &quot;exec-once = craftdriver --minimized&quot; no hyprland.conf (ou &quot;exec&quot; no Sway)." />
+                                </StackPanel>
+                                <CheckBox Content="Iniciar minimizado na bandeja" IsChecked="{Binding StartMinimized}" />
+                                <Grid ColumnDefinitions="*,Auto">
+                                    <TextBlock x:Name="ThemeLabel" Text="Aparência" VerticalAlignment="Center" />
+                                    <ComboBox Grid.Column="1" SelectedIndex="{Binding ThemeIndex}" Width="200" AutomationProperties.LabeledBy="{Binding #ThemeLabel}">
+                                        <ComboBoxItem Content="Seguir o sistema" />
+                                        <ComboBoxItem Content="Claro" />
+                                        <ComboBoxItem Content="Escuro" />
+                                    </ComboBox>
+                                </Grid>
+                                <Button Command="{Binding InstallIntegrationCommand}" HorizontalAlignment="Left"
+                                        AutomationProperties.Name="Instalar atalho no menu e itens no menu de contexto (Dolphin / Nautilus / Nemo)">
+                                    <TextBlock TextWrapping="Wrap" Text="Instalar atalho no menu e itens no menu de contexto (Dolphin / Nautilus / Nemo)" />
+                                </Button>
+                            </StackPanel>
+                        </Border>
 
-                        <TextBlock Classes="h2" Text="Rede" />
-                        <TextBlock Classes="muted" TextWrapping="Wrap" Text="Valem para cada conta/biblioteca e são aplicados ao salvar, inclusive em transferências em andamento." />
-                        <StackPanel Orientation="Horizontal" Spacing="8">
-                            <TextBlock x:Name="ConcurrencyLabel" Text="Downloads simultâneos:" VerticalAlignment="Center" />
-                            <NumericUpDown AutomationProperties.LabeledBy="{Binding #ConcurrencyLabel}" Value="{Binding DownloadConcurrency}" Minimum="1" Maximum="32" Increment="1" Width="150" />
-                        </StackPanel>
-                        <StackPanel Orientation="Horizontal" Spacing="8">
-                            <TextBlock x:Name="DownLimitLabel" Text="Limite de download (MB/s, 0 = sem limite):" VerticalAlignment="Center" />
-                            <NumericUpDown AutomationProperties.LabeledBy="{Binding #DownLimitLabel}" Value="{Binding DownloadLimitMBps}" Minimum="0" Maximum="10000" Increment="1" FormatString="0.##" Width="150" />
-                        </StackPanel>
-                        <StackPanel Orientation="Horizontal" Spacing="8">
-                            <TextBlock x:Name="UpLimitLabel" Text="Limite de envio (MB/s, 0 = sem limite):" VerticalAlignment="Center" />
-                            <NumericUpDown AutomationProperties.LabeledBy="{Binding #UpLimitLabel}" Value="{Binding UploadLimitMBps}" Minimum="0" Maximum="10000" Increment="1" FormatString="0.##" Width="150" />
-                        </StackPanel>
+                        <Border Classes="panel" Padding="22,18">
+                            <StackPanel Spacing="12">
+                                <TextBlock Classes="panel-title" Text="Atualizações" />
+                                <TextBlock Text="{Binding CurrentVersionText}" />
+                                <CheckBox Content="Procurar atualizações automaticamente" IsChecked="{Binding CheckForUpdates}"
+                                          ToolTip.Tip="Consulta o GitHub 2 minutos depois de abrir e uma vez por dia; nada é instalado sem você pedir" />
+                                <StackPanel Orientation="Horizontal" Spacing="12">
+                                    <Button Content="Procurar agora" Command="{Binding CheckForUpdatesNowCommand}" IsEnabled="{Binding !CheckingForUpdates}" />
+                                    <TextBlock Classes="muted" Text="{Binding UpdateCheckText}" VerticalAlignment="Center" TextWrapping="Wrap" />
+                                </StackPanel>
+                            </StackPanel>
+                        </Border>
 
-                        <TextBlock Classes="h2" Text="Avançado" />
-                        <TextBlock x:Name="BlockedLabel" TextWrapping="Wrap" Text="Programas que não podem baixar arquivos somente online (indexadores e miniaturas baixariam tudo). Separe por vírgula:" />
-                        <TextBox AutomationProperties.LabeledBy="{Binding #BlockedLabel}" Text="{Binding BlockedProcesses}" TextWrapping="Wrap" AcceptsReturn="False" />
-                        <TextBlock x:Name="LocalOnlyLabel" TextWrapping="Wrap" Text="Arquivos que ficam só neste computador (nunca enviados) — padrões com * e ?:" />
-                        <TextBox AutomationProperties.LabeledBy="{Binding #LocalOnlyLabel}" Text="{Binding LocalOnlyPatterns}" TextWrapping="Wrap" />
-                        <TextBlock x:Name="ClientIdLabel" TextWrapping="Wrap" Text="Client ID do aplicativo no Microsoft Entra ID (padrão: o app craftDriver registrado por este projeto; vale ao reiniciar):" />
-                        <TextBox AutomationProperties.LabeledBy="{Binding #ClientIdLabel}" Text="{Binding ClientId}" />
+                        <Border Classes="panel" Padding="22,18">
+                            <StackPanel Spacing="12">
+                                <TextBlock Classes="panel-title" Text="Pastas e cache" />
+                                <StackPanel Spacing="6">
+                                    <TextBlock x:Name="MountLabel" Text="Pasta sincronizada (precisa estar vazia; muda na hora ao salvar)" TextWrapping="Wrap" />
+                                    <Grid ColumnDefinitions="*,Auto">
+                                        <TextBox Text="{Binding MountPoint}" AutomationProperties.LabeledBy="{Binding #MountLabel}" />
+                                        <Button Grid.Column="1" Content="Escolher…" Command="{Binding BrowseMountPointCommand}" Margin="8,0,0,0"
+                                                AutomationProperties.Name="Escolher a pasta sincronizada" />
+                                    </Grid>
+                                </StackPanel>
+                                <StackPanel Spacing="6">
+                                    <TextBlock x:Name="CacheLabel" Text="Cache de conteúdo (arquivos baixados; vale ao reiniciar)" TextWrapping="Wrap" />
+                                    <Grid ColumnDefinitions="*,Auto">
+                                        <TextBox Text="{Binding CacheDir}" AutomationProperties.LabeledBy="{Binding #CacheLabel}" />
+                                        <Button Grid.Column="1" Content="Escolher…" Command="{Binding BrowseCacheDirCommand}" Margin="8,0,0,0"
+                                                AutomationProperties.Name="Escolher a pasta do cache" />
+                                    </Grid>
+                                </StackPanel>
+                                <Grid ColumnDefinitions="*,Auto">
+                                    <TextBlock x:Name="CacheLimitLabel" Text="Limite do cache de arquivos não fixados (GB, 0 = sem limite)" TextWrapping="Wrap" VerticalAlignment="Center" Margin="0,0,16,0" />
+                                    <NumericUpDown Grid.Column="1" AutomationProperties.LabeledBy="{Binding #CacheLimitLabel}" Value="{Binding CacheLimitGB}" Minimum="0" Maximum="100000" Increment="1" Width="160" />
+                                </Grid>
+                                <Grid ColumnDefinitions="*,Auto">
+                                    <TextBlock x:Name="MassDeleteLabel" Text="Pedir confirmação ao apagar mais que (itens; 0 = nunca)" TextWrapping="Wrap" VerticalAlignment="Center" Margin="0,0,16,0" />
+                                    <NumericUpDown Grid.Column="1" AutomationProperties.LabeledBy="{Binding #MassDeleteLabel}" Value="{Binding MassDeleteThreshold}" Minimum="0" Maximum="100000" Increment="10" Width="160" />
+                                </Grid>
+                                <Grid ColumnDefinitions="*,Auto">
+                                    <TextBlock x:Name="PollLabel" Text="Verificar alterações na nuvem a cada (segundos)" TextWrapping="Wrap" VerticalAlignment="Center" Margin="0,0,16,0" />
+                                    <NumericUpDown Grid.Column="1" AutomationProperties.LabeledBy="{Binding #PollLabel}" Value="{Binding PollInterval}" Minimum="10" Maximum="3600" Increment="10" Width="160" />
+                                </Grid>
+                            </StackPanel>
+                        </Border>
 
-                        <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,8,0,0">
-                            <Button Classes="accent" Content="Salvar" Command="{Binding SaveSettingsCommand}" ToolTip.Tip="Ctrl+S" />
-                            <Button Content="Abrir log" Command="{Binding OpenLogCommand}" />
-                            <Button Content="Sair do craftDriver" Command="{Binding QuitCommand}" />
-                        </StackPanel>
-                        <TextBlock Classes="muted" Text="{Binding LogFile, StringFormat='Log: {0}'}" />
+                        <Border Classes="panel" Padding="22,18">
+                            <StackPanel Spacing="12">
+                                <TextBlock Classes="panel-title" Text="Rede" Margin="0" />
+                                <TextBlock Classes="caption" TextWrapping="Wrap" Margin="0,-6,0,4" Text="Valem para cada conta/biblioteca e são aplicados ao salvar, inclusive em transferências em andamento." />
+                                <Grid ColumnDefinitions="*,Auto">
+                                    <TextBlock x:Name="ConcurrencyLabel" Text="Downloads simultâneos" VerticalAlignment="Center" Margin="0,0,16,0" />
+                                    <NumericUpDown Grid.Column="1" AutomationProperties.LabeledBy="{Binding #ConcurrencyLabel}" Value="{Binding DownloadConcurrency}" Minimum="1" Maximum="32" Increment="1" Width="160" />
+                                </Grid>
+                                <Grid ColumnDefinitions="*,Auto">
+                                    <TextBlock x:Name="DownLimitLabel" Text="Limite de download (MB/s, 0 = sem limite)" TextWrapping="Wrap" VerticalAlignment="Center" Margin="0,0,16,0" />
+                                    <NumericUpDown Grid.Column="1" AutomationProperties.LabeledBy="{Binding #DownLimitLabel}" Value="{Binding DownloadLimitMBps}" Minimum="0" Maximum="10000" Increment="1" FormatString="0.##" Width="160" />
+                                </Grid>
+                                <Grid ColumnDefinitions="*,Auto">
+                                    <TextBlock x:Name="UpLimitLabel" Text="Limite de envio (MB/s, 0 = sem limite)" TextWrapping="Wrap" VerticalAlignment="Center" Margin="0,0,16,0" />
+                                    <NumericUpDown Grid.Column="1" AutomationProperties.LabeledBy="{Binding #UpLimitLabel}" Value="{Binding UploadLimitMBps}" Minimum="0" Maximum="10000" Increment="1" FormatString="0.##" Width="160" />
+                                </Grid>
+                            </StackPanel>
+                        </Border>
+
+                        <Border Classes="panel" Padding="22,18">
+                            <StackPanel Spacing="12">
+                                <TextBlock Classes="panel-title" Text="Avançado" />
+                                <StackPanel Spacing="6">
+                                    <TextBlock x:Name="BlockedLabel" TextWrapping="Wrap" Text="Programas que não podem baixar arquivos somente online (indexadores e miniaturas baixariam tudo). Separe por vírgula:" />
+                                    <TextBox AutomationProperties.LabeledBy="{Binding #BlockedLabel}" Text="{Binding BlockedProcesses}" TextWrapping="Wrap" AcceptsReturn="False" />
+                                </StackPanel>
+                                <StackPanel Spacing="6">
+                                    <TextBlock x:Name="LocalOnlyLabel" TextWrapping="Wrap" Text="Arquivos que ficam só neste computador (nunca enviados), com padrões * e ?:" />
+                                    <TextBox AutomationProperties.LabeledBy="{Binding #LocalOnlyLabel}" Text="{Binding LocalOnlyPatterns}" TextWrapping="Wrap" />
+                                </StackPanel>
+                                <StackPanel Spacing="6">
+                                    <TextBlock x:Name="ClientIdLabel" TextWrapping="Wrap" Text="Client ID do aplicativo no Microsoft Entra ID (padrão: o app craftDriver registrado por este projeto; vale ao reiniciar):" />
+                                    <TextBox AutomationProperties.LabeledBy="{Binding #ClientIdLabel}" Text="{Binding ClientId}" />
+                                </StackPanel>
+                            </StackPanel>
+                        </Border>
                     </StackPanel>
                 </ScrollViewer>
-            </TabItem>
-        </TabControl>
-    </DockPanel>
+            </DockPanel>
+        </TabItem>
+    </TabControl>
 </Window>

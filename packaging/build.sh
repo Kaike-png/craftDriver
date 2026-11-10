@@ -76,6 +76,8 @@ for A in $ARCHES; do
   install -Dm644 "$ROOT/extensions/thunar/uca.xml" "$STAGING/share/craftdriver/thunar/uca.xml"
   install -Dm755 "$ROOT/extensions/thunar/install-uca.py" "$STAGING/share/craftdriver/thunar/install-uca.py"
   cp "$ROOT/LICENSE" "$ROOT/README.md" "$ROOT/CHANGELOG.md" "$STAGING/"
+  # licença da fonte da interface (IBM Plex Sans, embutida no app)
+  cp "$ROOT/src/CraftDriver.App/Assets/Fonts/OFL.txt" "$STAGING/LICENSE.fonts"
 
   echo "→ tarball ($A)"
   tar -C "$DIST" -czf "$DIST/$NAME.tar.gz" "$NAME"

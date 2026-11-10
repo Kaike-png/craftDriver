@@ -148,6 +148,10 @@ contents:
     dst: /usr/share/licenses/craftdriver/LICENSE
     file_info:
       mode: 0644
+  - src: @STAGING@/LICENSE.fonts
+    dst: /usr/share/licenses/craftdriver/LICENSE.fonts
+    file_info:
+      mode: 0644
   - src: @STAGING@/README.md
     dst: /usr/share/doc/craftdriver/README.md
     file_info:

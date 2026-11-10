@@ -3,7 +3,7 @@
         x:Class="CraftDriver.App.Views.NoTrayCloseWindow"
         Title="Fechar o craftDriver?" Width="500" SizeToContent="Height" CanResize="False"
         WindowStartupLocation="CenterOwner">
-    <StackPanel Margin="24" Spacing="12">
+    <StackPanel Margin="24,22,24,20" Spacing="12">
         <TextBlock Classes="h2" Text="Não há área de notificação (bandeja) nesta sessão" TextWrapping="Wrap" />
         <TextBlock x:Name="BodyText" TextWrapping="Wrap" />
         <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8">

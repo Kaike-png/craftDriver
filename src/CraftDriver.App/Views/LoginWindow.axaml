@@ -1,77 +1,105 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:svc="using:CraftDriver.App.Services"
+        xmlns:views="using:CraftDriver.App.Views"
         x:Class="CraftDriver.App.Views.LoginWindow"
         Title="Entrar com a conta Microsoft" Width="580" SizeToContent="Height"
         WindowStartupLocation="CenterOwner" CanResize="False">
-    <StackPanel Margin="24" Spacing="14">
-        <TextBlock Classes="h1" Text="Entrar no craftDriver" />
-
-        <StackPanel x:Name="ChoosePanel" Spacing="10">
-            <TextBlock TextWrapping="Wrap" Text="Qual tipo de conta você quer conectar?" />
-            <Button x:Name="PersonalButton" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" Padding="14,10">
-                <StackPanel>
-                    <TextBlock Text="Conta pessoal" FontWeight="SemiBold" />
-                    <TextBlock Classes="muted" Text="Outlook.com, Hotmail, Live, Xbox — OneDrive pessoal" TextWrapping="Wrap" />
+    <DockPanel>
+        <Border DockPanel.Dock="Top" Classes="brand-band">
+            <StackPanel Orientation="Horizontal" Spacing="14">
+                <views:BrandMark Width="34" Height="34" />
+                <StackPanel VerticalAlignment="Center">
+                    <TextBlock x:Name="HeadingText" Classes="h1" Text="Entrar no craftDriver" />
+                    <TextBlock x:Name="HeadingDetail" Classes="band-detail" IsVisible="False" />
                 </StackPanel>
-            </Button>
-            <Button x:Name="WorkButton" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" Padding="14,10">
-                <StackPanel>
-                    <TextBlock Text="Conta de trabalho ou escola" FontWeight="SemiBold" />
-                    <TextBlock Classes="muted" Text="Microsoft 365 — OneDrive for Business e SharePoint" TextWrapping="Wrap" />
+            </StackPanel>
+        </Border>
+
+        <StackPanel Margin="24,22,24,24" Spacing="14">
+            <StackPanel x:Name="ChoosePanel" Spacing="10">
+                <TextBlock TextWrapping="Wrap" Text="Qual tipo de conta você quer conectar?" />
+                <Button x:Name="PersonalButton" Classes="option" AutomationProperties.Name="Conta pessoal">
+                    <Grid ColumnDefinitions="Auto,*,Auto">
+                        <Border Classes="avatar" VerticalAlignment="Center">
+                            <PathIcon Data="{x:Static svc:Icons.Account}" AutomationProperties.AccessibilityView="Raw" />
+                        </Border>
+                        <StackPanel Grid.Column="1" Margin="14,0" VerticalAlignment="Center">
+                            <TextBlock Text="Conta pessoal" FontWeight="SemiBold" />
+                            <TextBlock Classes="muted" Text="Outlook.com, Hotmail, Live, Xbox — OneDrive pessoal" TextWrapping="Wrap" />
+                        </StackPanel>
+                        <PathIcon Grid.Column="2" Classes="muted" Data="{x:Static svc:Icons.Chevron}" Width="16" Height="16"
+                                  AutomationProperties.AccessibilityView="Raw" />
+                    </Grid>
+                </Button>
+                <Button x:Name="WorkButton" Classes="option" AutomationProperties.Name="Conta de trabalho ou escola">
+                    <Grid ColumnDefinitions="Auto,*,Auto">
+                        <Border Classes="avatar" VerticalAlignment="Center">
+                            <PathIcon Data="{x:Static svc:Icons.Business}" AutomationProperties.AccessibilityView="Raw" />
+                        </Border>
+                        <StackPanel Grid.Column="1" Margin="14,0" VerticalAlignment="Center">
+                            <TextBlock Text="Conta de trabalho ou escola" FontWeight="SemiBold" />
+                            <TextBlock Classes="muted" Text="Microsoft 365 — OneDrive for Business e SharePoint" TextWrapping="Wrap" />
+                        </StackPanel>
+                        <PathIcon Grid.Column="2" Classes="muted" Data="{x:Static svc:Icons.Chevron}" Width="16" Height="16"
+                                  AutomationProperties.AccessibilityView="Raw" />
+                    </Grid>
+                </Button>
+            </StackPanel>
+
+            <!-- método automático: navegador do sistema + retorno em http://localhost (padrão para contas pessoais) -->
+            <Border Classes="card" x:Name="AutoPanel" IsVisible="False">
+                <StackPanel Spacing="10">
+                    <TextBlock TextWrapping="Wrap" Text="Entre com sua conta Microsoft na página que abriu no navegador e aceite o pedido de acesso do app. Ao terminar, o navegador mostra &quot;Pronto! Login recebido.&quot; e o app conclui sozinho — não precisa copiar nada." />
+                    <Button x:Name="ReopenAuto" HorizontalAlignment="Center" Content="Abrir a página de login de novo" />
+                    <Button x:Name="SwitchToManual" Classes="link" HorizontalAlignment="Center" Content="Não funcionou? Usar o método manual (colar endereço)" />
                 </StackPanel>
-            </Button>
+            </Border>
+
+            <!-- método manual: navegador + colar o endereço final -->
+            <Border Classes="card" x:Name="BrowserPanel" IsVisible="False">
+                <StackPanel Spacing="10">
+                    <TextBlock TextWrapping="Wrap" Text="1. Entre com sua conta Microsoft na página que abriu no navegador e aceite o pedido de acesso do app." />
+                    <Button x:Name="OpenLoginPage" HorizontalAlignment="Center" Content="Abrir a página de login de novo" />
+                    <TextBlock TextWrapping="Wrap" Text="2. No final o navegador mostra uma página em branco. Copie o endereço inteiro da barra de endereços (começa com https://login.microsoftonline.com/common/oauth2/nativeclient?code=…) e cole aqui:" />
+                    <TextBox x:Name="PasteBox" PlaceholderText="https://login.microsoftonline.com/common/oauth2/nativeclient?code=…" TextWrapping="Wrap" />
+                    <Button x:Name="FinishBrowser" Classes="accent" HorizontalAlignment="Right" Content="Concluir login" />
+                    <TextBlock x:Name="PasteError" Classes="error" TextWrapping="Wrap" IsVisible="False" />
+                </StackPanel>
+            </Border>
+
+            <!-- método 2: código de dispositivo (padrão para trabalho/escola) -->
+            <Border Classes="card" x:Name="CodePanel" IsVisible="False">
+                <StackPanel Spacing="10">
+                    <TextBlock x:Name="UrlText" TextWrapping="Wrap" />
+                    <Border Classes="code-well">
+                        <SelectableTextBlock x:Name="CodeText" FontSize="32" FontFamily="monospace" FontWeight="Bold"
+                                             HorizontalAlignment="Center" LetterSpacing="4" />
+                    </Border>
+                    <Button x:Name="OpenBrowser" Classes="accent" HorizontalAlignment="Center"
+                            Content="Copiar código e abrir o navegador" />
+                    <Button x:Name="SwitchToBrowser" Classes="link" HorizontalAlignment="Center"
+                            Content="Não funcionou? Entrar pelo navegador colando o endereço" />
+                </StackPanel>
+            </Border>
+
+            <StackPanel x:Name="ProgressPanel" Spacing="8" IsVisible="False">
+                <TextBlock x:Name="StatusText" TextWrapping="Wrap" Text="Preparando o login…" />
+                <ProgressBar x:Name="Busy" IsIndeterminate="True" />
+            </StackPanel>
+            <!-- erro do login: mensagem em português, detalhe técnico recolhível e "Tentar de novo" sem fechar a janela -->
+            <Border Classes="card danger" x:Name="ErrorPanel" IsVisible="False">
+                <StackPanel Spacing="8">
+                    <TextBlock x:Name="ErrorText" Classes="error" TextWrapping="Wrap" FontWeight="SemiBold" />
+                    <Expander x:Name="ErrorDetails" Header="Detalhes técnicos" HorizontalAlignment="Stretch">
+                        <SelectableTextBlock x:Name="ErrorDetailText" TextWrapping="Wrap" FontFamily="monospace" FontSize="12" />
+                    </Expander>
+                </StackPanel>
+            </Border>
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8">
+                <Button x:Name="RetryButton" Classes="accent" Content="Tentar de novo" IsVisible="False" />
+                <Button x:Name="CloseButton" Content="Cancelar" IsCancel="True" />
+            </StackPanel>
         </StackPanel>
-
-        <!-- método automático: navegador do sistema + retorno em http://localhost (padrão para contas pessoais) -->
-        <Border Classes="card" x:Name="AutoPanel" IsVisible="False">
-            <StackPanel Spacing="10">
-                <TextBlock TextWrapping="Wrap" Text="Entre com sua conta Microsoft na página que abriu no navegador e aceite o pedido de acesso do app. Ao terminar, o navegador mostra &quot;Pronto! Login recebido.&quot; e o app conclui sozinho — não precisa copiar nada." />
-                <Button x:Name="ReopenAuto" HorizontalAlignment="Center" Content="Abrir a página de login de novo" />
-                <Button x:Name="SwitchToManual" HorizontalAlignment="Center" Content="Não funcionou? Usar o método manual (colar endereço)" />
-            </StackPanel>
-        </Border>
-
-        <!-- método manual: navegador + colar o endereço final -->
-        <Border Classes="card" x:Name="BrowserPanel" IsVisible="False">
-            <StackPanel Spacing="10">
-                <TextBlock TextWrapping="Wrap" Text="1. Entre com sua conta Microsoft na página que abriu no navegador e aceite o pedido de acesso do app." />
-                <Button x:Name="OpenLoginPage" HorizontalAlignment="Center" Content="Abrir a página de login de novo" />
-                <TextBlock TextWrapping="Wrap" Text="2. No final o navegador mostra uma página em branco. Copie o endereço inteiro da barra de endereços (começa com https://login.microsoftonline.com/common/oauth2/nativeclient?code=…) e cole aqui:" />
-                <TextBox x:Name="PasteBox" PlaceholderText="https://login.microsoftonline.com/common/oauth2/nativeclient?code=…" TextWrapping="Wrap" />
-                <Button x:Name="FinishBrowser" Classes="accent" HorizontalAlignment="Right" Content="Concluir login" />
-                <TextBlock x:Name="PasteError" Classes="error" TextWrapping="Wrap" IsVisible="False" />
-            </StackPanel>
-        </Border>
-
-        <!-- método 2: código de dispositivo (padrão para trabalho/escola) -->
-        <Border Classes="card" x:Name="CodePanel" IsVisible="False">
-            <StackPanel Spacing="8">
-                <TextBlock x:Name="UrlText" TextWrapping="Wrap" />
-                <SelectableTextBlock x:Name="CodeText" FontSize="34" FontFamily="monospace" FontWeight="Bold"
-                                     HorizontalAlignment="Center" LetterSpacing="4" />
-                <Button x:Name="OpenBrowser" Classes="accent" HorizontalAlignment="Center"
-                        Content="Copiar código e abrir o navegador" />
-                <Button x:Name="SwitchToBrowser" HorizontalAlignment="Center"
-                        Content="Não funcionou? Entrar pelo navegador colando o endereço" />
-            </StackPanel>
-        </Border>
-
-        <StackPanel x:Name="ProgressPanel" Spacing="6" IsVisible="False">
-            <TextBlock x:Name="StatusText" TextWrapping="Wrap" Text="Preparando o login…" />
-            <ProgressBar x:Name="Busy" IsIndeterminate="True" />
-        </StackPanel>
-        <!-- erro do login: mensagem em português, detalhe técnico recolhível e "Tentar de novo" sem fechar a janela -->
-        <Border Classes="card" x:Name="ErrorPanel" IsVisible="False">
-            <StackPanel Spacing="8">
-                <TextBlock x:Name="ErrorText" Classes="error" TextWrapping="Wrap" FontWeight="SemiBold" />
-                <Expander x:Name="ErrorDetails" Header="Detalhes técnicos" HorizontalAlignment="Stretch">
-                    <SelectableTextBlock x:Name="ErrorDetailText" TextWrapping="Wrap" FontFamily="monospace" FontSize="12" />
-                </Expander>
-            </StackPanel>
-        </Border>
-        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8">
-            <Button x:Name="RetryButton" Classes="accent" Content="Tentar de novo" IsVisible="False" />
-            <Button x:Name="CloseButton" Content="Cancelar" IsCancel="True" />
-        </StackPanel>
-    </StackPanel>
+    </DockPanel>
 </Window>

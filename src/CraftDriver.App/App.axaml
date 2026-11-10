@@ -3,7 +3,13 @@
              x:Class="CraftDriver.App.App"
              RequestedThemeVariant="Default">
     <Application.Styles>
-        <FluentTheme />
+        <!-- cor de destaque e fundo da identidade do craftDriver (petróleo do ícone); o resto vem dos estilos abaixo -->
+        <FluentTheme>
+            <FluentTheme.Palettes>
+                <ColorPaletteResources x:Key="Light" Accent="#0B7468" RegionColor="#F2F5F4" ErrorText="#B42318" />
+                <ColorPaletteResources x:Key="Dark" Accent="#3CBFA8" RegionColor="#121918" ErrorText="#FF9A90" />
+            </FluentTheme.Palettes>
+        </FluentTheme>
         <!-- todos os estilos próprios do app ficam numa fonte só -->
         <StyleInclude Source="avares://CraftDriver.App/Styles/CraftDriverStyles.axaml" />
     </Application.Styles>

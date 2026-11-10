@@ -1,50 +1,498 @@
 <Styles xmlns="https://github.com/avaloniaui"
-        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
-    <!-- Cores próprias do app, com variante clara e escura (antes: #C42B1C / IndianRed fixos, ilegíveis no escuro). -->
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:svc="using:CraftDriver.App.Services"
+        xmlns:views="using:CraftDriver.App.Views">
+    <!--
+        Identidade visual do craftDriver.
+        Cores: o petróleo do ícone (#0E8F7E) é a base. A barra lateral é "pinho" (#0F302C) nos dois temas; ações,
+        seleção e foco usam petróleo; o fundo é névoa (#F2F5F4) e os painéis, papel branco.
+        Tipo: IBM Plex Sans (OFL, Assets/Fonts) em 400/500/600. Escala: 12 legenda, 14 texto, 16 seção, 21 título.
+        Forma: painéis com filete de 1 px e raio 6; controles com raio 4; listas em linhas separadas por filetes.
+    -->
     <Styles.Resources>
         <ResourceDictionary>
+            <FontFamily x:Key="CdFontFamily">avares://CraftDriver.App/Assets/Fonts#IBM Plex Sans</FontFamily>
+            <FontFamily x:Key="ContentControlThemeFontFamily">avares://CraftDriver.App/Assets/Fonts#IBM Plex Sans</FontFamily>
+            <CornerRadius x:Key="ControlCornerRadius">4</CornerRadius>
+            <CornerRadius x:Key="OverlayCornerRadius">6</CornerRadius>
+            <Thickness x:Key="ButtonPadding">14,6,14,7</Thickness>
+            <Thickness x:Key="ButtonBorderThemeThickness">1</Thickness>
+
+            <!-- barra lateral: escura nos dois temas -->
+            <SolidColorBrush x:Key="CdNavBg" Color="#0F302C" />
+            <SolidColorBrush x:Key="CdNavText" Color="#FFFFFF" />
+            <SolidColorBrush x:Key="CdNavLabel" Color="#C6D8D4" />
+            <SolidColorBrush x:Key="CdNavMuted" Color="#9DB8B3" />
+            <SolidColorBrush x:Key="CdNavHover" Color="#16403A" />
+            <SolidColorBrush x:Key="CdNavSelected" Color="#1E4D46" />
+            <SolidColorBrush x:Key="CdNavIndicator" Color="#5FD6C0" />
+            <SolidColorBrush x:Key="CdNavLine" Color="#24493F" />
+            <SolidColorBrush x:Key="CdNavButtonLine" Color="#3A625B" />
+
             <ResourceDictionary.ThemeDictionaries>
                 <ResourceDictionary x:Key="Light">
-                    <SolidColorBrush x:Key="CdErrorBrush" Color="#C42B1C" />
-                    <SolidColorBrush x:Key="CdErrorBackgroundBrush" Color="#1FC42B1C" />
-                    <SolidColorBrush x:Key="CdWarningBackgroundBrush" Color="#26C42B1C" />
+                    <SolidColorBrush x:Key="CdBg" Color="#F2F5F4" />
+                    <SolidColorBrush x:Key="CdSurface" Color="#FFFFFF" />
+                    <SolidColorBrush x:Key="CdLine" Color="#DCE3E1" />
+                    <SolidColorBrush x:Key="CdText" Color="#16211F" />
+                    <SolidColorBrush x:Key="CdTextMuted" Color="#5A6865" />
+                    <SolidColorBrush x:Key="CdAccentText" Color="#0B7468" />
+                    <SolidColorBrush x:Key="CdAccentTextHover" Color="#07554C" />
+                    <SolidColorBrush x:Key="CdAccentSoft" Color="#E3F1EE" />
+                    <SolidColorBrush x:Key="CdAccentLine" Color="#A9D3CA" />
+                    <SolidColorBrush x:Key="CdErrorBrush" Color="#B42318" />
+                    <SolidColorBrush x:Key="CdErrorBackgroundBrush" Color="#FCEDEB" />
+                    <SolidColorBrush x:Key="CdWarningBackgroundBrush" Color="#FCEDEB" />
+                    <SolidColorBrush x:Key="CdErrorLine" Color="#EDB8B2" />
+
+                    <SolidColorBrush x:Key="ButtonBackground" Color="#FFFFFF" />
+                    <SolidColorBrush x:Key="ButtonBackgroundPointerOver" Color="#EDF3F1" />
+                    <SolidColorBrush x:Key="ButtonBackgroundPressed" Color="#E0E9E6" />
+                    <SolidColorBrush x:Key="ButtonBackgroundDisabled" Color="#F2F5F4" />
+                    <SolidColorBrush x:Key="ButtonForeground" Color="#16211F" />
+                    <SolidColorBrush x:Key="ButtonForegroundPointerOver" Color="#16211F" />
+                    <SolidColorBrush x:Key="ButtonForegroundPressed" Color="#16211F" />
+                    <SolidColorBrush x:Key="ButtonForegroundDisabled" Color="#98A5A1" />
+                    <SolidColorBrush x:Key="ButtonBorderBrush" Color="#C5D0CD" />
+                    <SolidColorBrush x:Key="ButtonBorderBrushPointerOver" Color="#9FB0AB" />
+                    <SolidColorBrush x:Key="ButtonBorderBrushPressed" Color="#9FB0AB" />
+                    <SolidColorBrush x:Key="ButtonBorderBrushDisabled" Color="#E0E6E4" />
+                    <SolidColorBrush x:Key="AccentButtonBackground" Color="#0B7468" />
+                    <SolidColorBrush x:Key="AccentButtonBackgroundPointerOver" Color="#095F55" />
+                    <SolidColorBrush x:Key="AccentButtonBackgroundPressed" Color="#084F47" />
+                    <SolidColorBrush x:Key="AccentButtonBackgroundDisabled" Color="#B8CEC9" />
+                    <SolidColorBrush x:Key="AccentButtonForeground" Color="#FFFFFF" />
+                    <SolidColorBrush x:Key="AccentButtonForegroundPointerOver" Color="#FFFFFF" />
+                    <SolidColorBrush x:Key="AccentButtonForegroundPressed" Color="#FFFFFF" />
+                    <SolidColorBrush x:Key="AccentButtonForegroundDisabled" Color="#F4F7F6" />
+                    <SolidColorBrush x:Key="AccentButtonBorderBrush" Color="Transparent" />
+                    <SolidColorBrush x:Key="AccentButtonBorderBrushPointerOver" Color="Transparent" />
+                    <SolidColorBrush x:Key="AccentButtonBorderBrushPressed" Color="Transparent" />
+                    <SolidColorBrush x:Key="AccentButtonBorderBrushDisabled" Color="Transparent" />
+                    <!-- linha selecionada nas listas: tom suave de petróleo, texto continua legível -->
+                    <SolidColorBrush x:Key="SystemControlHighlightListAccentLowBrush" Color="#D6EBE6" />
+                    <SolidColorBrush x:Key="SystemControlHighlightListAccentMediumBrush" Color="#C8E3DD" />
+                    <SolidColorBrush x:Key="SystemControlHighlightListAccentHighBrush" Color="#B8DBD3" />
                 </ResourceDictionary>
                 <ResourceDictionary x:Key="Dark">
-                    <SolidColorBrush x:Key="CdErrorBrush" Color="#FF99A4" />
-                    <SolidColorBrush x:Key="CdErrorBackgroundBrush" Color="#33FF99A4" />
-                    <SolidColorBrush x:Key="CdWarningBackgroundBrush" Color="#40FF99A4" />
+                    <SolidColorBrush x:Key="CdBg" Color="#121918" />
+                    <SolidColorBrush x:Key="CdSurface" Color="#19221F" />
+                    <SolidColorBrush x:Key="CdLine" Color="#2B3734" />
+                    <SolidColorBrush x:Key="CdText" Color="#E4ECEA" />
+                    <SolidColorBrush x:Key="CdTextMuted" Color="#9AABA7" />
+                    <SolidColorBrush x:Key="CdAccentText" Color="#5FD6C0" />
+                    <SolidColorBrush x:Key="CdAccentTextHover" Color="#8DE5D4" />
+                    <SolidColorBrush x:Key="CdAccentSoft" Color="#173A35" />
+                    <SolidColorBrush x:Key="CdAccentLine" Color="#2A6058" />
+                    <SolidColorBrush x:Key="CdErrorBrush" Color="#FF9A90" />
+                    <SolidColorBrush x:Key="CdErrorBackgroundBrush" Color="#3A1F1C" />
+                    <SolidColorBrush x:Key="CdWarningBackgroundBrush" Color="#3A1F1C" />
+                    <SolidColorBrush x:Key="CdErrorLine" Color="#7A3A33" />
+
+                    <SolidColorBrush x:Key="ButtonBackground" Color="#1E2926" />
+                    <SolidColorBrush x:Key="ButtonBackgroundPointerOver" Color="#263330" />
+                    <SolidColorBrush x:Key="ButtonBackgroundPressed" Color="#2E3D39" />
+                    <SolidColorBrush x:Key="ButtonBackgroundDisabled" Color="#182120" />
+                    <SolidColorBrush x:Key="ButtonForeground" Color="#E4ECEA" />
+                    <SolidColorBrush x:Key="ButtonForegroundPointerOver" Color="#E4ECEA" />
+                    <SolidColorBrush x:Key="ButtonForegroundPressed" Color="#E4ECEA" />
+                    <SolidColorBrush x:Key="ButtonForegroundDisabled" Color="#66736F" />
+                    <SolidColorBrush x:Key="ButtonBorderBrush" Color="#374642" />
+                    <SolidColorBrush x:Key="ButtonBorderBrushPointerOver" Color="#4F6560" />
+                    <SolidColorBrush x:Key="ButtonBorderBrushPressed" Color="#4F6560" />
+                    <SolidColorBrush x:Key="ButtonBorderBrushDisabled" Color="#26302E" />
+                    <SolidColorBrush x:Key="AccentButtonBackground" Color="#3CBFA8" />
+                    <SolidColorBrush x:Key="AccentButtonBackgroundPointerOver" Color="#57CDB8" />
+                    <SolidColorBrush x:Key="AccentButtonBackgroundPressed" Color="#2FA592" />
+                    <SolidColorBrush x:Key="AccentButtonBackgroundDisabled" Color="#24403B" />
+                    <SolidColorBrush x:Key="AccentButtonForeground" Color="#052420" />
+                    <SolidColorBrush x:Key="AccentButtonForegroundPointerOver" Color="#052420" />
+                    <SolidColorBrush x:Key="AccentButtonForegroundPressed" Color="#052420" />
+                    <SolidColorBrush x:Key="AccentButtonForegroundDisabled" Color="#6E8580" />
+                    <SolidColorBrush x:Key="AccentButtonBorderBrush" Color="Transparent" />
+                    <SolidColorBrush x:Key="AccentButtonBorderBrushPointerOver" Color="Transparent" />
+                    <SolidColorBrush x:Key="AccentButtonBorderBrushPressed" Color="Transparent" />
+                    <SolidColorBrush x:Key="AccentButtonBorderBrushDisabled" Color="Transparent" />
+                    <SolidColorBrush x:Key="SystemControlHighlightListAccentLowBrush" Color="#1D4741" />
+                    <SolidColorBrush x:Key="SystemControlHighlightListAccentMediumBrush" Color="#23524B" />
+                    <SolidColorBrush x:Key="SystemControlHighlightListAccentHighBrush" Color="#2A5E56" />
                 </ResourceDictionary>
             </ResourceDictionary.ThemeDictionaries>
+
+            <!-- item da navegação lateral: ícone (chave de Icons em Tag) + nome da aba -->
+            <ControlTheme x:Key="CdNavItem" TargetType="TabItem">
+                <Setter Property="DockPanel.Dock" Value="Top" />
+                <Setter Property="FontSize" Value="14" />
+                <Setter Property="FontWeight" Value="Medium" />
+                <Setter Property="Foreground" Value="{StaticResource CdNavLabel}" />
+                <Setter Property="Background" Value="Transparent" />
+                <Setter Property="Padding" Value="12,0" />
+                <Setter Property="Margin" Value="10,1" />
+                <Setter Property="Height" Value="36" />
+                <Setter Property="CornerRadius" Value="4" />
+                <Setter Property="Cursor" Value="Hand" />
+                <Setter Property="FocusAdorner">
+                    <FocusAdornerTemplate>
+                        <Border BorderBrush="{StaticResource CdNavIndicator}" BorderThickness="2" CornerRadius="5" Margin="-2" />
+                    </FocusAdornerTemplate>
+                </Setter>
+                <Setter Property="Template">
+                    <ControlTemplate>
+                        <Border Name="PART_LayoutRoot" Background="{TemplateBinding Background}"
+                                CornerRadius="{TemplateBinding CornerRadius}" Padding="{TemplateBinding Padding}">
+                            <Panel>
+                                <Border Name="PART_Indicator" Width="3" Height="18" CornerRadius="2" Margin="-12,0,0,0"
+                                        HorizontalAlignment="Left" VerticalAlignment="Center"
+                                        Background="{StaticResource CdNavIndicator}" IsVisible="False" />
+                                <DockPanel>
+                                    <PathIcon Name="PART_Icon" DockPanel.Dock="Left" Width="16" Height="16" Margin="0,0,12,0"
+                                              Data="{TemplateBinding Tag, Converter={x:Static svc:Icons.ToGeometry}}"
+                                              AutomationProperties.AccessibilityView="Raw" />
+                                    <ContentPresenter Name="PART_ContentPresenter" VerticalAlignment="Center"
+                                                      Content="{TemplateBinding Header}"
+                                                      ContentTemplate="{TemplateBinding HeaderTemplate}" />
+                                </DockPanel>
+                            </Panel>
+                        </Border>
+                    </ControlTemplate>
+                </Setter>
+                <Style Selector="^:pointerover">
+                    <Setter Property="Background" Value="{StaticResource CdNavHover}" />
+                    <Setter Property="Foreground" Value="{StaticResource CdNavText}" />
+                </Style>
+                <Style Selector="^:selected">
+                    <Setter Property="Background" Value="{StaticResource CdNavSelected}" />
+                    <Setter Property="Foreground" Value="{StaticResource CdNavText}" />
+                </Style>
+                <Style Selector="^:selected /template/ Border#PART_Indicator">
+                    <Setter Property="IsVisible" Value="True" />
+                </Style>
+                <Style Selector="^:disabled">
+                    <Setter Property="Opacity" Value="0.5" />
+                </Style>
+                <!-- aba com algo pedindo atenção (Problemas/Conflitos com itens): ícone em coral -->
+                <Style Selector="^.alert /template/ PathIcon#PART_Icon">
+                    <Setter Property="Foreground" Value="#FF8F84" />
+                </Style>
+            </ControlTheme>
+
+            <!-- janela principal: abas numa barra lateral escura com a marca e o estado no topo -->
+            <ControlTheme x:Key="CdNavTabControl" TargetType="TabControl">
+                <Setter Property="TabStripPlacement" Value="Left" />
+                <Setter Property="ItemContainerTheme" Value="{StaticResource CdNavItem}" />
+                <Setter Property="ItemsPanel">
+                    <ItemsPanelTemplate>
+                        <views:NavStripPanel LastChildFill="False" />
+                    </ItemsPanelTemplate>
+                </Setter>
+                <Setter Property="Template">
+                    <ControlTemplate>
+                        <DockPanel>
+                            <Border DockPanel.Dock="Left" Width="244" Background="{StaticResource CdNavBg}">
+                                <DockPanel>
+                                    <ContentPresenter DockPanel.Dock="Top" Content="{TemplateBinding views:NavShell.SidebarHeader}" />
+                                    <Border DockPanel.Dock="Top" Height="1" Margin="20,18,20,10" Background="{StaticResource CdNavLine}" />
+                                    <ItemsPresenter Name="PART_ItemsPresenter" ItemsPanel="{TemplateBinding ItemsPanel}" Margin="0,0,0,12" />
+                                </DockPanel>
+                            </Border>
+                            <ContentPresenter DockPanel.Dock="Top" Content="{TemplateBinding views:NavShell.ContentHeader}" />
+                            <ContentPresenter DockPanel.Dock="Bottom" Content="{TemplateBinding views:NavShell.ContentFooter}" />
+                            <Panel ClipToBounds="True">
+                                <ContentPresenter Name="PART_SelectedContentHost2" IsVisible="False"
+                                                  HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch" />
+                                <ContentPresenter Name="PART_SelectedContentHost"
+                                                  HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch" />
+                            </Panel>
+                        </DockPanel>
+                    </ControlTemplate>
+                </Setter>
+            </ControlTheme>
         </ResourceDictionary>
     </Styles.Resources>
 
+    <!-- ===================== base ===================== -->
+    <Style Selector=":is(TopLevel)">
+        <Setter Property="FontFamily" Value="{StaticResource CdFontFamily}" />
+    </Style>
+    <Style Selector=":is(Window)">
+        <Setter Property="Background" Value="{DynamicResource CdBg}" />
+        <Setter Property="Foreground" Value="{DynamicResource CdText}" />
+    </Style>
+
+    <!-- ===================== tipografia ===================== -->
     <Style Selector="TextBlock.h1">
-        <Setter Property="FontSize" Value="22" />
+        <Setter Property="FontSize" Value="21" />
         <Setter Property="FontWeight" Value="SemiBold" />
     </Style>
     <Style Selector="TextBlock.h2">
         <Setter Property="FontSize" Value="16" />
         <Setter Property="FontWeight" Value="SemiBold" />
-        <Setter Property="Margin" Value="0,8,0,4" />
     </Style>
-    <Style Selector="TextBlock.muted">
-        <Setter Property="Opacity" Value="0.7" />
+    <Style Selector="TextBlock.muted, SelectableTextBlock.muted">
+        <Setter Property="Foreground" Value="{DynamicResource CdTextMuted}" />
     </Style>
-    <Style Selector="Border.card">
-        <Setter Property="Background" Value="#16808080" />
-        <Setter Property="BorderBrush" Value="#33808080" />
-        <Setter Property="BorderThickness" Value="1" />
-        <Setter Property="CornerRadius" Value="8" />
-        <Setter Property="Padding" Value="14" />
-        <Setter Property="Margin" Value="0,0,0,8" />
+    <Style Selector="TextBlock.caption">
+        <Setter Property="FontSize" Value="12" />
+        <Setter Property="Foreground" Value="{DynamicResource CdTextMuted}" />
     </Style>
-    <Style Selector="TabItem">
-        <Setter Property="FontSize" Value="15" />
-        <Setter Property="MinHeight" Value="36" />
-        <Setter Property="Padding" Value="10,4" />
+    <!-- parágrafo de apresentação sob o título da página -->
+    <Style Selector="TextBlock.lead">
+        <Setter Property="Foreground" Value="{DynamicResource CdTextMuted}" />
+        <Setter Property="TextWrapping" Value="Wrap" />
+        <Setter Property="MaxWidth" Value="680" />
+        <Setter Property="HorizontalAlignment" Value="Left" />
+        <Setter Property="LineHeight" Value="21" />
+    </Style>
+    <Style Selector="TextBlock.empty">
+        <Setter Property="Foreground" Value="{DynamicResource CdTextMuted}" />
+        <Setter Property="TextWrapping" Value="Wrap" />
+        <Setter Property="Margin" Value="0,4,0,12" />
+    </Style>
+    <Style Selector="TextBlock.error, SelectableTextBlock.error">
+        <Setter Property="Foreground" Value="{DynamicResource CdErrorBrush}" />
+    </Style>
+    <!-- seletores com classe valem mais que os só de nome/tipo; entre eles, o último vence: erro depois de "muted" -->
+    <Style Selector="PathIcon.muted">
+        <Setter Property="Foreground" Value="{DynamicResource CdTextMuted}" />
+    </Style>
+    <Style Selector="PathIcon.error">
+        <Setter Property="Foreground" Value="{DynamicResource CdErrorBrush}" />
     </Style>
 
-    <!-- lista de cartões (Problemas/Conflitos): ListBox pela virtualização, sem a aparência de seleção -->
+    <!-- ===================== estrutura das páginas ===================== -->
+    <Style Selector="DockPanel.page">
+        <Setter Property="Margin" Value="32,26,32,0" />
+    </Style>
+    <Style Selector="StackPanel.page-head">
+        <Setter Property="Spacing" Value="6" />
+        <Setter Property="Margin" Value="0,0,0,20" />
+    </Style>
+    <Style Selector="StackPanel.toolbar">
+        <Setter Property="Orientation" Value="Horizontal" />
+        <Setter Property="Spacing" Value="8" />
+        <Setter Property="Margin" Value="0,8,0,0" />
+    </Style>
+
+    <!-- painel: superfície com filete; as linhas de uma lista ficam dentro dele -->
+    <Style Selector="Border.panel">
+        <Setter Property="Background" Value="{DynamicResource CdSurface}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource CdLine}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="CornerRadius" Value="6" />
+        <Setter Property="ClipToBounds" Value="True" />
+    </Style>
+    <Style Selector="Border.row">
+        <Setter Property="Padding" Value="18,14" />
+        <Setter Property="BorderBrush" Value="{DynamicResource CdLine}" />
+        <Setter Property="BorderThickness" Value="0,0,0,1" />
+    </Style>
+    <!-- a última linha não repete o filete do painel -->
+    <Style Selector="ContentPresenter:nth-last-child(1) > Border.row, ListBoxItem:nth-last-child(1) Border.row">
+        <Setter Property="BorderThickness" Value="0" />
+    </Style>
+    <Style Selector="Border.card">
+        <Setter Property="Background" Value="{DynamicResource CdSurface}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource CdLine}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="CornerRadius" Value="6" />
+        <Setter Property="Padding" Value="18,16" />
+        <Setter Property="Margin" Value="0,0,0,12" />
+    </Style>
+    <Style Selector="Border.danger">
+        <Setter Property="Background" Value="{DynamicResource CdWarningBackgroundBrush}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource CdErrorLine}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="CornerRadius" Value="6" />
+    </Style>
+    <Style Selector="Border.card#UpdatePanel">
+        <Setter Property="Background" Value="{DynamicResource CdAccentSoft}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource CdAccentLine}" />
+    </Style>
+    <Style Selector="Border.card.danger#UpdatePanel">
+        <Setter Property="Background" Value="{DynamicResource CdWarningBackgroundBrush}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource CdErrorLine}" />
+    </Style>
+    <Style Selector="TextBlock.panel-title">
+        <Setter Property="FontSize" Value="16" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="Margin" Value="0,0,0,2" />
+    </Style>
+    <!-- cabeçalho de colunas de uma tabela (Lixeira, Versões) -->
+    <Style Selector="Border.table-head">
+        <Setter Property="Padding" Value="12,9" />
+        <Setter Property="BorderBrush" Value="{DynamicResource CdLine}" />
+        <Setter Property="BorderThickness" Value="0,0,0,1" />
+    </Style>
+    <Style Selector="Border.panel ListBox">
+        <Setter Property="Background" Value="Transparent" />
+    </Style>
+
+    <!-- faixa da marca no topo das janelas de login e de abertura -->
+    <Style Selector="Border.brand-band">
+        <Setter Property="Background" Value="{StaticResource CdNavBg}" />
+        <Setter Property="Padding" Value="24,18" />
+    </Style>
+    <Style Selector="Border.brand-band TextBlock.h1">
+        <Setter Property="Foreground" Value="{StaticResource CdNavText}" />
+    </Style>
+    <Style Selector="TextBlock.band-detail">
+        <Setter Property="Foreground" Value="{StaticResource CdNavMuted}" />
+        <Setter Property="Margin" Value="0,2,0,0" />
+    </Style>
+    <!-- código de dispositivo do login: destaque sobre fundo suave -->
+    <Style Selector="Border.code-well">
+        <Setter Property="Background" Value="{DynamicResource CdAccentSoft}" />
+        <Setter Property="CornerRadius" Value="6" />
+        <Setter Property="Padding" Value="16,10" />
+    </Style>
+
+    <!-- opção grande e clicável (tipo de conta no login) -->
+    <Style Selector="Button.option">
+        <Setter Property="HorizontalAlignment" Value="Stretch" />
+        <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+        <Setter Property="Padding" Value="14,12" />
+        <Setter Property="Background" Value="{DynamicResource CdSurface}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource CdLine}" />
+        <Setter Property="CornerRadius" Value="6" />
+        <Setter Property="FontWeight" Value="Normal" />
+    </Style>
+    <Style Selector="Button.option:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+        <Setter Property="Background" Value="{DynamicResource CdSurface}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource CdAccentText}" />
+    </Style>
+    <Style Selector="Button.option:pressed /template/ ContentPresenter#PART_ContentPresenter">
+        <Setter Property="Background" Value="{DynamicResource CdAccentSoft}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource CdAccentText}" />
+    </Style>
+    <Style Selector="TextBlock.row-title">
+        <Setter Property="FontSize" Value="15" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+    </Style>
+
+    <!-- etiqueta do tipo (OneDrive pessoal, SharePoint…) -->
+    <Style Selector="Border.chip">
+        <Setter Property="Background" Value="{DynamicResource CdAccentSoft}" />
+        <Setter Property="CornerRadius" Value="10" />
+        <Setter Property="Padding" Value="8,1,8,2" />
+        <Setter Property="VerticalAlignment" Value="Center" />
+    </Style>
+    <Style Selector="Border.chip > TextBlock">
+        <Setter Property="FontSize" Value="12" />
+        <Setter Property="FontWeight" Value="Medium" />
+        <Setter Property="Foreground" Value="{DynamicResource CdAccentText}" />
+    </Style>
+    <!-- disco com ícone (tipo de conta, opções do login) -->
+    <Style Selector="Border.avatar">
+        <Setter Property="Width" Value="38" />
+        <Setter Property="Height" Value="38" />
+        <Setter Property="CornerRadius" Value="19" />
+        <Setter Property="Background" Value="{DynamicResource CdAccentSoft}" />
+        <Setter Property="VerticalAlignment" Value="Top" />
+    </Style>
+    <Style Selector="Border.avatar > PathIcon">
+        <Setter Property="Width" Value="18" />
+        <Setter Property="Height" Value="18" />
+        <Setter Property="Foreground" Value="{DynamicResource CdAccentText}" />
+    </Style>
+
+    <!-- ===================== botões ===================== -->
+    <Style Selector="Button">
+        <Setter Property="FontWeight" Value="Medium" />
+    </Style>
+    <Style Selector="Button.danger">
+        <Setter Property="Foreground" Value="{DynamicResource CdErrorBrush}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource CdErrorLine}" />
+    </Style>
+    <Style Selector="Button.danger:pointerover /template/ ContentPresenter#PART_ContentPresenter, Button.danger:pressed /template/ ContentPresenter#PART_ContentPresenter">
+        <Setter Property="Foreground" Value="{DynamicResource CdErrorBrush}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource CdErrorBrush}" />
+    </Style>
+    <!-- ação de linha: texto em petróleo, sem caixa -->
+    <Style Selector="Button.link">
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="Padding" Value="0,3" />
+        <Setter Property="MinHeight" Value="0" />
+        <Setter Property="Foreground" Value="{DynamicResource CdAccentText}" />
+        <Setter Property="Cursor" Value="Hand" />
+    </Style>
+    <Style Selector="Button.link:pointerover /template/ ContentPresenter#PART_ContentPresenter, Button.link:pressed /template/ ContentPresenter#PART_ContentPresenter">
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="Foreground" Value="{DynamicResource CdAccentTextHover}" />
+    </Style>
+    <Style Selector="Button.link.danger">
+        <Setter Property="Foreground" Value="{DynamicResource CdErrorBrush}" />
+    </Style>
+    <Style Selector="Button.link.danger:pointerover /template/ ContentPresenter#PART_ContentPresenter, Button.link.danger:pressed /template/ ContentPresenter#PART_ContentPresenter">
+        <Setter Property="Foreground" Value="{DynamicResource CdErrorBrush}" />
+    </Style>
+    <Style Selector="Button.link:disabled /template/ ContentPresenter#PART_ContentPresenter">
+        <Setter Property="Background" Value="Transparent" />
+    </Style>
+    <Style Selector="WrapPanel.row-actions">
+        <Setter Property="Margin" Value="0,8,0,0" />
+        <Setter Property="ItemSpacing" Value="20" />
+    </Style>
+
+    <!-- ações rápidas da barra lateral (fundo escuro) -->
+    <Style Selector="Button.nav-action">
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="BorderBrush" Value="{StaticResource CdNavButtonLine}" />
+        <Setter Property="Foreground" Value="{StaticResource CdNavText}" />
+        <Setter Property="Padding" Value="10,0" />
+        <Setter Property="Height" Value="34" />
+        <Setter Property="VerticalContentAlignment" Value="Center" />
+    </Style>
+    <Style Selector="Button.nav-action:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+        <Setter Property="Background" Value="{StaticResource CdNavHover}" />
+        <Setter Property="BorderBrush" Value="{StaticResource CdNavIndicator}" />
+        <Setter Property="Foreground" Value="{StaticResource CdNavText}" />
+    </Style>
+    <Style Selector="Button.nav-action:pressed /template/ ContentPresenter#PART_ContentPresenter">
+        <Setter Property="Background" Value="{StaticResource CdNavSelected}" />
+        <Setter Property="Foreground" Value="{StaticResource CdNavText}" />
+    </Style>
+    <Style Selector="Button.nav-action:disabled /template/ ContentPresenter#PART_ContentPresenter">
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="Foreground" Value="{StaticResource CdNavMuted}" />
+    </Style>
+
+    <!-- ===================== barra lateral ===================== -->
+    <Style Selector="TextBlock.wordmark">
+        <Setter Property="FontSize" Value="17" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="Foreground" Value="{StaticResource CdNavText}" />
+        <Setter Property="LetterSpacing" Value="-0.2" />
+    </Style>
+    <!-- indicador de estado: a cor é a do estado (StatusPalette), igual ao ícone da bandeja -->
+    <Style Selector="Border.lamp">
+        <Setter Property="Width" Value="40" />
+        <Setter Property="Height" Value="40" />
+        <Setter Property="CornerRadius" Value="8" />
+        <Setter Property="VerticalAlignment" Value="Top" />
+    </Style>
+    <Style Selector="Border.lamp > PathIcon">
+        <Setter Property="Width" Value="20" />
+        <Setter Property="Height" Value="20" />
+        <Setter Property="Foreground" Value="White" />
+    </Style>
+    <Style Selector="TextBlock.nav-status">
+        <Setter Property="FontSize" Value="16" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="Foreground" Value="{StaticResource CdNavText}" />
+        <Setter Property="TextWrapping" Value="Wrap" />
+    </Style>
+    <Style Selector="TextBlock.nav-detail">
+        <Setter Property="FontSize" Value="12" />
+        <Setter Property="Foreground" Value="{StaticResource CdNavMuted}" />
+        <Setter Property="TextWrapping" Value="Wrap" />
+        <Setter Property="MaxLines" Value="3" />
+        <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+        <Setter Property="Margin" Value="0,2,0,0" />
+    </Style>
+
+    <!-- ===================== listas ===================== -->
+    <!-- lista de linhas (Problemas/Conflitos): ListBox pela virtualização, sem a aparência de seleção -->
     <Style Selector="ListBox.plain">
         <Setter Property="Background" Value="Transparent" />
     </Style>
@@ -54,33 +502,21 @@
     <Style Selector="ListBox.plain ListBoxItem:pointerover /template/ ContentPresenter#PART_ContentPresenter, ListBox.plain ListBoxItem:selected /template/ ContentPresenter#PART_ContentPresenter, ListBox.plain ListBoxItem:selected:pointerover /template/ ContentPresenter#PART_ContentPresenter">
         <Setter Property="Background" Value="Transparent" />
     </Style>
+    <Style Selector="ListBox.activity">
+        <Setter Property="Background" Value="Transparent" />
+    </Style>
+    <Style Selector="ListBox.activity ListBoxItem">
+        <Setter Property="Padding" Value="16,7" />
+    </Style>
 
-    <Style Selector="PathIcon.error">
-        <Setter Property="Foreground" Value="{DynamicResource CdErrorBrush}" />
-    </Style>
-    <Style Selector="TextBlock.error">
-        <Setter Property="Foreground" Value="{DynamicResource CdErrorBrush}" />
-    </Style>
-    <Style Selector="TextBlock.empty">
-        <Setter Property="Opacity" Value="0.7" />
-        <Setter Property="TextWrapping" Value="Wrap" />
-        <Setter Property="Margin" Value="0,12" />
-    </Style>
+    <!-- ===================== mensagens ===================== -->
     <Style Selector="Border#MessageBar">
-        <Setter Property="Background" Value="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}" />
+        <Setter Property="Background" Value="{DynamicResource CdSurface}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource CdLine}" />
+        <Setter Property="BorderThickness" Value="0,1,0,0" />
     </Style>
     <Style Selector="Border#MessageBar.error">
         <Setter Property="Background" Value="{DynamicResource CdErrorBackgroundBrush}" />
         <Setter Property="BorderBrush" Value="{DynamicResource CdErrorBrush}" />
-        <Setter Property="BorderThickness" Value="0,1,0,0" />
-    </Style>
-    <Style Selector="Border.danger">
-        <Setter Property="Background" Value="{DynamicResource CdWarningBackgroundBrush}" />
-        <Setter Property="BorderBrush" Value="{DynamicResource CdErrorBrush}" />
-        <Setter Property="BorderThickness" Value="1" />
-        <Setter Property="CornerRadius" Value="8" />
-    </Style>
-    <Style Selector="Button.danger">
-        <Setter Property="Foreground" Value="{DynamicResource CdErrorBrush}" />
     </Style>
 </Styles>

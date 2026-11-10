@@ -81,6 +81,8 @@ public sealed partial class AccountVm(MainViewModel main, AccountConfig acc) : V
     public string Username => Account.Username;
     public string TypeLabel => Account.IsPersonal ? "Conta pessoal (Microsoft)" : "Conta corporativa ou de estudante (Microsoft 365)";
     public bool IsBusiness => !Account.IsPersonal;
+    /// <summary>Ícone do tipo de conta (pessoa ou organização).</summary>
+    public string TypeIcon => Account.IsPersonal ? "account" : "business";
     [ObservableProperty] public partial string Drives { get; set; } = "";
     [ObservableProperty] public partial bool NeedsLogin { get; set; }
 
@@ -193,6 +195,8 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
     [ObservableProperty] public partial string MountText { get; set; } = "";
     [ObservableProperty] public partial bool IsMounted { get; set; }
     [ObservableProperty] public partial string PauseText { get; set; } = "Pausar";
+    /// <summary>Chave de <see cref="Icons"/> do botão Pausar/Retomar.</summary>
+    [ObservableProperty] public partial string PauseIcon { get; set; } = "pause";
     [ObservableProperty] public partial bool HasAccounts { get; set; }
     [ObservableProperty] public partial bool NeedsLogin { get; set; }
     [ObservableProperty] public partial string CacheText { get; set; } = "";
@@ -400,6 +404,7 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
         IsMounted = Host.Mounted;
         MountText = Host.Mounted ? Host.Config.MountPoint : "Não montado" + (Host.MountError != null ? $": {Host.MountError}" : "");
         PauseText = e.Paused ? "Retomar" : "Pausar";
+        PauseIcon = e.Paused ? "play" : "pause";
         HasAccounts = Host.Config.Accounts.Count > 0;
         NeedsLogin = st == EngineStatus.AuthRequired;
 

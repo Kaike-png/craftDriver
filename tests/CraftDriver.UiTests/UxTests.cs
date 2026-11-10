@@ -225,6 +225,29 @@ public class UxTests
 
     // ---------- teclado e acessibilidade ----------
 
+    /// <summary>As abas ficam na barra lateral (painel próprio, não WrapPanel): as setas, Home e End continuam trocando de aba.</summary>
+    [AvaloniaFact]
+    public void Abas_da_barra_lateral_respondem_ao_teclado()
+    {
+        var host = NewHost();
+        var vm = new MainViewModel(host);
+        var w = new MainWindow { DataContext = vm, Width = 920, Height = 640 };
+        w.Show();
+        Pump();
+        var tabs = w.GetVisualDescendants().OfType<TabControl>().First();
+        w.GetVisualDescendants().OfType<TabItem>().First().Focus(NavigationMethod.Tab);
+        Pump(100);
+        var seen = new List<int>();
+        foreach (var key in new[] { Key.Down, Key.Down, Key.Up, Key.End, Key.Home })
+        {
+            w.KeyPress(key, RawInputModifiers.None, PhysicalKey.None, null);
+            Pump(100);
+            seen.Add(tabs.SelectedIndex);
+        }
+        Assert.Equal([1, 2, 1, MainViewModel.SettingsTab, 0], seen);
+        w.Close();
+    }
+
     [AvaloniaFact]
     public void Atalhos_da_janela_principal()
     {

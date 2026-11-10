@@ -181,6 +181,8 @@ e mantém os tokens salvos no chaveiro (não é preciso entrar de novo).
 - QuickXorHash: porta do exemplo de referência publicado pela Microsoft na documentação da API do OneDrive.
 - Vetores de teste do QuickXorHash: [rclone](https://github.com/rclone/rclone) (MIT).
 - Bibliotecas: MSAL.NET, Avalonia, CommunityToolkit.Mvvm, Microsoft.Data.Sqlite (MIT) e libfuse3 (LGPL-2.1, carregada dinamicamente).
+- Fonte da interface: IBM Plex Sans (SIL Open Font License 1.1, em [`Assets/Fonts/OFL.txt`](src/CraftDriver.App/Assets/Fonts/OFL.txt);
+  os pacotes a instalam como `LICENSE.fonts`).
 
 ## Licença
 

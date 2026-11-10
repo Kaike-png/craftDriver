@@ -73,7 +73,7 @@ STAGE="$(mktemp -d "${DEST}.XXXXXXXX" 2>/dev/null || { mkdir -p "$(dirname "$DES
 trap 'rm -rf "$STAGE"' EXIT
 cp -a "$HERE/lib" "$HERE/share" "$STAGE/"
 cp "$HERE/install-user.sh" "$STAGE/"
-for f in LICENSE README.md CHANGELOG.md; do [[ ! -f "$HERE/$f" ]] || cp "$HERE/$f" "$STAGE/"; done
+for f in LICENSE LICENSE.fonts README.md CHANGELOG.md; do [[ ! -f "$HERE/$f" ]] || cp "$HERE/$f" "$STAGE/"; done
 if ! stop_running; then
   echo "O craftDriver em execução não terminou em ${QUIT_TIMEOUT} s (pasta em uso?). Feche-o e rode de novo." >&2
   exit 1

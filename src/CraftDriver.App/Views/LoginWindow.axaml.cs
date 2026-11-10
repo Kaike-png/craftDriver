@@ -45,6 +45,9 @@ public partial class LoginWindow : Window
         if (reauth != null)
         {
             Title = "Entrar novamente";
+            HeadingText.Text = "Entrar novamente";
+            HeadingDetail.Text = reauth.Username;
+            HeadingDetail.IsVisible = true;
             Opened += async (_, _) =>
             {
                 _personal = reauth.IsPersonal;
