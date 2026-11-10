@@ -1073,6 +1073,40 @@ coverlet (134) e classes de UI que trocam `CRAFTDRIVER_HOME` fora da coleção s
 - [x] `DisplayScalingTests.Le_monitores…` (x64): servidor falso no ThreadPool demorava mais que os 500 ms do
   `HyprRequest` com o executor ocupado. **Feito:** prazo de 10 s só no teste (produção continua 500 ms e já trata o erro).
 
+## 29. Delta: exclusões remotas fora de ordem
+
+- [x] Pasta movida para fora de outra que foi excluída depois (em outro dispositivo) perdia o conteúdo: o delta traz só
+  o item movido (sem os filhos) e não garante a ordem; aplicando a exclusão do pai antigo antes, a subárvore saía do
+  banco e a pasta movida voltava nova e vazia — os filhos nunca mais vinham pelo delta incremental. Caso real: conta
+  pessoal, `Advanced Installer/Projects` (20 itens) movida no Windows de uma pasta excluída em seguida; recuperado com
+  ressincronização completa. **Feito:** exclusões remotas de PASTA ficam pendentes até o fim da rodada do delta
+  (`_deferredFolderDeletes`, aplicadas antes de gravar o deltaLink); o nome ocupado por uma pasta pendente é liberado na
+  hora quando outro item vai usá-lo; reaparecer na mesma rodada cancela a exclusão. `DeltaExclusaoAdiadaTests` (6) com
+  RED antes da correção e 5 mutações pegas.
+- [ ] Não coberto: pasta excluída e recriada com o mesmo nome na mesma rodada, com uma SUBPASTA movida da antiga para a
+  nova — a liberação do nome apaga a antiga antes de o movimento chegar e a subpasta volta vazia. Raro; a saída seria
+  ressincronizar a pasta (listagem por children) quando um item já conhecido volta como novo na mesma rodada.
+
+## 30. Fixados com o app encerrado
+
+- [x] "Sempre manter neste dispositivo" + Encerrar: a pasta sumia (a montagem FUSE sai e sobra a pasta real vazia). No
+  Windows, os arquivos ficam no disco. **Feito:** `OfflineCopies` (docs/copias-offline.md). Ao encerrar, depois de
+  desmontar, grava reflinks dos fixados na pasta real e um manifesto (`offline_copies`). Na abertura, ANTES do
+  `SyncEngine.Start` (o `Import` recusa com o motor rodando), importa:
+  - edições → `Dirty`: 412 gera a cópia de conflito;
+  - novos → mkdir/upload;
+  - renomeados → move;
+  - apagados → nada na nuvem, só desfixa;
+  - o resto → `<montagem> (recuperados)`.
+
+  Depois limpa a pasta. Prova: `OfflineCopiesTests` (12, sem FUSE) + `OfflineCopiesFuseTests` (montagem real); 8
+  mutações pegas. Encerrar só grava se a instância montou de verdade (`wasMounted`): os UiTests usam o `~/OneDrive`
+  real como ponto de montagem.
+- [ ] Não coberto:
+  - o app morto/travado não grava as cópias;
+  - um arquivo apagado dentro de uma pasta fixada volta na próxima abertura;
+  - suíte não rodada no contêiner Ubuntu 24.04 (libfuse 3.14) nem no CI.
+
 ## Ordem sugerida (rodada 3 — concluída, exceto §24.9/§24.10)
 
 1. §24.1 (SlowOps — syscall pendurada), §25.1–25.3 (relaunch órfão, `.lock` em disco cheio, `install-user.sh` com app aberto)

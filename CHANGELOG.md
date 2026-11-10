@@ -6,6 +6,22 @@ acrescentada automaticamente.
 
 ## [Não lançado]
 
+### Novidades
+- **Interface redesenhada**: navegação numa barra lateral com a marca e o estado da sincronização sempre à vista
+  (a cor do quadro é a mesma do ícone da bandeja), Sincronizar e Pausar à mão em qualquer aba, e Problemas/Conflitos
+  com o ícone destacado quando há itens. Cada página abre com título, explicação e a ação principal; contas, pastas
+  e listas viram linhas num painel, com as ações embaixo de cada item. Configurações em seções, com Salvar fixo no
+  rodapé. Fonte IBM Plex Sans embutida, cores do ícone do craftDriver nos temas claro e escuro.
+- **Itens fixados continuam na pasta com o craftDriver encerrado**, como no OneDrive do Windows. Ao encerrar, os
+  arquivos marcados como "Sempre manter neste dispositivo" ficam em `~/OneDrive` (no btrfs/XFS sem ocupar espaço a
+  mais). Edições, arquivos novos e renomeações feitos com o app fechado são enviados na próxima abertura. Se o arquivo
+  também mudou na nuvem, as duas versões ficam (cópia de conflito). Apagar com o app fechado **não** apaga na nuvem.
+  Detalhes em `docs/copias-offline.md`.
+
+### Correções
+- Pasta movida em outro dispositivo para fora de uma pasta que foi excluída logo depois não aparece mais vazia aqui
+  (o conteúdo dela sumia da montagem até uma ressincronização completa).
+
 ## [0.3.0] - 2026-11-06
 
 ### Novidades
