@@ -759,7 +759,7 @@ public sealed class SyncEngine : IDisposable
 }
 
 /// <summary>Sincronização de uma drive: delta remoto, fila de operações locais e downloads de itens fixados.</summary>
-public sealed class DriveSync
+public sealed partial class DriveSync
 {
     readonly SyncEngine _e;
     public DriveConfig Config { get; internal set; }
@@ -1659,7 +1659,9 @@ public sealed class DriveSync
     /// ocorreram DEPOIS do envio no servidor e ANTES da resposta chegar. Sob _mutate e Db.Lock; no commit pode
     /// reaplicar só a própria lid ainda reservada, nos outros casos espera os uploads terminarem.
     /// </summary>
-    void ReplayUploadDeltas(long? committing = null)
+    /// <param name="sentETag">eTag que foi no If-Match do envio que está sendo confirmado (null = item novo).</param>
+    /// <param name="committedETag">eTag devolvido pela resposta desse envio.</param>
+    void ReplayUploadDeltas(long? committing = null, string? sentETag = null, string? committedETag = null)
     {
         foreach (var (lid, remote) in Db.DeferredUploadDeltas(DriveId, committing))
         {
@@ -1669,10 +1671,40 @@ public sealed class DriveSync
                 Db.CompleteUploadDelta(DriveId, lid, remote.Id); // excluído localmente: não ressuscita o eco do upload
                 continue;
             }
+            // Delta lido durante o envio com o estado de ANTES do commit: reaplicá-lo voltaria eTag/cTag/tamanho para a
+            // versão anterior e o próximo envio daria 412 (cópia de conflito a cada salvamento seguido no SharePoint).
+            if (lid == committing && remote.ETag != committedETag && IsOlderState(remote.ETag, sentETag, committedETag))
+            {
+                Db.CompleteUploadDelta(DriveId, lid, remote.Id);
+                continue;
+            }
             if (!ApplyRemote(remote, replayUpload: true)) continue;
             Db.CompleteUploadDelta(DriveId, lid, remote.Id);
         }
     }
+
+    /// <summary>
+    /// <paramref name="etag"/> é anterior ao <paramref name="committed"/>: é o eTag que o envio substituiu (o If-Match:
+    /// enquanto ele valia, nada mais mudou o item) ou, no formato do SharePoint/OneDrive for Business
+    /// (<c>"{GUID},N"</c>), a mesma GUID com versão menor (estados intermediários do próprio commit).
+    /// </summary>
+    public static bool IsOlderState(string? etag, string? sent, string? committed)
+    {
+        if (etag == null || committed == null) return false;
+        if (etag == sent) return true;
+        return SharePointETag(etag) is var (g1, n1) && SharePointETag(committed) is var (g2, n2)
+            && string.Equals(g1, g2, StringComparison.OrdinalIgnoreCase) && n1 < n2;
+    }
+
+    static (string Guid, long Version)? SharePointETag(string etag)
+    {
+        var m = SharePointETagRegex().Match(etag);
+        return m.Success && long.TryParse(m.Groups[2].Value, NumberStyles.None, CultureInfo.InvariantCulture, out var n)
+            ? (m.Groups[1].Value, n) : null;
+    }
+
+    [System.Text.RegularExpressions.GeneratedRegex(@"^""?\{([0-9A-Fa-f-]{36})\},(\d+)""?$")]
+    private static partial System.Text.RegularExpressions.Regex SharePointETagRegex();
 
     /// <summary>Registra para a aba Conflitos, escreve na atividade e avisa (notificação).</summary>
     void RecordConflict(long lid, string original, string copy, string reason, string logText)
@@ -2571,7 +2603,7 @@ public sealed class DriveSync
                 if (cur.Dirty) Db.Enqueue(DriveId, OpKind.Upload, cur.Lid, runningOp: op.Id);
                 // data alterada durante o envio (ex.: utimens de "cp -p" num item ainda sem id remoto)
                 else if (cur.MTime != item.MTime) Db.Enqueue(DriveId, OpKind.SetTime, cur.Lid);
-                Db.InTransaction(() => ReplayUploadDeltas(cur.Lid));
+                Db.InTransaction(() => ReplayUploadDeltas(cur.Lid, item.ItemId != null ? item.ETag : null, r.ETag));
             }
         }
         finally { _mutate.Release(); }

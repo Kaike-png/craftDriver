@@ -417,14 +417,14 @@ public sealed class GraphClient : IGraphApi
             var sessionUrl = itemId != null
                 ? ItemUrl(driveId, itemId) + "/createUploadSession"
                 : ChildPathUrl(driveId, parentId, name) + "/createUploadSession";
-            var body = new JsonObject
-            {
-                ["item"] = new JsonObject
-                {
-                    ["@microsoft.graph.conflictBehavior"] = itemId != null ? "replace" : "fail",
-                    ["fileSystemInfo"] = new JsonObject { ["lastModifiedDateTime"] = modified.UtcDateTime.ToString("o") },
-                },
-            };
+            var item = new JsonObject { ["@microsoft.graph.conflictBehavior"] = itemId != null ? "replace" : "fail" };
+            // Substituir documento do Office com fileSystemInfo falha no SharePoint: a 1ª parte responde 404 "upload
+            // session was not found" e o eTag do item avança sem gravar nada — a nova tentativa dava 412 e o motor
+            // criava uma cópia de conflito a cada salvamento (verificado numa biblioteca real com .xlsx; .txt/.pdf/
+            // .csv/.ods e .xlsx inválido passam). Sem a data, o SharePoint usa a que está dentro do documento.
+            if (itemId == null || !IsOfficeDocument(name))
+                item["fileSystemInfo"] = new JsonObject { ["lastModifiedDateTime"] = modified.UtcDateTime.ToString("o") };
+            var body = new JsonObject { ["item"] = item };
             using (var doc = await SendJsonAsync(HttpMethod.Post, sessionUrl, body, ct, itemId != null ? ifMatchETag : null))
                 uploadUrl = doc.RootElement.Str("uploadUrl") ?? throw new GraphException(HttpStatusCode.BadGateway, null, "Sessão de upload sem uploadUrl");
             session?.Save(uploadUrl);
@@ -493,6 +493,17 @@ public sealed class GraphClient : IGraphApi
         }
         finally { ArrayPool<byte>.Shared.Return(buf); }
     }
+
+    /// <summary>Documento do Office (o SharePoint lê e reescreve as propriedades dele ao gravar).</summary>
+    public static bool IsOfficeDocument(string name) => OfficeExtensions.Contains(Path.GetExtension(name));
+
+    static readonly HashSet<string> OfficeExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".doc", ".docx", ".docm", ".dot", ".dotx", ".dotm",
+        ".xls", ".xlsx", ".xlsm", ".xlsb", ".xlt", ".xltx", ".xltm",
+        ".ppt", ".pptx", ".pptm", ".pot", ".potx", ".potm", ".pps", ".ppsx", ".ppsm",
+        ".vsdx", ".vsdm",
+    };
 
     /// <summary>Consulta a sessão de upload: próximo byte esperado, ou null se ela não existe mais.</summary>
     async Task<long?> NextExpectedOffsetAsync(string uploadUrl, CancellationToken ct)

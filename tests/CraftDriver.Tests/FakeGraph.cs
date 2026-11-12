@@ -742,6 +742,12 @@ public sealed class FakeGraph : IGraphApi
     /// HTTP falso que grava nesta drive — o código de sessão/retomada exercitado é o de produção.
     /// </summary>
     public bool RealUploadSessions;
+    /// <summary>
+    /// Imita a biblioteca do SharePoint (verificado em 12/11/2026): sessão que SUBSTITUI um documento do Office válido
+    /// com <c>fileSystemInfo</c> no createUploadSession responde 404 "The upload session was not found" na 1ª parte e
+    /// o eTag do item avança mesmo sem gravar o conteúdo — a nova tentativa com o If-Match antigo dá 412.
+    /// </summary>
+    public bool SharePointOfficeReplaceRejectsDate;
     /// <summary>Bytes de partes aceitas pelo servidor de sessões (soma de todos os PUTs gravados).</summary>
     public long SessionBytesReceived;
     public int SessionsCreated, SessionStatusQueries, SessionCreatesAttempted;
@@ -762,6 +768,7 @@ public sealed class FakeGraph : IGraphApi
         public byte[] Data = [];
         public long Received;
         public DateTimeOffset Modified = DateTimeOffset.UtcNow;
+        public bool Doomed;
     }
 
     readonly Dictionary<string, UploadSession> _sessions = new();
@@ -793,9 +800,10 @@ public sealed class FakeGraph : IGraphApi
             {
                 Interlocked.Increment(ref g.SessionCreatesAttempted);
                 using var doc = System.Text.Json.JsonDocument.Parse(await req.Content!.ReadAsStringAsync(ct));
-                var modified = doc.RootElement.GetProperty("item").GetProperty("fileSystemInfo").GetProperty("lastModifiedDateTime").GetDateTimeOffset();
+                var item = doc.RootElement.GetProperty("item");
+                var hasDate = item.TryGetProperty("fileSystemInfo", out var fsi);
                 var rest = url[(url.IndexOf("/items/", StringComparison.Ordinal) + 7)..^"/createUploadSession".Length];
-                var s = new UploadSession { Modified = modified };
+                var s = new UploadSession { Modified = hasDate ? fsi.GetProperty("lastModifiedDateTime").GetDateTimeOffset() : DateTimeOffset.UtcNow };
                 var colon = rest.IndexOf(":/", StringComparison.Ordinal);
                 lock (g._lock)
                 {
@@ -810,6 +818,7 @@ public sealed class FakeGraph : IGraphApi
                         s.ItemId = Uri.UnescapeDataString(rest);
                         if (!g._nodes.TryGetValue(s.ItemId, out var n) || n.Deleted) return Error(HttpStatusCode.NotFound, "itemNotFound");
                         if (req.Headers.TryGetValues("If-Match", out var m) && m.First() != n.ETag) return Error(HttpStatusCode.PreconditionFailed, "resourceModified");
+                        s.Doomed = g.SharePointOfficeReplaceRejectsDate && hasDate && n.Name.EndsWith(".xlsx", StringComparison.OrdinalIgnoreCase);
                     }
                     var id = UploadBase + ++g._nextSession;
                     g._sessions[id] = s;
@@ -864,6 +873,13 @@ public sealed class FakeGraph : IGraphApi
             lock (g._lock)
             {
                 if (!g._sessions.TryGetValue(url, out var s)) return Error(HttpStatusCode.NotFound, "itemNotFound");
+                if (s.Doomed)
+                {
+                    // SharePoint real: a sessão some na 1ª parte e o eTag do item avança (o próximo If-Match dá 412)
+                    g._sessions.Remove(url);
+                    if (g._nodes.TryGetValue(s.ItemId!, out var doomed)) { doomed.Version++; doomed.Seq = ++g._seq; } // eTag e cTag avançam, conteúdo igual
+                    return Error(HttpStatusCode.NotFound, "itemNotFound");
+                }
                 if (range.From != s.Received) return Error(HttpStatusCode.RequestedRangeNotSatisfiable, "invalidRange");
                 var total = range.Length!.Value;
                 if (s.Data.Length != total) Array.Resize(ref s.Data, (int)total);
