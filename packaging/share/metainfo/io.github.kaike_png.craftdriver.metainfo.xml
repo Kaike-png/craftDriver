@@ -4,18 +4,18 @@
   <metadata_license>MIT</metadata_license>
   <project_license>MIT</project_license>
 
-  <name>craftDriver</name>
+  <name>CraftDriver</name>
   <summary>Sync client for OneDrive and SharePoint with files on demand</summary>
   <summary xml:lang="pt-BR">Cliente de sincronização para OneDrive e SharePoint com arquivos sob demanda</summary>
 
   <description>
     <p>
-      craftDriver is an unofficial client that mounts your OneDrive and SharePoint document libraries
+      CraftDriver is an unofficial client that mounts your OneDrive and SharePoint document libraries
       as a folder. Files are listed right away and downloaded only when opened; changes are sent back
       to the cloud in the background.
     </p>
     <p xml:lang="pt-BR">
-      O craftDriver é um cliente não oficial que monta seu OneDrive e as bibliotecas de documentos do
+      O CraftDriver é um cliente não oficial que monta seu OneDrive e as bibliotecas de documentos do
       SharePoint como uma pasta. Os arquivos aparecem na hora e só são baixados quando abertos; as
       alterações voltam para a nuvem em segundo plano.
     </p>
@@ -74,6 +74,15 @@
   <content_rating type="oars-1.1" />
 
   <releases>
+    <release version="0.4.1" date="2026-11-12">
+      <description>
+        <ul>
+          <li>Planilhas e documentos do Office no SharePoint viravam "conflito de edição" a cada salvamento, sem ninguém mais editar. Ao substituir um .xlsx/.docx/.pptx o CraftDriver mandava a data de modificação junto, e a biblioteca do SharePoint recusa isso: o envio falhava e a versão do arquivo na nuvem avançava, então a tentativa seguinte era tratada como edição dos dois lados. Agora a data fica a cargo do SharePoint (a que está dentro do documento).</li>
+          <li>Dois salvamentos seguidos (ex.: salvamento automático) também podiam gerar cópia de conflito: uma leitura da nuvem feita durante o envio era aplicada depois dele e voltava o arquivo para a versão anterior.</li>
+          <li>O nome passa a ser escrito CraftDriver na interface, nos menus dos gerenciadores de arquivos, nas notificações e na documentação. O comando craftdriver, os pacotes, as pastas de configuração e as contas já conectadas continuam iguais: não é preciso entrar de novo. Scripts antigos do Nautilus/Nemo com o nome anterior são substituídos.</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.4.0" date="2026-11-10">
       <description>
         <ul>

@@ -1,10 +1,25 @@
 # Changelog
 
-Mudanças visíveis para quem usa o craftDriver. Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/).
+Mudanças visíveis para quem usa o CraftDriver. Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/).
 A seção de cada versão vira o texto da release no GitHub (`packaging/release-notes.sh`), com a tabela de instalação
 acrescentada automaticamente.
 
 ## [Não lançado]
+
+## [0.4.1] - 2026-11-12
+
+### Correções
+- **Planilhas e documentos do Office no SharePoint viravam "conflito de edição" a cada salvamento**, sem ninguém mais
+  editar. Ao substituir um .xlsx/.docx/.pptx o CraftDriver mandava a data de modificação junto, e a biblioteca do
+  SharePoint recusa isso: o envio falhava e a versão do arquivo na nuvem avançava, então a tentativa seguinte era
+  tratada como edição dos dois lados. Agora a data fica a cargo do SharePoint (a que está dentro do documento).
+- Dois salvamentos seguidos (ex.: salvamento automático) também podiam gerar cópia de conflito: uma leitura da nuvem
+  feita durante o envio era aplicada depois dele e voltava o arquivo para a versão anterior.
+
+### Mudanças de comportamento
+- O nome passa a ser escrito **CraftDriver** na interface, nos menus dos gerenciadores de arquivos, nas notificações e
+  na documentação. O comando `craftdriver`, os pacotes, as pastas de configuração e as contas já conectadas continuam
+  iguais: não é preciso entrar de novo. Scripts antigos do Nautilus/Nemo com o nome anterior são substituídos.
 
 ## [0.4.0] - 2026-11-10
 
@@ -201,7 +216,8 @@ Configuração e contas são mantidas.
 - Primeira versão: contas pessoais, corporativas e bibliotecas do SharePoint montadas em `~/OneDrive` via FUSE, com
   arquivos sob demanda, fixação ("Sempre manter neste dispositivo"), bandeja e menu do Dolphin.
 
-[Não lançado]: https://github.com/Kaike-png/craftDriver/compare/v0.4.0...HEAD
+[Não lançado]: https://github.com/Kaike-png/craftDriver/compare/v0.4.1...HEAD
+[0.4.1]: https://github.com/Kaike-png/craftDriver/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/Kaike-png/craftDriver/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/Kaike-png/craftDriver/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/Kaike-png/craftDriver/compare/v0.1.4...v0.2.0
