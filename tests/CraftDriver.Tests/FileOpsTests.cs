@@ -5,7 +5,7 @@ namespace CraftDriver.Tests;
 
 /// <summary>
 /// Operações de arquivo que nenhum teste exercitava (PENDENCIAS seção 10): fsync, flush (close de fd duplicado),
-/// statfs, xattrs que não são do craftDriver, O_APPEND, pread parcial, mmap e O_EXCL. Tudo pelo FUSE real, com
+/// statfs, xattrs que não são do CraftDriver, O_APPEND, pread parcial, mmap e O_EXCL. Tudo pelo FUSE real, com
 /// python/coreutils por cima; errno conferido pelo nome (as mensagens saem em pt-BR).
 /// </summary>
 [Collection("fuse")]

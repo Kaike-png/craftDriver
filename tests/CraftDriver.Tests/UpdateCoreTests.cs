@@ -67,7 +67,7 @@ public class UpdateCoreTests
     static string Fixture => File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Fixtures", "github-release-latest.json"));
 
     static ReleaseInfo Release(string version = "0.2.0", params (string Name, string Url)[] assets) =>
-        new(version, "v" + version, "craftDriver v" + version, "notas", "https://github.com/Kaike-png/craftDriver/releases/tag/v" + version,
+        new(version, "v" + version, "CraftDriver v" + version, "notas", "https://github.com/Kaike-png/craftDriver/releases/tag/v" + version,
             assets.Select(a => new ReleaseAsset(a.Name, a.Url, 0)).ToList());
 
     // ---------- JSON da release ----------
@@ -79,7 +79,7 @@ public class UpdateCoreTests
         Assert.NotNull(r);
         Assert.Equal("0.2.0", r.Version);
         Assert.Equal("v0.2.0", r.Tag);
-        Assert.Equal("craftDriver v0.2.0", r.Name);
+        Assert.Equal("CraftDriver v0.2.0", r.Name);
         Assert.Equal("https://github.com/Kaike-png/craftDriver/releases/tag/v0.2.0", r.HtmlUrl);
         Assert.StartsWith("### Novidades", r.Notes);
         Assert.Equal(12, r.Assets.Count);
@@ -140,7 +140,7 @@ public class UpdateCoreTests
         var r = await UpdateCheck.FetchLatestAsync(http, "http://falso", "0.1.0", TestContext.Current.CancellationToken);
         Assert.Equal("0.2.0", r?.Version);
         var req = Assert.Single(fake.Requests);
-        Assert.Equal("craftDriver/0.1.0", req.Headers.UserAgent.ToString());
+        Assert.Equal("CraftDriver/0.1.0", req.Headers.UserAgent.ToString());
         Assert.Contains("application/vnd.github+json", req.Headers.Accept.ToString());
 
         var down = new FakeHttp().Route(url, "{}", HttpStatusCode.Forbidden);

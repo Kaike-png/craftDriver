@@ -150,7 +150,7 @@ public class ConfigFileTests
             var cfg = AppConfig.Load(path);
             Assert.Contains("mais nova", cfg.LoadWarning);
             cfg.PollIntervalSeconds = 99;
-            cfg.Save(path); // um craftDriver antigo apagaria "CampoNovo": não grava
+            cfg.Save(path); // um CraftDriver antigo apagaria "CampoNovo": não grava
             Assert.Equal(newer, File.ReadAllText(path));
         }
         finally { Directory.Delete(dir, true); }

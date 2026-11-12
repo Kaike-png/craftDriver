@@ -24,7 +24,7 @@ public static class UserInstallUpdate
         run() { if [ -n "$log" ]; then "$@" >>"$log" 2>&1 </dev/null; else "$@"; fi; }
         alive() { [ -n "$1" ] || return 1; kill -0 "$1" 2>/dev/null || return 1; [ -z "$2" ] && return 0
           s=$(sed 's/^.*) //' /proc/"$1"/stat 2>/dev/null | cut -d' ' -f20); [ "$s" = "$2" ]; }
-        say "$(date '+%F %T') atualização do craftDriver: $tar"
+        say "$(date '+%F %T') atualização do CraftDriver: $tar"
         rm -rf "$work" && mkdir -p "$work" || { say "não foi possível criar $work"; exit 3; }
         if ! run tar -xzf "$tar" -C "$work"; then say "falha ao extrair $tar"; rm -rf "$work"; exit 3; fi
         inst=""
@@ -36,7 +36,7 @@ public static class UserInstallUpdate
         [ -n "$pid" ] || exit $rc
         # deu certo: o install-user.sh já pediu o "quit" e esperou; dá um prazo para o processo sumir de vez
         if [ $rc -eq 0 ]; then i=0; while alive "$pid" "$st" && [ $i -lt 300 ]; do sleep 0.2; i=$((i + 1)); done; fi
-        if alive "$pid" "$st"; then say "o craftDriver continua aberto: nada a reabrir"; [ $rc -eq 0 ] && exit 5; exit $rc; fi
+        if alive "$pid" "$st"; then say "o CraftDriver continua aberto: nada a reabrir"; [ $rc -eq 0 ] && exit 5; exit $rc; fi
         [ $# -gt 0 ] || exit $rc
         say "reabrindo: $*"
         exec "$@" >/dev/null 2>&1 </dev/null

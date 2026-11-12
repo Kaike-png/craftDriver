@@ -77,7 +77,7 @@ public partial class App : Application
     void ShowUnexpectedError(string text)
     {
         if (_vm != null && _window is { IsVisible: true }) _vm.ShowError(text);
-        else Host?.Notify("craftDriver — erro", text, []);
+        else Host?.Notify("CraftDriver — erro", text, []);
     }
 
     void QuitFromSignal()
@@ -102,7 +102,7 @@ public partial class App : Application
             var tray = true;
             if (minimized)
             {
-                // no login o painel pode subir depois do craftDriver: espera um pouco por um host de bandeja
+                // no login o painel pode subir depois do CraftDriver: espera um pouco por um host de bandeja
                 tray = await TrayHostProbe.WaitForHostAsync(DesktopNotifier.SessionBusAddress(), TimeSpan.FromSeconds(3));
                 if (tray && !run.IsCompleted) CreateTray(starting: true);
                 else if (!tray)
@@ -140,13 +140,13 @@ public partial class App : Application
         {
             if (_tray != null) _tray.IsVisible = false;
             _window?.Close();
-            var text = "O craftDriver não conseguiu iniciar: " + ex.GetBaseException().Message + " (detalhes no log)";
+            var text = "O CraftDriver não conseguiu iniciar: " + ex.GetBaseException().Message + " (detalhes no log)";
             if (Host is { } h)
             {
-                h.Notify("craftDriver não iniciou", text, []);
+                h.Notify("CraftDriver não iniciou", text, []);
                 await h.ShutdownAsync(); // desmonta e fecha o IPC se o Start chegou a abri-los
             }
-            else _ = DesktopIntegration.Notify("craftDriver não iniciou", text);
+            else _ = DesktopIntegration.Notify("CraftDriver não iniciou", text);
         }
         catch (Exception again) { CrashGuard.Report(again, "início (encerrando)"); }
         finally { desktop.Shutdown(); }
@@ -209,7 +209,7 @@ public partial class App : Application
         _tray = new TrayIcon
         {
             Icon = LoadIcon("cloud-sync"),
-            ToolTipText = "craftDriver — " + AuthService.OpeningKeyringStatus,
+            ToolTipText = "CraftDriver — " + AuthService.OpeningKeyringStatus,
             Menu = menu,
             IsVisible = true,
         };
@@ -228,7 +228,7 @@ public partial class App : Application
         if (starting) { CreateStartingTray(); return; }
 
         var menu = new NativeMenu();
-        var open = new NativeMenuItem("Abrir craftDriver");
+        var open = new NativeMenuItem("Abrir CraftDriver");
         open.Click += (_, _) => ShowWindow();
         var folder = new NativeMenuItem("Abrir pasta");
         folder.Click += (_, _) => Host.OpenFolder(Host.Config.MountPoint);
@@ -256,13 +256,13 @@ public partial class App : Application
             // reaproveita o ícone criado durante a inicialização (o clique já chama OnTrayClicked)
             _tray.Menu = menu;
             _tray.Icon = LoadIcon("cloud");
-            _tray.ToolTipText = "craftDriver";
+            _tray.ToolTipText = "CraftDriver";
             return;
         }
         _tray = new TrayIcon
         {
             Icon = LoadIcon("cloud"),
-            ToolTipText = "craftDriver",
+            ToolTipText = "CraftDriver",
             Menu = menu,
             IsVisible = true,
         };
@@ -276,7 +276,7 @@ public partial class App : Application
         var st = _vm.CurrentStatus;
         var pending = _vm.PendingCount;
         var transfers = _vm.TransferCount;
-        _tray.ToolTipText = $"craftDriver — {AppHost.StatusText(st)}" +
+        _tray.ToolTipText = $"CraftDriver — {AppHost.StatusText(st)}" +
                             (pending + transfers > 0 ? $"\n{pending} alterações na fila, {transfers} transferências" : "");
         if (_pauseItem != null) _pauseItem.Header = Host.Engine.Paused ? "Retomar sincronização" : "Pausar sincronização";
         if (_updateItem != null)

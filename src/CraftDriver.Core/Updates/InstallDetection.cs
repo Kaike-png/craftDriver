@@ -3,7 +3,7 @@ using System.Diagnostics;
 
 namespace CraftDriver.Core.Updates;
 
-/// <summary>Como esta cópia do craftDriver foi instalada (define o pacote a baixar e o instalador).</summary>
+/// <summary>Como esta cópia do CraftDriver foi instalada (define o pacote a baixar e o instalador).</summary>
 public enum InstallKind
 {
     /// <summary>dotnet run, tarball solto, pacote de terceiros: só avisa, com o link da release.</summary>

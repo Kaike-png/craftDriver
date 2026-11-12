@@ -45,7 +45,7 @@ public static class TrayHostProbe
 
     /// <summary>
     /// Espera um host aparecer por até <paramref name="wait"/> (no início da sessão o painel pode subir depois
-    /// do craftDriver). Consulta a cada <paramref name="interval"/>.
+    /// do CraftDriver). Consulta a cada <paramref name="interval"/>.
     /// </summary>
     public static async Task<bool> WaitForHostAsync(string? busAddress, TimeSpan wait, TimeSpan? interval = null)
     {

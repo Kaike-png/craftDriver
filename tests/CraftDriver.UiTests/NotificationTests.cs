@@ -187,20 +187,20 @@ public class DBusNotificationTests
 
         var restored = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
         var opened = 0;
-        var id = await notifier.NotifyAsync("craftDriver — muitos arquivos apagados", "1989 itens foram apagados", "craftdriver",
+        var id = await notifier.NotifyAsync("CraftDriver — muitos arquivos apagados", "1989 itens foram apagados", "craftdriver",
         [
-            new(NotificationAction.Default, "Abrir craftDriver", () => Interlocked.Increment(ref opened)),
+            new(NotificationAction.Default, "Abrir CraftDriver", () => Interlocked.Increment(ref opened)),
             new("restore", "Restaurar", () => restored.TrySetResult(Environment.CurrentManagedThreadId)),
         ]);
 
         Assert.NotNull(id);
         var call = Assert.Single(server.Calls);
         Assert.Equal(id, call.Id);
-        Assert.Equal("craftDriver", call.App);
+        Assert.Equal("CraftDriver", call.App);
         Assert.Equal("craftdriver", call.Icon);
-        Assert.Equal("craftDriver — muitos arquivos apagados", call.Summary);
+        Assert.Equal("CraftDriver — muitos arquivos apagados", call.Summary);
         Assert.Equal("1989 itens foram apagados", call.Body);
-        Assert.Equal(["default", "Abrir craftDriver", "restore", "Restaurar"], call.Actions);
+        Assert.Equal(["default", "Abrir CraftDriver", "restore", "Restaurar"], call.Actions);
         Assert.Equal("craftdriver", call.Hints["desktop-entry"]);
         Assert.Equal(-1, call.Timeout);
 
@@ -283,7 +283,7 @@ public class DBusNotificationTests
             var id = await notifier.NotifyAsync("Título", "-corpo com 'aspas' e $HOME", "craftdriver", [new("restore", "Restaurar", () => { })]);
             Assert.Null(id);
             var args = await Eventually(() => File.Exists(log) ? File.ReadAllLines(log) : null, "o notify-send falso não rodou");
-            Assert.Equal(["-a", "craftDriver", "-i", "craftdriver", "-h", "string:desktop-entry:craftdriver", "--", "Título", "-corpo com 'aspas' e $HOME"], args);
+            Assert.Equal(["-a", "CraftDriver", "-i", "craftdriver", "-h", "string:desktop-entry:craftdriver", "--", "Título", "-corpo com 'aspas' e $HOME"], args);
         }
         finally { Directory.Delete(dir, true); }
     }

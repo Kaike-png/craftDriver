@@ -1,8 +1,8 @@
-# craftDriver — extensão do Nautilus (nautilus-python, API 4.0 / Nautilus 43+; API 3.0 / Nautilus 42 como reserva).
+# CraftDriver — extensão do Nautilus (nautilus-python, API 4.0 / Nautilus 43+; API 3.0 / Nautilus 42 como reserva).
 #
-# - Emblemas de status a partir do xattr user.onedrive.status que o FUSE do craftDriver expõe.
-# - Submenu "craftDriver" (Sempre manter / Liberar espaço / Status / Copiar link / Versões) só quando TODOS os itens
-#   selecionados estão dentro de uma montagem do craftDriver (fsname=craftdriver na tabela de montagens).
+# - Emblemas de status a partir do xattr user.onedrive.status que o FUSE do CraftDriver expõe.
+# - Submenu "CraftDriver" (Sempre manter / Liberar espaço / Status / Copiar link / Versões) só quando TODOS os itens
+#   selecionados estão dentro de uma montagem do CraftDriver (fsname=craftdriver na tabela de montagens).
 # - Nenhum getxattr roda no loop principal do GLib (um FUSE lento travaria o Nautilus inteiro): leituras numa thread
 #   própria; o menu usa o status já lido para os emblemas. Itens fora das montagens nem chegam à thread.
 #
@@ -11,7 +11,7 @@
 # Requer o pacote nautilus-python (Arch: python-nautilus, Debian/Ubuntu: python3-nautilus,
 # Fedora: nautilus-python). Depois: "nautilus -q" para recarregar.
 #
-# Licença MIT, como o resto do craftDriver.
+# Licença MIT, como o resto do CraftDriver.
 
 import os
 import queue
@@ -35,7 +35,7 @@ from gi.repository import GLib, GObject, Nautilus  # noqa: E402
 
 STATUS_XATTR = "user.onedrive.status"
 
-# Montagens do craftDriver: FuseHost monta com -o fsname=craftdriver (1º campo de /proc/self/mounts).
+# Montagens do CraftDriver: FuseHost monta com -o fsname=craftdriver (1º campo de /proc/self/mounts).
 MOUNTS_FILE = "/proc/self/mounts"
 FSNAME = "craftdriver"
 MOUNTS_TTL_S = 2.0
@@ -56,7 +56,7 @@ EMBLEMS = {
 ACTIONS = [
     ("pin", "Sempre manter neste dispositivo", "pin"),
     ("free", "Liberar espaço", "unpin"),
-    ("status", "Status no craftDriver", "status"),
+    ("status", "Status no CraftDriver", "status"),
     ("share", "Copiar link de compartilhamento", "share"),
     ("versions", "Versões anteriores…", "versions"),
 ]
@@ -74,7 +74,7 @@ CANONICAL_CACHE_MAX = 512
 
 
 def read_status(path):
-    """Valor de user.onedrive.status, ou None se o item não é do craftDriver (ou não existe)."""
+    """Valor de user.onedrive.status, ou None se o item não é do CraftDriver (ou não existe)."""
     try:
         value = os.getxattr(path, STATUS_XATTR, follow_symlinks=False)
     except OSError:
@@ -98,7 +98,7 @@ def _unescape_mount(field):
 
 
 def craftdriver_mounts(mounts_file=None):
-    """Pontos de montagem do craftDriver (fsname=craftdriver) na tabela de montagens deste processo."""
+    """Pontos de montagem do CraftDriver (fsname=craftdriver) na tabela de montagens deste processo."""
     try:
         with open(mounts_file or MOUNTS_FILE, encoding="utf-8", errors="surrogateescape") as f:
             lines = f.read().splitlines()
@@ -113,7 +113,7 @@ def craftdriver_mounts(mounts_file=None):
 
 
 def inside_mount(path, mounts):
-    """O caminho é um ponto de montagem do craftDriver ou fica dentro de um (comparação textual, sem syscalls)."""
+    """O caminho é um ponto de montagem do CraftDriver ou fica dentro de um (comparação textual, sem syscalls)."""
     for mount in mounts:
         root = mount.rstrip("/") or "/"
         if path == root or path.startswith(root.rstrip("/") + "/"):
@@ -156,7 +156,7 @@ def emblem_for(status, icon_exists=None):
 
 
 def craftdriver_binary():
-    """CLI do craftDriver: $CRAFTDRIVER_BIN, PATH ou ~/.local/bin (instalação em modo usuário)."""
+    """CLI do CraftDriver: $CRAFTDRIVER_BIN, PATH ou ~/.local/bin (instalação em modo usuário)."""
     env = os.environ.get("CRAFTDRIVER_BIN")
     if env:
         return env
@@ -208,7 +208,7 @@ class CraftDriverExtension(GObject.GObject, Nautilus.InfoProvider, Nautilus.Menu
         return self._mounts
 
     def _in_mount(self, path):
-        """Dentro de uma montagem do craftDriver, também quando o caminho passa por um symlink (/proc/mounts traz o
+        """Dentro de uma montagem do CraftDriver, também quando o caminho passa por um symlink (/proc/mounts traz o
         caminho canônico; ~/OneDrive -> /data/od). O realpath é da PASTA (cache): um por pasta, não por arquivo."""
         mounts = self._craftdriver_mounts()
         if not mounts:
@@ -225,10 +225,10 @@ class CraftDriverExtension(GObject.GObject, Nautilus.InfoProvider, Nautilus.Menu
 
     def update_file_info_full(self, provider, handle, closure, file_info):
         path = local_path(file_info)
-        # Fora das montagens do craftDriver não há o que ler (antes toda pasta de todo disco ia para a fila).
+        # Fora das montagens do CraftDriver não há o que ler (antes toda pasta de todo disco ia para a fila).
         if path is None or not self._in_mount(path):
             return Nautilus.OperationResult.COMPLETE
-        # getxattr num FUSE passa pelo processo do craftDriver: lê numa thread única (fila), fora da
+        # getxattr num FUSE passa pelo processo do CraftDriver: lê numa thread única (fila), fora da
         # thread da interface, e completa a operação no loop principal.
         cancelled = threading.Event()
         self._handles[handle] = cancelled
@@ -328,12 +328,12 @@ class CraftDriverExtension(GObject.GObject, Nautilus.InfoProvider, Nautilus.Menu
         for f in files:
             path = local_path(f)
             if path is None or not self._in_mount(path):
-                return []  # algum item fora do craftDriver: sem menu
+                return []  # algum item fora do CraftDriver: sem menu
             paths.append(path)
             # status dos emblemas (já lido na thread); None = ainda não lido: tudo habilitado
             statuses.append(self._status.get(path))
 
-        top = Nautilus.MenuItem(name="CraftDriver::menu", label="craftDriver", tip="", icon="craftdriver")
+        top = Nautilus.MenuItem(name="CraftDriver::menu", label="CraftDriver", tip="", icon="craftdriver")
         submenu = Nautilus.Menu()
         top.set_submenu(submenu)
         all_pinned = all(s == "AlwaysAvailable" for s in statuses)
@@ -350,7 +350,7 @@ class CraftDriverExtension(GObject.GObject, Nautilus.InfoProvider, Nautilus.Menu
     def _run(self, _item, command, paths, files):
         binary = craftdriver_binary()
         if binary is None:
-            print("craftDriver: comando \"craftdriver\" não encontrado no PATH")
+            print("CraftDriver: comando \"craftdriver\" não encontrado no PATH")
             return
         try:
             flags = [] if command in NO_NOTIFY else ["--notify"]
@@ -359,7 +359,7 @@ class CraftDriverExtension(GObject.GObject, Nautilus.InfoProvider, Nautilus.Menu
             # Recolhe o processo filho para não deixar zumbis no Nautilus (que fica aberto por horas).
             threading.Thread(target=proc.wait, name="craftdriver-cli", daemon=True).start()
         except OSError as e:
-            print(f"craftDriver: falha ao executar {binary}: {e}")
+            print(f"CraftDriver: falha ao executar {binary}: {e}")
             return
         # O status muda logo depois (Syncing → AlwaysAvailable/OnlineOnly): pede releitura algumas vezes.
         remaining = [3]

@@ -91,7 +91,7 @@ public sealed class IpcServer : IDisposable
                         catch (OperationCanceledException) { return; } // cliente parado: solta a conexão
                         catch (InvalidDataException)
                         {
-                            await writer.WriteLineAsync(IpcJson.Serialize(new IpcResponse(false, $"Pedido grande demais para o craftDriver (máximo {MaxLineChars} caracteres).")));
+                            await writer.WriteLineAsync(IpcJson.Serialize(new IpcResponse(false, $"Pedido grande demais para o CraftDriver (máximo {MaxLineChars} caracteres).")));
                             return;
                         }
                     }
@@ -102,7 +102,7 @@ public sealed class IpcServer : IDisposable
                     catch (JsonException) { /* abaixo */ }
                     // responder sempre: sem resposta o cliente conclui que o app "não está em execução"
                     if (req is not { Cmd: not null, Args: not null })
-                        resp = new IpcResponse(false, "Pedido inválido para o craftDriver (esperado JSON {\"Cmd\":…,\"Args\":[…]}).");
+                        resp = new IpcResponse(false, "Pedido inválido para o CraftDriver (esperado JSON {\"Cmd\":…,\"Args\":[…]}).");
                     else
                     {
                         try { resp = await Handler(req); }

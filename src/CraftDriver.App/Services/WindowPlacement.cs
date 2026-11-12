@@ -8,7 +8,7 @@ namespace CraftDriver.App.Services;
 /// Lembra tamanho, posição e maximizado da janela principal no config.json.
 /// Posição: só é restaurada se a faixa do título (topo da janela) cair numa área útil de alguma tela atual
 /// — evita abrir fora da tela depois de desconectar um monitor. No Wayland (inclusive XWayland, que é como o
-/// craftDriver roda) quem posiciona é o compositor: o pedido de posição pode ser ignorado (ex.: Hyprland com
+/// CraftDriver roda) quem posiciona é o compositor: o pedido de posição pode ser ignorado (ex.: Hyprland com
 /// janela lado a lado), e então só o tamanho/maximizado valem.
 /// </summary>
 public static class WindowPlacement

@@ -19,7 +19,7 @@ class OverlayTest : public QObject
 {
     Q_OBJECT
     std::unique_ptr<QTemporaryDir> m_tmp;
-    std::unique_ptr<QTemporaryDir> m_other; // fora da montagem do craftDriver
+    std::unique_ptr<QTemporaryDir> m_other; // fora da montagem do CraftDriver
     QDir m_dir;
     QByteArray m_mountsFile;
     KOverlayIconPlugin *m_plugin = nullptr;
@@ -74,7 +74,7 @@ private Q_SLOTS:
         m_files.insert(QStringLiteral("Folder"), m_dir.filePath(QStringLiteral("pasta")));
         m_files.insert(QString(), TestUtil::touch(m_dir, QStringLiteral("fora.txt"))); // sem xattr
 
-        // m_dir faz o papel da montagem do craftDriver (tabela de montagens falsa, caminho canônico como o kernel)
+        // m_dir faz o papel da montagem do CraftDriver (tabela de montagens falsa, caminho canônico como o kernel)
         m_other = TestUtil::makeDir();
         QVERIFY(m_other->isValid());
         QFile table(m_other->filePath(QStringLiteral("mounts")));
@@ -182,7 +182,7 @@ private Q_SLOTS:
             QCOMPARE(waitFor(spy, url(it.key()), 3000), QStringList{it.value()});
             QCOMPARE(m_plugin->getOverlays(url(it.key())), QStringList{it.value()});
         }
-        // Pasta comum e arquivo fora do craftDriver: nenhum emblema e nenhum sinal.
+        // Pasta comum e arquivo fora do CraftDriver: nenhum emblema e nenhum sinal.
         QTest::qWait(300);
         for (const auto &args : std::as_const(spy)) {
             QVERIFY(args.at(0).toUrl() != url(QStringLiteral("Folder")));
@@ -261,7 +261,7 @@ private Q_SLOTS:
         QCOMPARE(st, QStringLiteral("Available"));
     }
 
-    // §25.13: pasta vista ANTES de o craftDriver montar (1º getxattr vazio) precisa ganhar emblema quando o
+    // §25.13: pasta vista ANTES de o CraftDriver montar (1º getxattr vazio) precisa ganhar emblema quando o
     // status aparecer — pelo intervalo longo (60 s aqui) ou quando o Dolphin pedir de novo. Hoje a entrada vazia
     // fica no cache e nunca é relida (refreshDue pula status vazio; getOverlays só lê na 1ª vez).
     void emptyFirstAnswerIsRereadLater()
@@ -271,7 +271,7 @@ private Q_SLOTS:
         const QUrl u = QUrl::fromLocalFile(f);
         QCOMPARE(m_plugin->getOverlays(u), QStringList());
         QTest::qWait(500); // 1ª leitura: sem xattr → vazio, sem sinal
-        QVERIFY(TestUtil::setStatus(f, QStringLiteral("Available"))); // o craftDriver "montou"
+        QVERIFY(TestUtil::setStatus(f, QStringLiteral("Available"))); // o CraftDriver "montou"
         QElapsedTimer t;
         t.start();
         QStringList got;
@@ -282,7 +282,7 @@ private Q_SLOTS:
         QCOMPARE(got, QStringList{QStringLiteral("emblem-default-symbolic")});
     }
 
-    // §25.13: arquivo fora das montagens do craftDriver não vai para a fila de getxattr (antes: todo arquivo de
+    // §25.13: arquivo fora das montagens do CraftDriver não vai para a fila de getxattr (antes: todo arquivo de
     // todo disco que o Dolphin mostrava). Aqui ele TEM o xattr: se fosse lido, ganharia emblema.
     void outsideMountIsNotRead()
     {

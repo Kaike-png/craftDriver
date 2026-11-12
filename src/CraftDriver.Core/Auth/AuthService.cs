@@ -158,7 +158,7 @@ public sealed class AuthService
     /// </summary>
     public static (string Product, string Label) KeyringIdentity(string? homeOverride)
     {
-        if (homeOverride == null) return ("onedrive-linux", "craftDriver - tokens");
+        if (homeOverride == null) return ("onedrive-linux", "craftDriver - tokens"); // rótulo antigo mantido de propósito (item já gravado no chaveiro)
         var full = Path.TrimEndingDirectorySeparator(Path.GetFullPath(homeOverride));
         var id = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(full)))[..16].ToLowerInvariant();
         return ("onedrive-linux@" + id, $"craftDriver - tokens ({full})");
@@ -242,7 +242,7 @@ public sealed class AuthService
             .WithSystemWebViewOptions(new SystemWebViewOptions
             {
                 OpenBrowserAsync = openBrowser,
-                HtmlMessageSuccess = Page("Pronto! Login recebido.", "Pode fechar esta aba: o craftDriver conclui a conexão sozinho."),
+                HtmlMessageSuccess = Page("Pronto! Login recebido.", "Pode fechar esta aba: o CraftDriver conclui a conexão sozinho."),
                 HtmlMessageError = Page("Não foi possível entrar.", "Erro: {0} — {1}. Volte ao app e tente de novo."),
             })
             .ExecuteAsync(ct);
@@ -250,7 +250,7 @@ public sealed class AuthService
     }
 
     static string Page(string title, string body) =>
-        $"<!doctype html><html lang=\"pt-BR\"><head><meta charset=\"utf-8\"><title>craftDriver</title></head>" +
+        $"<!doctype html><html lang=\"pt-BR\"><head><meta charset=\"utf-8\"><title>CraftDriver</title></head>" +
         $"<body style=\"font-family:sans-serif;margin:15vh auto;max-width:520px;text-align:center\">" +
         $"<h1 style=\"color:#0F6CBD\">&#9729; {title}</h1><p>{body}</p></body></html>";
 
@@ -306,7 +306,7 @@ public sealed class AuthService
         }
         if (acc == null)
             throw new AuthRequiredException(accountId, KeyringUnavailable
-                      ? "O chaveiro do sistema (KWallet/GNOME Keyring) não respondeu, então os tokens salvos não puderam ser lidos. Abra o chaveiro e reinicie o craftDriver."
+                      ? "O chaveiro do sistema (KWallet/GNOME Keyring) não respondeu, então os tokens salvos não puderam ser lidos. Abra o chaveiro e reinicie o CraftDriver."
                       : "Conta não encontrada no cache de tokens. Entre novamente.");
         try
         {

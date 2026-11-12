@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Mescla as ações do craftDriver no uca.xml do Thunar (ou as remove com --remove).
+"""Mescla as ações do CraftDriver no uca.xml do Thunar (ou as remove com --remove).
 
 Uso: install-uca.py [--remove] [--uca CAMINHO] [--command CMD]
   --uca      arquivo de destino (padrão: $XDG_CONFIG_HOME/Thunar/uca.xml)
@@ -40,7 +40,7 @@ def snippet_path():
     for p in (HERE / "uca.xml", Path("/usr/share/craftdriver/thunar/uca.xml")):
         if p.exists():
             return p
-    sys.exit("install-uca: uca.xml do craftDriver não encontrado")
+    sys.exit("install-uca: uca.xml do CraftDriver não encontrado")
 
 
 def ours(action):
@@ -93,7 +93,7 @@ def main(argv=None):
     tmp = uca.with_name(uca.name + ".tmp")
     tree.write(tmp, encoding="UTF-8", xml_declaration=True)
     os.replace(tmp, uca)
-    print(f"{uca}: {len(removed)} ação(ões) do craftDriver removida(s), {added} adicionada(s)")
+    print(f"{uca}: {len(removed)} ação(ões) do CraftDriver removida(s), {added} adicionada(s)")
     return 0
 
 

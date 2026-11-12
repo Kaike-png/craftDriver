@@ -1,4 +1,4 @@
-# Pendências e melhorias — craftDriver
+# Pendências e melhorias — CraftDriver
 
 Rodada 1 (seções 1–11): levantamento sobre a v0.1.4 (7,5 k LOC, 40 testes) — quase tudo feito, notas "**Feito:**" em cada item.
 Rodada 2 (seções 12–21): novo levantamento sobre a árvore atual (26 k LOC, 0 avisos, 238 + 118 testes verdes, nada commitado
@@ -989,7 +989,7 @@ Insert, exclusão seletiva e rollback; fixados com geração própria. 24.6: `Se
   e depois `QuitCommand`, que agora pede confirmação com transferências ativas (`MainViewModel.cs:685-693`). Cancelar deixa
   um `sh` esperando o PID para sempre: horas depois, ao sair normalmente, o app reabre sozinho. Inverter a ordem.
 - [x] **`SingleInstance.cs:28` `catch (IOException)`** trata ENOSPC/EROFS/EIO ao criar o `.lock` como "outra instância" →
-  "O craftDriver já está em execução" com rc 0, sem app. Distinguir EWOULDBLOCK (HResult 11).
+  "O CraftDriver já está em execução" com rc 0, sem app. Distinguir EWOULDBLOCK (HResult 11).
 - [x] **`install-user.sh:38-41` com o app aberto**: `craftdriver quit` volta na hora; o script faz `rm -rf $DEST` com o processo
   antigo ainda desmontando e, se o usuário abre logo, a instância nova acha a trava presa → `AlreadyRunning` → `show` ignorado
   por `_quitting` → sai 0: **nenhuma instância fica** (mesmo defeito que §15.9 corrigiu no `AppRestart`). Esperar o PID.
@@ -1021,7 +1021,7 @@ Insert, exclusão seletiva e rollback; fixados com geração própria. 24.6: `Se
 - [x] Unit systemd (`DesktopIntegration.cs:134-135`): `After=graphical-session.target` com `WantedBy=default.target` sobe no login
   antes de o target existir → `PassEnvironment` vazio em GNOME/KDE/uwsm (sem clipboard/notificações; chaveiro fechado).
   HIPÓTESE. `WantedBy=graphical-session.target` quando existir.
-- [x] Dolphin: entrada cujo 1º `getxattr` deu vazio (pasta vista antes de o craftDriver montar) nunca é relida
+- [x] Dolphin: entrada cujo 1º `getxattr` deu vazio (pasta vista antes de o CraftDriver montar) nunca é relida
   (`craftdriveroverlayplugin.cpp:164-166`, `refreshDue` pula `status.isEmpty()`) → sem emblemas até reiniciar o Dolphin.
   `~QThread` com a thread presa num `getxattr` (FUSE travado) é `qFatal` → o Dolphin aborta ao fechar (`:87-92`); vazar a
   thread. `getOverlays` enfileira `getxattr` para todo arquivo do sistema (sem filtro por mountinfo como o Nautilus).

@@ -8,7 +8,7 @@ namespace CraftDriver.App.Services;
 /// </summary>
 public static class StartupIpc
 {
-    public const string StillStarting = "O craftDriver ainda está iniciando (esperando o chaveiro do sistema). Tente de novo em instantes.";
+    public const string StillStarting = "O CraftDriver ainda está iniciando (esperando o chaveiro do sistema). Tente de novo em instantes.";
 
     /// <param name="show">Mostra a janela de espera; null no --headless (sem janela).</param>
     /// <param name="quit">
@@ -28,7 +28,7 @@ public static class StartupIpc
                 show();
                 return new(true, "ok");
             case "show":
-                return new(false, "O craftDriver já está rodando sem interface (--headless) e ainda está iniciando.");
+                return new(false, "O CraftDriver já está rodando sem interface (--headless) e ainda está iniciando.");
             default:
                 return new(false, StillStarting);
         }

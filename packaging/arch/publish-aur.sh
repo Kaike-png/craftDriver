@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Publicação opcional após a release: AUR_SSH_KEY deve ser de um mantenedor dos dois pacotes.
-# Sem segredo, não acessa o AUR. Não altera o repositório do craftDriver.
+# Sem segredo, não acessa o AUR. Não altera o repositório do CraftDriver.
 set -euo pipefail
 if [[ -z "${AUR_SSH_KEY:-}" ]]; then echo "::warning::AUR_SSH_KEY ausente; publicação no AUR ignorada."; exit 0; fi
 SOURCE=$(cd "${1:?pasta aur gerada por packaging/build.sh}" && pwd)
@@ -29,7 +29,7 @@ for pkg in craftdriver-bin craftdriver-dolphin; do
     git add PKGBUILD .SRCINFO
     if ! git diff --cached --quiet; then
       version=$(sed -n 's/^pkgver=//p' PKGBUILD)
-      git -c user.name='craftDriver CI' -c user.email='kaikedepaula8@gmail.com' commit -m "Atualiza para $version"
+      git -c user.name='CraftDriver CI' -c user.email='kaikedepaula8@gmail.com' commit -m "Atualiza para $version"
       git push origin HEAD
     else
       echo "$pkg já atualizado"

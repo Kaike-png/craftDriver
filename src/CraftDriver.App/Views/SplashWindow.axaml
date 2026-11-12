@@ -2,21 +2,21 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:views="using:CraftDriver.App.Views"
         x:Class="CraftDriver.App.Views.SplashWindow"
-        Title="craftDriver" Width="460" SizeToContent="Height" CanResize="False"
+        Title="CraftDriver" Width="460" SizeToContent="Height" CanResize="False"
         WindowStartupLocation="CenterScreen">
     <DockPanel>
         <Border DockPanel.Dock="Top" Classes="brand-band">
             <StackPanel Orientation="Horizontal" Spacing="14">
                 <views:BrandMark Width="34" Height="34" />
-                <TextBlock Classes="h1" Text="craftDriver" VerticalAlignment="Center" />
+                <TextBlock Classes="h1" Text="CraftDriver" VerticalAlignment="Center" />
             </StackPanel>
         </Border>
         <StackPanel Margin="24,22,24,24" Spacing="12">
-            <TextBlock x:Name="StatusText" TextWrapping="Wrap" Text="Iniciando o craftDriver…"
+            <TextBlock x:Name="StatusText" TextWrapping="Wrap" Text="Iniciando o CraftDriver…"
                        AutomationProperties.LiveSetting="Polite" />
             <ProgressBar x:Name="Busy" IsIndeterminate="True" />
             <TextBlock x:Name="KeyringHint" Classes="muted" TextWrapping="Wrap"
-                       Text="Os tokens das contas ficam no chaveiro do sistema (KWallet ou GNOME Keyring). Se ele pedir uma senha, responda na janela dele. Sem o chaveiro, o craftDriver abre, mas as contas já conectadas ficam paradas até você reiniciá-lo com o chaveiro disponível." />
+                       Text="Os tokens das contas ficam no chaveiro do sistema (KWallet ou GNOME Keyring). Se ele pedir uma senha, responda na janela dele. Sem o chaveiro, o CraftDriver abre, mas as contas já conectadas ficam paradas até você reiniciá-lo com o chaveiro disponível." />
             <Border x:Name="ErrorPanel" Classes="card danger" IsVisible="False">
                 <TextBlock x:Name="ErrorText" TextWrapping="Wrap" Classes="error" />
             </Border>

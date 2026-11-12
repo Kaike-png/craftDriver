@@ -11,7 +11,7 @@ public partial class ConfirmWindow : Window
 
     public ConfirmWindow(ConfirmRequest request) : this()
     {
-        Title = request.Title + " — craftDriver";
+        Title = request.Title + " — CraftDriver";
         TitleText.Text = request.Title;
         BodyText.Text = request.Text;
         AcceptButton.Content = request.Accept;

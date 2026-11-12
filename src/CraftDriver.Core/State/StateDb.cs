@@ -1143,7 +1143,7 @@ public sealed partial class StateDb : IDisposable
         Exec("UPDATE ops SET parent_remote=$p WHERE id=$i AND kind='upload'", ("$p", parentRemote), ("$i", opId));
 }
 
-/// <summary>Item que o craftDriver viu ir para a Lixeira da nuvem (excluído aqui ou em outro dispositivo).</summary>
+/// <summary>Item que o CraftDriver viu ir para a Lixeira da nuvem (excluído aqui ou em outro dispositivo).</summary>
 public sealed record TrashRecord(long Id, string DriveId, string ItemId, string Name, bool IsDir, long At);
 
 /// <summary>Operação na cabeça da fila de uma drive; <see cref="Behind"/> = quantas esperam atrás dela.</summary>

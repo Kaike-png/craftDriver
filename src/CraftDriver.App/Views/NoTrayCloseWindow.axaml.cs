@@ -17,7 +17,7 @@ public partial class NoTrayCloseWindow : Window
     {
         InitializeComponent();
         try { Icon = App.LoadIcon("cloud"); } catch { }
-        BodyText.Text = "O ícone do craftDriver não tem onde aparecer (nenhum painel com bandeja/StatusNotifier está ativo), " +
+        BodyText.Text = "O ícone do CraftDriver não tem onde aparecer (nenhum painel com bandeja/StatusNotifier está ativo), " +
                         "então esconder a janela deixaria o app sem nenhum sinal na tela.\n\n" +
                         $"Encerrar desmonta {mountPoint} e para a sincronização. Minimizar mantém tudo funcionando " +
                         "(em compositores que não minimizam, como o Hyprland, a janela continua visível).";

@@ -37,7 +37,7 @@ public static class UpdateCli
                 (resp.Ok ? stdout : stderr).WriteLine(resp.Text);
                 return resp.Ok ? 0 : Error;
             }
-            if (resp != null) stdout.WriteLine("O craftDriver está rodando sem interface (--headless): a atualização é feita aqui.");
+            if (resp != null) stdout.WriteLine("O CraftDriver está rodando sem interface (--headless): a atualização é feita aqui.");
         }
 
         var current = AppVersion.Current;
@@ -70,7 +70,7 @@ public static class UpdateCli
         }
         if (asset == null)
         {
-            stdout.WriteLine("Esta cópia do craftDriver não pode se atualizar automaticamente.");
+            stdout.WriteLine("Esta cópia do CraftDriver não pode se atualizar automaticamente.");
             stdout.WriteLine(UpdateAssets.ManualHint(install.Kind, latest));
             return Error;
         }
@@ -136,8 +136,8 @@ public static class UpdateCli
         }
         if (rc == 0)
         {
-            stdout.WriteLine($"craftDriver {release.Version} instalado." + (install.Kind == InstallKind.UserInstall
-                ? " Abra o craftDriver de novo."
+            stdout.WriteLine($"CraftDriver {release.Version} instalado." + (install.Kind == InstallKind.UserInstall
+                ? " Abra o CraftDriver de novo."
                 : " Se ele estiver aberto, reinicie-o (craftdriver quit e abra de novo)."));
             return 0;
         }

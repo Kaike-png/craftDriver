@@ -1,6 +1,6 @@
-# Plugins do Dolphin (KF6) para o craftDriver:
+# Plugins do Dolphin (KF6) para o CraftDriver:
 #   craftdriveroverlayplugin  (kf6/overlayicon)     emblemas a partir do xattr user.onedrive.status
-#   craftdriveractionplugin   (kf6/kfileitemaction) menu "craftDriver" só para arquivos do craftDriver
+#   craftdriveractionplugin   (kf6/kfileitemaction) menu "CraftDriver" só para arquivos do CraftDriver
 #   kservicemenurc            (/etc/xdg)            esconde o servicemenu genérico (fallback) quando o plugin está instalado
 #
 # Compilar:  cmake -S extensions/dolphin -B build -DCMAKE_INSTALL_PREFIX=/usr && cmake --build build
@@ -24,7 +24,7 @@ find_package(Qt6 ${QT_MIN_VERSION} REQUIRED COMPONENTS Core Gui Widgets)
 find_package(KF6 ${KF_MIN_VERSION} REQUIRED COMPONENTS CoreAddons KIO)
 
 option(CRAFTDRIVER_HIDE_SERVICEMENU
-       "Instala ${KDE_INSTALL_CONFDIR}/kservicemenurc escondendo o servicemenu genérico do craftDriver (o plugin o substitui)" ON)
+       "Instala ${KDE_INSTALL_CONFDIR}/kservicemenurc escondendo o servicemenu genérico do CraftDriver (o plugin o substitui)" ON)
 
 # Código comum (leitura do xattr e tabela status → emblema), usado pelos dois plugins e pelos testes.
 add_library(craftdriverstatus STATIC craftdriverstatus.cpp)

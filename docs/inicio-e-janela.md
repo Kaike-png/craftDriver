@@ -21,7 +21,7 @@
 ## Fechar a janela
 
 - Com host StatusNotifier (`org.kde.StatusNotifierWatcher` com `IsStatusNotifierHostRegistered = true`,
-  consultado na hora de fechar — `TrayHostProbe`): esconde; na primeira vez, notificação "O craftDriver continua em
+  consultado na hora de fechar — `TrayHostProbe`): esconde; na primeira vez, notificação "O CraftDriver continua em
   execução" (`TrayNoticeShown` no config).
 - Sem host: **não esconde** — diálogo `NoTrayCloseWindow` com Encerrar / Minimizar / Cancelar (Esc). Encerrar
   desmonta a pasta. Minimizar não tem efeito em compositores que não minimizam (Hyprland): a janela fica visível.
@@ -35,7 +35,7 @@ tamanho e maximizado continuam valendo.
 
 ## Escala (HiDPI) sob XWayland
 
-O craftDriver usa só o backend X11 do Avalonia (`UsePlatformDetect`), ou seja, XWayland numa sessão Wayland.
+O CraftDriver usa só o backend X11 do Avalonia (`UsePlatformDetect`), ou seja, XWayland numa sessão Wayland.
 
 - Avalonia 12.1.5 (csproj). O backend Wayland nativo existe desde o 12.1 (pacote `Avalonia.Wayland`), mas é
   **experimental**, não é escolhido pelo `UsePlatformDetect()` e ainda não tem menu global/ícone de janela do KDE:

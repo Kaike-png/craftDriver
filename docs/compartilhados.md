@@ -24,7 +24,7 @@
 
 1. **Sem colisão com conteúdo real.** Dentro da drive, uma pasta de verdade chamada "Compartilhados comigo" (ou que
    o usuário crie depois) ficaria escondida ou duplicada. Na raiz da montagem só existem pastas criadas pelo
-   craftDriver.
+   CraftDriver.
 2. **Semântica de escrita clara.** A raiz da montagem já é virtual e não aceita arquivos; dentro da drive o usuário
    esperaria poder criar arquivos ao lado, e o delta/varredura da drive (Sweep, conflitos de nome, exclusão em massa)
    teria de tratar um nó que não existe na nuvem.

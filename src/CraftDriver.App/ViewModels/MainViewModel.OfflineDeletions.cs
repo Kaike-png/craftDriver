@@ -62,9 +62,9 @@ public sealed partial class MainViewModel
     {
         var n = Host.OfflineDeletions.Pending().Count;
         if (n == 0) return;
-        Host.Notify("craftDriver",
+        Host.Notify("CraftDriver",
             (n == 1 ? "1 exclusão aguardando confirmação" : $"{n} exclusões aguardando confirmação") +
-            " (arquivos apagados da pasta com o app fechado). Abra o craftDriver para decidir se apaga também no OneDrive.",
-            [new(NotificationAction.Default, "Abrir o craftDriver", open), new("open-offline-deletions", "Abrir o craftDriver", open)]);
+            " (arquivos apagados da pasta com o app fechado). Abra o CraftDriver para decidir se apaga também no OneDrive.",
+            [new(NotificationAction.Default, "Abrir o CraftDriver", open), new("open-offline-deletions", "Abrir o CraftDriver", open)]);
     }
 }

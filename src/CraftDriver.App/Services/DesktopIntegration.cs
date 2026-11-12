@@ -162,7 +162,7 @@ public static class DesktopIntegration
         var exec = ExecCommand.Replace("%", "%%");
         return $"""
         [Unit]
-        Description=craftDriver — cliente para OneDrive e SharePoint (sem interface)
+        Description=CraftDriver — cliente para OneDrive e SharePoint (sem interface)
         Documentation=https://github.com/Kaike-png/craftDriver
         After=graphical-session.target
         PartOf=graphical-session.target
@@ -289,11 +289,14 @@ public static class DesktopIntegration
         && libDirs.Any(l => new[] { "extensions-4", "extensions-3.0" }
             .Any(e => File.Exists(Path.Combine(l, "nautilus", e, "libnautilus-python.so"))));
 
-    static readonly string[] ScriptNames = ["craftDriver - Sempre manter neste dispositivo", "craftDriver - Liberar espaço"];
+    static readonly string[] ScriptNames = ["CraftDriver - Sempre manter neste dispositivo", "CraftDriver - Liberar espaço"];
+
+    /// <summary>Nomes até a 0.4.0 (marca "craftDriver"): apagados para não duplicar o menu de scripts.</summary>
+    static readonly string[] LegacyScriptNames = ["craftDriver - Sempre manter neste dispositivo", "craftDriver - Liberar espaço"];
 
     /// <summary>
     /// Nautilus e Nemo: scripts (o pacote não instala, pois ficam na pasta do usuário). Com a extensão do Nautilus
-    /// ativa, os scripts duplicariam o menu craftDriver dela: não grava e apaga os de instalações anteriores.
+    /// ativa, os scripts duplicariam o menu CraftDriver dela: não grava e apaga os de instalações anteriores.
     /// </summary>
     internal static void InstallFileManagerScripts(List<string> done, string dataHome, bool nautilusExtension)
     {
@@ -304,11 +307,13 @@ public static class DesktopIntegration
                  })
         {
             if (!Directory.Exists(Path.GetDirectoryName(dir)!)) continue;
+            foreach (var name in LegacyScriptNames)
+                if (File.Exists(Path.Combine(dir, name))) File.Delete(Path.Combine(dir, name));
             if (label == "Nautilus" && nautilusExtension)
             {
                 foreach (var name in ScriptNames)
                     if (File.Exists(Path.Combine(dir, name))) File.Delete(Path.Combine(dir, name));
-                done.Add("Nautilus: menu da extensão craftDriver (sem scripts)");
+                done.Add("Nautilus: menu da extensão CraftDriver (sem scripts)");
                 continue;
             }
             Directory.CreateDirectory(dir);
@@ -330,7 +335,7 @@ public static class DesktopIntegration
         Directory.CreateDirectory(Path.GetDirectoryName(DolphinMenuFile)!);
         File.WriteAllText(DolphinMenuFile, Packaged("share/kio/servicemenus/craftdriver.desktop"));
         File.SetUnixFileMode(DolphinMenuFile, (UnixFileMode)0b111_101_101);
-        done.Add("Menu de contexto do Dolphin (craftDriver ▸ …)");
+        done.Add("Menu de contexto do Dolphin (CraftDriver ▸ …)");
 
         try { Process.Start(new ProcessStartInfo("update-desktop-database", Path.GetDirectoryName(LauncherFile)!) { UseShellExecute = false })?.WaitForExit(5000); }
         catch { }

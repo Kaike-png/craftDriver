@@ -10,7 +10,7 @@
             <StackPanel Orientation="Horizontal" Spacing="14">
                 <views:BrandMark Width="34" Height="34" />
                 <StackPanel VerticalAlignment="Center">
-                    <TextBlock x:Name="HeadingText" Classes="h1" Text="Entrar no craftDriver" />
+                    <TextBlock x:Name="HeadingText" Classes="h1" Text="Entrar no CraftDriver" />
                     <TextBlock x:Name="HeadingDetail" Classes="band-detail" IsVisible="False" />
                 </StackPanel>
             </StackPanel>

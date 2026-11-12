@@ -1,12 +1,12 @@
 # Atualizações
 
-O craftDriver avisa quando sai uma versão nova e, quando dá, se atualiza sozinho: baixa o pacote certo para o jeito
+O CraftDriver avisa quando sai uma versão nova e, quando dá, se atualiza sozinho: baixa o pacote certo para o jeito
 como foi instalado, confere o SHA256 e instala. Código: `src/CraftDriver.Core/Updates/` (o que não depende da
 interface) e `src/CraftDriver.App/Services/Update*.cs` + `UserInstallUpdate.cs`.
 
 ## Verificação
 
-- `GET https://api.github.com/repos/Kaike-png/craftDriver/releases/latest` com `User-Agent: craftDriver/<versão>`,
+- `GET https://api.github.com/repos/Kaike-png/craftDriver/releases/latest` com `User-Agent: CraftDriver/<versão>`,
   `Accept: application/vnd.github+json` e prazo de 15 s (`UpdateCheck.FetchLatestAsync`). O JSON é lido por
   source generator (`UpdateJsonContext` em `Config/JsonContexts.cs`; o pacote é publicado com trimming).
 - A tag `vX.Y.Z` é comparada com a versão do assembly (`AppVersion.Current`, `InformationalVersion` sem `+hash`)
@@ -22,7 +22,7 @@ interface) e `src/CraftDriver.App/Services/Update*.cs` + `UserInstallUpdate.cs`.
   sim. "Procurar agora" mostra até a ignorada (pedido explícito) e esquece o "ignorar".
 - Notificação de desktop **uma vez por versão** (`NotifiedUpdateVersion`, gravado — não repete a cada início), com
   "Atualizar agora" e "Ver novidades"; servidor de notificações sem botões (ou `notify-send`) recebe a dica no texto
-  ("abra o craftDriver… ou rode `craftdriver update`"). Sem janela (`--headless`), só "Ver novidades".
+  ("abra o CraftDriver… ou rode `craftdriver update`"). Sem janela (`--headless`), só "Ver novidades".
 - `CRAFTDRIVER_UPDATE_URL` troca a base da API (só para testes: GitHub falso local). As URLs dos arquivos vêm do
   próprio JSON da release.
 

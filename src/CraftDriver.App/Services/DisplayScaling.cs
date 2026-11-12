@@ -30,9 +30,9 @@ public static class DisplayScaling
     static readonly string[] AvaloniaVars = ["AVALONIA_SCREEN_SCALE_FACTORS", "AVALONIA_GLOBAL_SCALE_FACTOR", "AVALONIA_USE_PHYSICAL_DPI"];
     static readonly string[] QtVars = ["QT_SCREEN_SCALE_FACTORS", "QT_SCALE_FACTOR", "QT_AUTO_SCREEN_SCALE_FACTOR", "QT_USE_PHYSICAL_DPI"];
 
-    const string ForceZeroHint = "No Hyprland, a interface de apps X11 (como o craftDriver) fica borrada em monitor com escala; " +
+    const string ForceZeroHint = "No Hyprland, a interface de apps X11 (como o CraftDriver) fica borrada em monitor com escala; " +
                                  "para nitidez, use \"xwayland { force_zero_scaling = true }\" na configuração do Hyprland " +
-                                 "— o craftDriver então aplica a escala de cada monitor sozinho.";
+                                 "— o CraftDriver então aplica a escala de cada monitor sozinho.";
 
     /// <param name="env">Leitura de variável de ambiente.</param>
     /// <param name="monitors">Monitores do Hyprland; null = não é Hyprland (ou não respondeu).</param>

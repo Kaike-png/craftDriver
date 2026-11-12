@@ -1,22 +1,22 @@
 # Maintainer: Kaike de Paula <kaikedepaula8@gmail.com>
 # Gerado por packaging/build.sh a partir de packaging/arch/craftdriver-dolphin/PKGBUILD.in
-# Plugins KF6 do Dolphin (extensions/dolphin): emblemas de status (kf6/overlayicon) e menu craftDriver
-# só para arquivos do craftDriver (kf6/kfileitemaction). Compilado da fonte da tag v${pkgver}.
+# Plugins KF6 do Dolphin (extensions/dolphin): emblemas de status (kf6/overlayicon) e menu CraftDriver
+# só para arquivos do CraftDriver (kf6/kfileitemaction). Compilado da fonte da tag v${pkgver}.
 pkgname=craftdriver-dolphin
 pkgver=@VERSION@
 pkgrel=1
-pkgdesc="Plugins do Dolphin para o craftDriver: emblemas de status e menu só dentro do ponto de montagem"
+pkgdesc="Plugins do Dolphin para o CraftDriver: emblemas de status e menu só dentro do ponto de montagem"
 arch=('x86_64' 'aarch64')
 url="https://github.com/Kaike-png/craftDriver"
 license=('MIT')
 depends=('craftdriver' 'kio' 'kcoreaddons' 'qt6-base' 'glibc' 'gcc-libs')
 optdepends=('dolphin: o gerenciador de arquivos que carrega os plugins')
 makedepends=('cmake' 'extra-cmake-modules' 'git' 'ninja')
-source=("craftDriver::git+${url}.git#tag=v${pkgver}")
+source=("CraftDriver::git+${url}.git#tag=v${pkgver}")
 sha256sums=('SKIP')
 
 build() {
-  cmake -S craftDriver/extensions/dolphin -B build -G Ninja \
+  cmake -S CraftDriver/extensions/dolphin -B build -G Ninja \
     -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_BUILD_TYPE=None -DBUILD_TESTING=ON
   cmake --build build
 }
@@ -28,5 +28,5 @@ check() {
 
 package() {
   DESTDIR="$pkgdir" cmake --install build
-  install -Dm644 craftDriver/LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+  install -Dm644 CraftDriver/LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
 }

@@ -155,7 +155,7 @@ public static class OfflineCopies
                         if (!item.LocalOnly) db.Enqueue(item.DriveId, OpKind.Mkdir, item.Lid);
                         dirLids[rel] = item.Lid;
                         if (existing != null)
-                            db.AddConflict(item.DriveId, item.Lid, name, item.Name, "pasta criada com o craftDriver fechado; o nome já existia");
+                            db.AddConflict(item.DriveId, item.Lid, name, item.Name, "pasta criada com o CraftDriver fechado; o nome já existia");
                     }
                     created++;
                     done.Add(rel);
@@ -210,7 +210,7 @@ public static class OfflineCopies
                     db.DefinirFracaoMtime(item.Lid, item.MTime, Nanos(fi));
                     if (!item.LocalOnly) db.Enqueue(item.DriveId, OpKind.Upload, item.Lid);
                     if (existing != null)
-                        db.AddConflict(item.DriveId, item.Lid, name, item.Name, "arquivo criado com o craftDriver fechado; o nome já existia");
+                        db.AddConflict(item.DriveId, item.Lid, name, item.Name, "arquivo criado com o CraftDriver fechado; o nome já existia");
                 }
                 created++;
                 done.Add(rel);

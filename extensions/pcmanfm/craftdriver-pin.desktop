@@ -1,12 +1,12 @@
-# Ação do craftDriver para PCManFM / PCManFM-Qt (ver craftdriver-menu.desktop).
+# Ação do CraftDriver para PCManFM / PCManFM-Qt (ver craftdriver-menu.desktop).
 # ShowIfTrue restringe ao ponto de montagem: só mostra quando TODOS os itens têm o xattr
 # user.onedrive.status. O comando imprime "true" (o que a especificação DES-EMA pede) E sai com
-# status 0 (o que o libfm-qt de fato confere, via system()); fora do craftDriver não imprime nada e
+# status 0 (o que o libfm-qt de fato confere, via system()); fora do CraftDriver não imprime nada e
 # sai com 1. Precisa do getfattr (pacote attr).
 [Desktop Entry]
 Type=Action
 Name=Sempre manter neste dispositivo
-Tooltip=Baixa e mantém os itens neste dispositivo (craftDriver)
+Tooltip=Baixa e mantém os itens neste dispositivo (CraftDriver)
 Icon=emblem-downloads
 Profiles=craftdriver;
 

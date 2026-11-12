@@ -184,7 +184,7 @@ public class MedicoesDesempenhoTests(ITestOutputHelper output)
                     t = time.perf_counter()
                     for f in fs:
                         p = '{{dir}}/' + f
-                        os.getxattr(p, 'user.onedrive.status', follow_symlinks=False)  # overlay do craftDriver
+                        os.getxattr(p, 'user.onedrive.status', follow_symlinks=False)  # overlay do CraftDriver
                         os.listxattr(p)                                                    # KIO
                         try: os.getxattr(p, 'user.xdg.origin.url')
                         except OSError: pass

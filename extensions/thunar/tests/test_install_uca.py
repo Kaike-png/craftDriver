@@ -69,7 +69,7 @@ class InstallUca(unittest.TestCase):
 
     def test_new_file_keeps_system_default_actions(self):
         # Sem uca.xml do usuário o Thunar usa o do sistema ($XDG_CONFIG_DIRS/Thunar/uca.xml, ex.: "Abrir terminal
-        # aqui"); criar um arquivo só com as ações do craftDriver esconderia essas ações padrão.
+        # aqui"); criar um arquivo só com as ações do CraftDriver esconderia essas ações padrão.
         sysdir = Path(self.tmp.name) / "xdg-sistema"
         (sysdir / "Thunar").mkdir(parents=True)
         (sysdir / "Thunar" / "uca.xml").write_text(EXISTING)

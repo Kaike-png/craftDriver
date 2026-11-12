@@ -29,7 +29,7 @@ public static class UpdateCheck
         catch (JsonException ex) { throw new UpdateException("O GitHub devolveu uma resposta que não é a release esperada.", ex); }
         if (r == null || r.Draft || r.Prerelease || SemVer.IsPrerelease(r.TagName) || SemVer.Core(r.TagName) is not { } v) return null;
         var version = $"{v.Major}.{v.Minor}.{v.Build}";
-        return new ReleaseInfo(version, r.TagName, string.IsNullOrWhiteSpace(r.Name) ? "craftDriver " + r.TagName : r.Name!,
+        return new ReleaseInfo(version, r.TagName, string.IsNullOrWhiteSpace(r.Name) ? "CraftDriver " + r.TagName : r.Name!,
             r.Body ?? "", r.HtmlUrl ?? $"https://github.com/{Repository}/releases/tag/{r.TagName}",
             r.Assets.Where(a => a.Name.Length > 0 && a.BrowserDownloadUrl.Length > 0)
                 .Select(a => new ReleaseAsset(a.Name, a.BrowserDownloadUrl, a.Size)).ToList());
@@ -41,7 +41,7 @@ public static class UpdateCheck
     public static async Task<ReleaseInfo?> FetchLatestAsync(HttpClient http, string apiBase, string currentVersion, CancellationToken ct)
     {
         using var req = new HttpRequestMessage(HttpMethod.Get, LatestUrl(apiBase));
-        req.Headers.UserAgent.Add(new ProductInfoHeaderValue("craftDriver", currentVersion));
+        req.Headers.UserAgent.Add(new ProductInfoHeaderValue("CraftDriver", currentVersion));
         req.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.github+json"));
         req.Headers.Add("X-GitHub-Api-Version", "2022-11-28");
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);

@@ -45,7 +45,7 @@ stop_running() {
 }
 
 if [[ "${1:-}" == --uninstall ]]; then
-  stop_running || echo "Aviso: o craftDriver não terminou em ${QUIT_TIMEOUT} s; removendo assim mesmo." >&2
+  stop_running || echo "Aviso: o CraftDriver não terminou em ${QUIT_TIMEOUT} s; removendo assim mesmo." >&2
   # ações do Thunar ANTES de apagar a pasta que contém o script (senão ficam órfãs apontando para $BIN)
   if [[ -f "$UCA" ]] && grep -q 'craftdriver-' "$UCA" && command -v python3 >/dev/null \
      && [[ -f "$DATA/craftdriver/thunar/install-uca.py" ]]; then
@@ -59,11 +59,12 @@ if [[ "${1:-}" == --uninstall ]]; then
     "$DATA/icons/hicolor/256x256/apps/craftdriver.png" "$DATA/icons/hicolor/scalable/apps/craftdriver.svg" \
     "$DATA/icons/hicolor/symbolic/apps/craftdriver-symbolic.svg" "$DATA/nautilus-python/extensions/craftdriver.py" \
     "$DATA/metainfo/io.github.kaike_png.craftdriver.metainfo.xml"
-  rm -f "$DATA/nautilus/scripts/craftDriver - "* "$DATA/nemo/scripts/craftDriver - "* \
+  rm -f "$DATA/nautilus/scripts/CraftDriver - "* "$DATA/nemo/scripts/CraftDriver - "* \
+    "$DATA/nautilus/scripts/craftDriver - "* "$DATA/nemo/scripts/craftDriver - "* \
     "$DATA/file-manager/actions/craftdriver-"*.desktop
   rm -rf "$DEST" "$DATA/craftdriver/thunar" "$HOME/.net/CraftDriver.App" "$HOME/.net/OneDriveLinux.App"
   if command -v systemctl >/dev/null; then systemctl --user daemon-reload 2>/dev/null || true; fi
-  echo "Removido. Configuração, estado e cache do craftDriver foram mantidos."
+  echo "Removido. Configuração, estado e cache do CraftDriver foram mantidos."
   exit 0
 fi
 [[ $# == 0 ]] || { echo "Uso: $0 [--uninstall]" >&2; exit 2; }
@@ -75,7 +76,7 @@ cp -a "$HERE/lib" "$HERE/share" "$STAGE/"
 cp "$HERE/install-user.sh" "$STAGE/"
 for f in LICENSE LICENSE.fonts README.md CHANGELOG.md; do [[ ! -f "$HERE/$f" ]] || cp "$HERE/$f" "$STAGE/"; done
 if ! stop_running; then
-  echo "O craftDriver em execução não terminou em ${QUIT_TIMEOUT} s (pasta em uso?). Feche-o e rode de novo." >&2
+  echo "O CraftDriver em execução não terminou em ${QUIT_TIMEOUT} s (pasta em uso?). Feche-o e rode de novo." >&2
   exit 1
 fi
 rm -rf "$DEST"
@@ -108,7 +109,7 @@ if command -v python3 >/dev/null && { command -v thunar >/dev/null || { [[ -f "$
   python3 "$DATA/craftdriver/thunar/install-uca.py" --uca "$UCA" --command "'${BIN//\'/\'\\\'\'}'" >/dev/null || true
 fi
 # A extensão do Nautilus substitui os scripts legados (o Nemo continua usando seus scripts).
-rm -f "$DATA/nautilus/scripts/craftDriver - "*
+rm -f "$DATA/nautilus/scripts/CraftDriver - "* "$DATA/nautilus/scripts/craftDriver - "*
 rm -rf "$HOME/.net/CraftDriver.App" "$HOME/.net/OneDriveLinux.App"
 command -v update-desktop-database >/dev/null && update-desktop-database "$DATA/applications" || true
 command -v gtk-update-icon-cache >/dev/null && gtk-update-icon-cache -f -t "$DATA/icons/hicolor" >/dev/null 2>&1 || true

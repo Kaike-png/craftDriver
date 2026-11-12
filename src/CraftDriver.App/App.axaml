@@ -3,7 +3,7 @@
              x:Class="CraftDriver.App.App"
              RequestedThemeVariant="Default">
     <Application.Styles>
-        <!-- cor de destaque e fundo da identidade do craftDriver (petróleo do ícone); o resto vem dos estilos abaixo -->
+        <!-- cor de destaque e fundo da identidade do CraftDriver (petróleo do ícone); o resto vem dos estilos abaixo -->
         <FluentTheme>
             <FluentTheme.Palettes>
                 <ColorPaletteResources x:Key="Light" Accent="#0B7468" RegionColor="#F2F5F4" ErrorText="#B42318" />

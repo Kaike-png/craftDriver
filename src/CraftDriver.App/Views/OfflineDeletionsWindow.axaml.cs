@@ -15,7 +15,7 @@ public partial class OfflineDeletionsWindow : Window
 
     public OfflineDeletionsWindow(OfflineDeletionsRequest request) : this()
     {
-        Title = request.Title + " — craftDriver";
+        Title = request.Title + " — CraftDriver";
         TitleText.Text = request.Title;
         BodyText.Text = request.Text;
         PathsList.ItemsSource = request.Paths;

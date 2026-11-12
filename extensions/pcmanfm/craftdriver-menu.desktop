@@ -1,8 +1,8 @@
-# Menu craftDriver para PCManFM / PCManFM-Qt (libfm/libfm-qt), formato "file-manager actions"
+# Menu CraftDriver para PCManFM / PCManFM-Qt (libfm/libfm-qt), formato "file-manager actions"
 # (DES-EMA). Instale os seis .desktop desta pasta em ~/.local/share/file-manager/actions/
 # (ou /usr/share/file-manager/actions/). Não testado num PCManFM real (não instalado aqui).
 [Desktop Entry]
 Type=Menu
-Name=craftDriver
+Name=CraftDriver
 Icon=craftdriver
 ItemsList=craftdriver-pin;craftdriver-free;craftdriver-status;craftdriver-share;craftdriver-versions;

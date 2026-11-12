@@ -37,9 +37,9 @@ sealed class UpdHttp : HttpMessageHandler
 
     public static string ReleaseJson(string version, IEnumerable<(string Name, long Size)> assets, string? url = null) =>
         $$"""
-        { "tag_name": "v{{version}}", "name": "craftDriver v{{version}}", "draft": false, "prerelease": false,
+        { "tag_name": "v{{version}}", "name": "CraftDriver v{{version}}", "draft": false, "prerelease": false,
           "html_url": "https://github.com/Kaike-png/craftDriver/releases/tag/v{{version}}",
-          "body": "### Novidades\n- **Atualização automática**: o craftDriver avisa quando há versão nova e se `atualiza` sozinho.\n- Veja [a documentação](https://x/y).\n\n## Instalar\n| Distro | Comando |\n|---|---|\n| Arch | `sudo pacman -U x` |\n",
+          "body": "### Novidades\n- **Atualização automática**: o CraftDriver avisa quando há versão nova e se `atualiza` sozinho.\n- Veja [a documentação](https://x/y).\n\n## Instalar\n| Distro | Comando |\n|---|---|\n| Arch | `sudo pacman -U x` |\n",
           "assets": [{{string.Join(",", assets.Select(a => $$"""{ "name": "{{a.Name}}", "browser_download_url": "{{url ?? Base}}/dl/{{a.Name}}", "size": {{a.Size}} }"""))}}] }
         """;
 
@@ -613,7 +613,7 @@ public class UpdateUiTests
         {
             ShellUi.Wait(vm.UpdateNowCommand.ExecuteAsync(null), 20000);
             Assert.Equal(1, restarts);
-            Assert.Contains("Sair do craftDriver?", asked);
+            Assert.Contains("Sair do CraftDriver?", asked);
         }
         finally
         {

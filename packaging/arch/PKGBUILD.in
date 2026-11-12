@@ -11,9 +11,9 @@ depends=('glibc' 'gcc-libs' 'openssl' 'ca-certificates' 'zlib' 'fuse3' 'icu' 'fo
          'xdg-utils' 'dbus')
 optdepends=('krb5: autenticação Negotiate/Kerberos (opcional para OAuth)'
             'libsecret: guardar os tokens no chaveiro do sistema (KWallet/GNOME Keyring)'
-            'dolphin: menu de contexto craftDriver no gerenciador de arquivos'
+            'dolphin: menu de contexto CraftDriver no gerenciador de arquivos'
             'craftdriver-dolphin: emblemas de status no Dolphin e menu só dentro do ponto de montagem'
-            'python-nautilus: emblemas e menu craftDriver no Nautilus'
+            'python-nautilus: emblemas e menu CraftDriver no Nautilus'
             'attr: getfattr, usado pelas ações do PCManFM/PCManFM-Qt'
             'python: instalar as ações do Thunar (/usr/share/craftdriver/thunar/install-uca.py)'
             'libnotify: notify-send, se o serviço de notificações não responder pelo D-Bus'

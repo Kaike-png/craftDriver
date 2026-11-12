@@ -1,10 +1,10 @@
-# craftDriver
+# CraftDriver
 
 Cliente para **OneDrive e SharePoint** no Linux, em **C# (.NET 10)** com interface gráfica **Avalonia**, no estilo do cliente do Windows:
 arquivos **sob demanda** (aparecem na pasta sem ocupar espaço e são baixados ao abrir), "Sempre manter neste dispositivo",
 "Liberar espaço", ícone na bandeja, contas pessoais e corporativas, e bibliotecas de documentos do SharePoint.
 
-> craftDriver é um projeto independente, **não afiliado nem endossado pela Microsoft**.
+> CraftDriver é um projeto independente, **não afiliado nem endossado pela Microsoft**.
 > OneDrive, SharePoint e Microsoft 365 são marcas registradas da Microsoft Corporation.
 
 ## Funcionalidades
@@ -24,7 +24,7 @@ arquivos **sob demanda** (aparecem na pasta sem ocupar espaço e são baixados a
 | Sempre disponível / Liberar espaço | Pela interface, pela CLI ou pelo menu de contexto do Dolphin/Nautilus/Nemo |
 | Link de compartilhamento | Menu de contexto "Copiar link de compartilhamento" ou `craftdriver share [--edit] arquivo`: cria o link (`createLink`), copia (wl-copy no Wayland; xclip/xsel no X11) e notifica com "Abrir no navegador". Conta pessoal: "qualquer pessoa com o link"; conta de trabalho/escola: "pessoas da organização" (`--anyone` pede "qualquer pessoa com o link" e dá erro se a política proibir). O escopo criado aparece no texto/notificação |
 | Versões anteriores | Menu "Versões anteriores…" ou `craftdriver versions arquivo`: janela com as versões da nuvem (data, tamanho, autor), **Restaurar** (vira a versão atual; nenhuma é apagada) e **Baixar cópia** (`nome (versão AAAA-MM-DD HHMM).ext` ao lado). Recusa restaurar se o arquivo tem alterações locais ainda não enviadas |
-| Lixeira | `craftdriver trash` / bandeja "Lixeira…": lista o que o craftDriver viu ser excluído; no OneDrive pessoal restaura pela API, nas contas corporativas/SharePoint abre a Lixeira no navegador (a API de lá ainda é beta) |
+| Lixeira | `craftdriver trash` / bandeja "Lixeira…": lista o que o CraftDriver viu ser excluído; no OneDrive pessoal restaura pela API, nas contas corporativas/SharePoint abre a Lixeira no navegador (a API de lá ainda é beta) |
 | Limite de cache | LRU para arquivos não fixados (padrão 10 GB) |
 | Indexadores bloqueados | Baloo, Tracker, thumbnailers etc. **não** disparam downloads de itens somente online |
 | Arquivos só locais | `.~lock.*#`, `~$*`, `*.swp`, `.goutputstream-*`… e nomes inválidos no OneDrive nunca sobem |
@@ -46,7 +46,7 @@ Todos trazem o .NET embutido; atalho no menu, ícone e menu de contexto do Dolph
 Instalado, ocupa ~52 MB em `/usr/lib/craftdriver` (o .NET vai junto, já reduzido). O que mudou em cada versão
 está no [CHANGELOG](CHANGELOG.md).
 
-Depois abra **craftDriver** no menu de aplicativos e entre com a conta Microsoft. Para iniciar com a sessão,
+Depois abra **CraftDriver** no menu de aplicativos e entre com a conta Microsoft. Para iniciar com a sessão,
 marque **Configurações ▸ Iniciar ao entrar na sessão** (no Hyprland, adicione `exec-once = craftdriver --minimized`).
 No Hyprland/Sway com KWallet, inicie também `/usr/lib/pam_kwallet_init` antes dele, para a carteira abrir com a senha do login
 (o Plasma faz isso sozinho; sem isso o KWallet pede a senha ao iniciar).
@@ -58,10 +58,10 @@ Os pacotes são gerados e testados (Ubuntu 24.04, Debian 12, Fedora e Arch, em c
 
 ## Atualizações
 
-O craftDriver procura versão nova no GitHub 2 minutos depois de abrir e uma vez por dia. Quando há, aparece um aviso
+O CraftDriver procura versão nova no GitHub 2 minutos depois de abrir e uma vez por dia. Quando há, aparece um aviso
 na **Visão geral** (com o resumo das novidades), uma notificação e o item "Atualizar para X" na bandeja.
 
-- **Atualizar agora** baixa o pacote certo para o jeito como o craftDriver foi instalado (pacman, .deb, .rpm ou
+- **Atualizar agora** baixa o pacote certo para o jeito como o CraftDriver foi instalado (pacman, .deb, .rpm ou
   `install-user.sh`, x64/arm64), confere o SHA256 contra o `SHA256SUMS` da release e instala: pacotes do sistema pedem
   a senha de administrador (pkexec) com o app aberto e depois oferecem **Reiniciar agora**; a instalação do usuário não
   pede senha, fecha e reabre o app sozinha.
@@ -78,7 +78,7 @@ Desenho completo em [`docs/atualizacoes.md`](docs/atualizacoes.md).
 Ficam em [`extensions/`](extensions). Todas leem o atributo `user.onedrive.status` que o FUSE expõe, então
 funcionam com qualquer ponto de montagem, e chamam `craftdriver pin|unpin|status|share --notify` e `craftdriver versions`.
 
-| Gerenciador | Emblemas | Menu só dentro do craftDriver | Como instalar |
+| Gerenciador | Emblemas | Menu só dentro do CraftDriver | Como instalar |
 |---|---|---|---|
 | Dolphin (plugin KF6) | sim | sim | AUR `craftdriver-dolphin`, ou pacote separado `.deb` (Debian 13 / Ubuntu 25.04) e `.rpm` (Fedora 41) da release, específico da distro; para compilar: `cmake -S extensions/dolphin -B build -DCMAKE_INSTALL_PREFIX=/usr && cmake --build build && sudo cmake --install build` (precisa de `extra-cmake-modules` e dos headers do KIO 6) |
 | Dolphin (servicemenu, já vem nos pacotes) | não | não: aparece em qualquer arquivo | instalado pelo pacote/app; o plugin acima o esconde (`/etc/xdg/kservicemenurc`) |
@@ -153,7 +153,7 @@ Arquivos de runtime: `~/.config/craftdriver/config.json`, `~/.local/state/craftd
 
 ## Client ID
 
-O app usa por padrão o Client ID do registro **craftDriver** deste projeto no Microsoft Entra ID:
+O app usa por padrão o Client ID do registro **CraftDriver** deste projeto no Microsoft Entra ID:
 `979715f8-d815-4f25-ac64-05cbccc74cc2`. Alguns tenants corporativos exigem consentimento do administrador
 para apps de terceiros. Para usar outro registro, crie um em [Entra ID](https://entra.microsoft.com) →
 *App registrations* → *New registration*:
@@ -169,7 +169,7 @@ para apps de terceiros. Para usar outro registro, crie um em [Entra ID](https://
 
 ## Migração do nome antigo
 
-Versões anteriores se chamavam `onedrive-linux`. Na primeira execução, o craftDriver move
+Versões anteriores se chamavam `onedrive-linux`. Na primeira execução, o CraftDriver move
 `~/.config/onedrive-linux`, `~/.local/state/onedrive-linux` e `~/.cache/onedrive-linux` para `craftdriver`
 e mantém os tokens salvos no chaveiro (não é preciso entrar de novo).
 
@@ -197,7 +197,7 @@ Não remova `lib/`: o executável não é single-file. Para compilar a fonte, `.
 
 ## Limitações conhecidas
 
-- Emblemas de status só no Dolphin (com o plugin `craftdriver-dolphin`) e no Nautilus (com `python-nautilus`); nos outros, use `getfattr` ou "Status no craftDriver" no menu de contexto
+- Emblemas de status só no Dolphin (com o plugin `craftdriver-dolphin`) e no Nautilus (com `python-nautilus`); nos outros, use `getfattr` ou "Status no CraftDriver" no menu de contexto
 - Streaming por faixas existe, mas libfuse < 3.17.3 (ou kernel sem `FUSE_CAP_DIRECT_IO_ALLOW_MMAP`) usa o cache de páginas em vez de `direct_io`: erros de leitura podem chegar como `EIO`; veja [streaming](docs/streaming.md)
 - Mover entre drives diferentes vira copiar+apagar (`EXDEV`), como entre discos
 - Atalhos e “Compartilhados comigo” existem; a integração Graph com SharePoint/conta de trabalho e as permissões reais desses itens ainda não foram verificadas ponta a ponta com uma conta real

@@ -1,7 +1,7 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         x:Class="CraftDriver.App.Views.OfflineDeletionsWindow"
-        Title="craftDriver" Width="560" SizeToContent="Height" CanResize="False"
+        Title="CraftDriver" Width="560" SizeToContent="Height" CanResize="False"
         WindowStartupLocation="CenterOwner" ShowInTaskbar="False">
     <!-- §30(a): apagar no OneDrive o que foi apagado das cópias offline com o app fechado? Manter = padrão seguro;
          Esc/fechar não decide (a pergunta volta na próxima abertura) — por isso nenhum botão é IsCancel. -->

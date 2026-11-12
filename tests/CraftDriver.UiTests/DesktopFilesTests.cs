@@ -60,21 +60,30 @@ public class DesktopFilesTests
         {
             Directory.CreateDirectory(Path.Combine(dir, "nautilus"));
             Directory.CreateDirectory(Path.Combine(dir, "nemo"));
-            string Script(string fm) => Path.Combine(dir, fm, "scripts", "craftDriver - Liberar espaço");
+            string Script(string fm) => Path.Combine(dir, fm, "scripts", "CraftDriver - Liberar espaço");
+            // scripts com o nome antigo ("craftDriver - …", até a 0.4.0) não podem ficar duplicando o menu
+            string Old(string fm) => Path.Combine(dir, fm, "scripts", "craftDriver - Liberar espaço");
+            foreach (var fm in new[] { "nautilus", "nemo" })
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(Old(fm))!);
+                File.WriteAllText(Old(fm), "#!/bin/sh\n");
+            }
 
             var done = new List<string>();
             DesktopIntegration.InstallFileManagerScripts(done, dir, nautilusExtension: false);
             Assert.True(File.Exists(Script("nautilus")));
             Assert.True(File.Exists(Script("nemo")));
+            Assert.False(File.Exists(Old("nautilus")), "script com o nome antigo ficou no Nautilus");
+            Assert.False(File.Exists(Old("nemo")), "script com o nome antigo ficou no Nemo");
             Assert.Equal(["Scripts do Nautilus", "Scripts do Nemo"], done);
 
-            // com a extensão (menu craftDriver próprio) os scripts duplicariam o menu: não grava e apaga os antigos
+            // com a extensão (menu CraftDriver próprio) os scripts duplicariam o menu: não grava e apaga os antigos
             done.Clear();
             DesktopIntegration.InstallFileManagerScripts(done, dir, nautilusExtension: true);
             Assert.False(File.Exists(Script("nautilus")));
-            Assert.False(File.Exists(Path.Combine(dir, "nautilus", "scripts", "craftDriver - Sempre manter neste dispositivo")));
+            Assert.False(File.Exists(Path.Combine(dir, "nautilus", "scripts", "CraftDriver - Sempre manter neste dispositivo")));
             Assert.True(File.Exists(Script("nemo")), "o Nemo não usa a extensão do Nautilus");
-            Assert.Equal(["Nautilus: menu da extensão craftDriver (sem scripts)", "Scripts do Nemo"], done);
+            Assert.Equal(["Nautilus: menu da extensão CraftDriver (sem scripts)", "Scripts do Nemo"], done);
         }
         finally { try { Directory.Delete(dir, true); } catch { } }
     }

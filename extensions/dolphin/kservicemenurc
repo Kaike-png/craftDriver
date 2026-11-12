@@ -1,5 +1,5 @@
 # Instalado em /etc/xdg/kservicemenurc pelo plugin craftdriver-dolphin.
-# O plugin "craftdriveractionplugin" já mostra o menu craftDriver, e só em arquivos do craftDriver;
+# O plugin "craftdriveractionplugin" já mostra o menu CraftDriver, e só em arquivos do CraftDriver;
 # estas chaves escondem o servicemenu genérico (packaging/share/kio/servicemenus/craftdriver.desktop),
 # que aparece em qualquer arquivo, para não duplicar o menu. O usuário ainda pode religá-lo em
 # Dolphin > Configurar > Menu de contexto (a configuração em ~/.config/kservicemenurc tem precedência).

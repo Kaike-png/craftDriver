@@ -87,7 +87,7 @@ public class FuseDataLossTests
             var (code, output) = Sh("python3 -c \"import os\na=os.open('origem.bin', os.O_RDONLY)\nb=os.open('copia.bin', os.O_WRONLY|os.O_CREAT, 0o644)\nprint(os.copy_file_range(a, b, 10_000_000))\nos.close(a); os.close(b)\"", root);
             Assert.Equal(0, code);
             Assert.Equal(big.Length.ToString(), output);
-            Assert.True(h.Fs.CopyRangeCalls > before, "copy_file_range não passou pelo craftDriver");
+            Assert.True(h.Fs.CopyRangeCalls > before, "copy_file_range não passou pelo CraftDriver");
             Assert.Equal(Sh("sha256sum < origem.bin", root).output, Sh("sha256sum < copia.bin", root).output);
 
             // com deslocamentos e no meio de um arquivo existente

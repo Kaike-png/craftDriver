@@ -241,7 +241,7 @@ class WithFiles(unittest.TestCase):
         base = os.environ.get("CRAFTDRIVER_TEST_DIR") or None
         self.tmp = tempfile.TemporaryDirectory(prefix="craftdriver-nautilus-", dir=base)
         self.root = Path(self.tmp.name)
-        # self.dir faz o papel do ponto de montagem do craftDriver (na tabela de montagens falsa); fora/ não
+        # self.dir faz o papel do ponto de montagem do CraftDriver (na tabela de montagens falsa); fora/ não
         self.dir = self.root / "mnt"
         self.dir.mkdir()
         (self.root / "fora").mkdir()
@@ -258,7 +258,7 @@ class WithFiles(unittest.TestCase):
         os.setxattr(folder, CD.STATUS_XATTR, b"Folder")
         self.files["Folder"] = str(folder)
         self.outside = self._make("fora.txt", None)
-        # tem o xattr, mas fora de qualquer montagem do craftDriver: não deve ser lido nem ganhar menu
+        # tem o xattr, mas fora de qualquer montagem do CraftDriver: não deve ser lido nem ganhar menu
         self.foreign = str(self.root / "fora" / "com-xattr.txt")
         Path(self.foreign).write_text("x")
         os.setxattr(self.foreign, CD.STATUS_XATTR, b"OnlineOnly")
@@ -432,9 +432,9 @@ class WithFiles(unittest.TestCase):
         self.assertEqual(self.ext.get_file_items([]), [])
         items = self._menu(self.files["OnlineOnly"], self.files["Folder"])
         self.assertEqual(len(items), 1)
-        self.assertEqual(items[0].get_property("label"), "craftDriver")
+        self.assertEqual(items[0].get_property("label"), "CraftDriver")
         labels = [i.get_property("label") for i in items[0].submenu.items]
-        self.assertEqual(labels, ["Sempre manter neste dispositivo", "Liberar espaço", "Status no craftDriver",
+        self.assertEqual(labels, ["Sempre manter neste dispositivo", "Liberar espaço", "Status no CraftDriver",
                                   "Copiar link de compartilhamento", "Versões anteriores…"])
         # Assinatura antiga (window, files) também funciona.
         self.assertEqual(len(self.ext.get_file_items("janela", [FakeFileInfo(self.files["Available"])])), 1)

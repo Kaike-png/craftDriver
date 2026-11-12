@@ -16,7 +16,7 @@ public sealed class StartupCoordinator<T> where T : class
     readonly Func<Action<string>, CancellationToken, Task<T>> _factory;
     readonly CancellationTokenSource _skip = new();
     readonly TaskCompletionSource<T?> _result = new(TaskCreationOptions.RunContinuationsAsynchronously);
-    string _status = "Iniciando o craftDriver…";
+    string _status = "Iniciando o CraftDriver…";
     string? _error;
     bool _finished;
 

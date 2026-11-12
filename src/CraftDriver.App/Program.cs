@@ -42,7 +42,7 @@ sealed class Program
         try { AppPaths.EnsureDirs(); }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            Console.Error.WriteLine("craftDriver: " + ex.Message);
+            Console.Error.WriteLine("CraftDriver: " + ex.Message);
             return 1;
         }
 
@@ -92,7 +92,7 @@ sealed class Program
                 early = new IpcServer(AppPaths.SocketPath, r => Task.FromResult(StartupIpc.Handle(r, headless ? null : App.RequestStartupShow,
                     headless ? QuitWhileStarting : App.RequestStartupQuit)));
             }
-            catch (Exception ex) { Console.Error.WriteLine("Aviso: comandos do craftDriver (IPC) indisponíveis: " + ex.Message); }
+            catch (Exception ex) { Console.Error.WriteLine("Aviso: comandos do CraftDriver (IPC) indisponíveis: " + ex.Message); }
             CrashGuard.Install(() => App.Host?.Activity, null);
             // sinal antes de haver o que desmontar (espera do chaveiro, Avalonia subindo): sai já, apagando o socket —
             // antes o término padrão pulava o finally e o socket ficava (§22.9)
@@ -129,9 +129,9 @@ sealed class Program
     /// <summary>Não dá para iniciar (trava): mensagem no terminal e, aberto pelo menu (sem terminal), notificação.</summary>
     static int StartupFailed(string[] args, string message, int exitCode = 1)
     {
-        Console.Error.WriteLine("craftDriver: " + message);
+        Console.Error.WriteLine("CraftDriver: " + message);
         if (!args.Contains("--headless"))
-            DesktopIntegration.Notify("craftDriver não iniciou", message).Wait(TimeSpan.FromSeconds(5));
+            DesktopIntegration.Notify("CraftDriver não iniciou", message).Wait(TimeSpan.FromSeconds(5));
         return exitCode;
     }
 
@@ -169,13 +169,13 @@ sealed class Program
             {
                 // aberto pelo menu: sem terminal para ver a mensagem, então notifica também
                 Console.Error.WriteLine(shown.Text);
-                DesktopIntegration.Notify("craftDriver", shown.Text).Wait(TimeSpan.FromSeconds(5));
+                DesktopIntegration.Notify("CraftDriver", shown.Text).Wait(TimeSpan.FromSeconds(5));
                 return 1;
             }
         }
         var text = running?.Text == "iniciando"
-            ? "O craftDriver já está em execução (ainda iniciando)."
-            : "O craftDriver já está em execução.";
+            ? "O CraftDriver já está em execução (ainda iniciando)."
+            : "O CraftDriver já está em execução.";
         if (args.Contains("--headless"))
         {
             // serviço do systemd (ou script) com outra instância viva: sair 0 calado deixava a unit "inactive" e o
@@ -200,7 +200,7 @@ sealed class Program
     static void PrintHelp()
     {
         Console.WriteLine("""
-            craftDriver — cliente para OneDrive e SharePoint com arquivos sob demanda
+            CraftDriver — cliente para OneDrive e SharePoint com arquivos sob demanda
 
             Uso:
               craftdriver                 abre a interface (fica na bandeja)
@@ -281,7 +281,7 @@ sealed class Program
         var resp = await IpcClient.SendAsync(AppPaths.SocketPath, args[0], rest, TimeSpan.FromMinutes(2));
         if (resp == null)
         {
-            const string msg = "O craftDriver não está em execução. Abra o aplicativo primeiro.";
+            const string msg = "O CraftDriver não está em execução. Abra o aplicativo primeiro.";
             if (notifyErrors) await NotifyAndWait(msg);
             Console.Error.WriteLine(msg);
             return 2;
@@ -320,12 +320,12 @@ sealed class Program
             }
             catch (SingleInstanceException ex)
             {
-                Console.Error.WriteLine("Não foi possível conferir se o craftDriver terminou: " + ex.Message);
+                Console.Error.WriteLine("Não foi possível conferir se o CraftDriver terminou: " + ex.Message);
                 return false;
             }
             if (DateTime.UtcNow >= until)
             {
-                Console.Error.WriteLine($"O craftDriver recebeu o pedido para sair, mas ainda não terminou depois de {timeout.TotalSeconds:0} s " +
+                Console.Error.WriteLine($"O CraftDriver recebeu o pedido para sair, mas ainda não terminou depois de {timeout.TotalSeconds:0} s " +
                                         "(desmontagem ocupada por um programa com arquivo aberto na pasta, ou envio em andamento). " +
                                         "Veja \"craftdriver status\" e o log; para forçar, envie SIGTERM duas vezes ao processo.");
                 return false;
@@ -336,7 +336,7 @@ sealed class Program
 
     /// <summary>Processo curto: espera a notificação ser entregue (D-Bus) antes de sair, por até 5 s.</summary>
     static Task NotifyAndWait(string text) =>
-        DesktopIntegration.Notify("craftDriver", text).WaitAsync(TimeSpan.FromSeconds(5)).ContinueWith(_ => { });
+        DesktopIntegration.Notify("CraftDriver", text).WaitAsync(TimeSpan.FromSeconds(5)).ContinueWith(_ => { });
 
     /// <summary>
     /// Login pelo terminal. Só autentica (os tokens vão para o cache compartilhado) e não monta um
@@ -432,7 +432,7 @@ sealed class Program
         // só pelo auto_unmount, configuração e socket ficavam).
         OnShutdownSignal = stop.Set;
         host.Start(early);
-        Console.WriteLine($"craftDriver em execução (sem interface). Montado em {host.Config.MountPoint}. Ctrl+C para sair.");
+        Console.WriteLine($"CraftDriver em execução (sem interface). Montado em {host.Config.MountPoint}. Ctrl+C para sair.");
         stop.Wait();
         host.ShutdownAsync().GetAwaiter().GetResult();
         return 0;

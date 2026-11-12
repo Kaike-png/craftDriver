@@ -2,7 +2,7 @@
 Type=Service
 MimeType=all/all;
 X-KDE-ServiceTypes=KonqPopupMenu/Plugin
-X-KDE-Submenu=craftDriver
+X-KDE-Submenu=CraftDriver
 X-KDE-Priority=TopLevel
 Actions=craftdriver_pin;craftdriver_free;craftdriver_status;craftdriver_share;craftdriver_versions;
 
@@ -17,7 +17,7 @@ Icon=edit-clear
 Exec=craftdriver unpin --notify %F
 
 [Desktop Action craftdriver_status]
-Name=Status no craftDriver
+Name=Status no CraftDriver
 Icon=help-about
 Exec=craftdriver status --notify %F
 

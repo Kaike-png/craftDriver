@@ -3,7 +3,7 @@
         xmlns:vm="using:CraftDriver.App.ViewModels"
         x:Class="CraftDriver.App.Views.ChooseFoldersWindow"
         x:DataType="vm:ChooseFoldersViewModel"
-        Title="Escolher pastas — craftDriver" Width="560" Height="520" WindowStartupLocation="CenterOwner">
+        Title="Escolher pastas — CraftDriver" Width="560" Height="520" WindowStartupLocation="CenterOwner">
     <DockPanel Margin="24,22,24,20">
         <StackPanel DockPanel.Dock="Top" Spacing="6" Margin="0,0,0,16">
             <TextBlock Classes="h1" Text="{Binding DriveName, StringFormat='Pastas sincronizadas — {0}'}" TextWrapping="Wrap" />

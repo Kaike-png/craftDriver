@@ -1,7 +1,7 @@
 {
     "KPlugin": {
-        "Name": "craftDriver",
-        "Description": "Fixar, liberar espaço e ver o status de arquivos do craftDriver",
+        "Name": "CraftDriver",
+        "Description": "Fixar, liberar espaço e ver o status de arquivos do CraftDriver",
         "Icon": "craftdriver",
         "License": "MIT",
         "MimeTypes": [

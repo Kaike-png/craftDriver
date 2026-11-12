@@ -382,7 +382,7 @@ public partial class Rodada3AppTests
             var tray = (Avalonia.Controls.TrayIcon)typeof(CraftDriver.App.App).GetField("_tray", Priv)!.GetValue(app)!;
             RaiseClick(tray.Menu!.Items.OfType<Avalonia.Controls.NativeMenuItem>().Single(i => i.Header == "Sair"));
             ShellUi.PumpUntil(() => typeof(CraftDriver.App.App).GetField("_window", Priv)!.GetValue(app) is CraftDriver.App.Views.MainWindow w
-                                    && w.OwnedWindows.OfType<CraftDriver.App.Views.ConfirmWindow>().Any(), "diálogo \"Sair do craftDriver?\"", 5000);
+                                    && w.OwnedWindows.OfType<CraftDriver.App.Views.ConfirmWindow>().Any(), "diálogo \"Sair do CraftDriver?\"", 5000);
             var win = (CraftDriver.App.Views.MainWindow)typeof(CraftDriver.App.App).GetField("_window", Priv)!.GetValue(app)!;
             var dlg = win.OwnedWindows.OfType<CraftDriver.App.Views.ConfirmWindow>().Single();
             ShellUi.Save(win, "r4-sair-da-bandeja-confirma");

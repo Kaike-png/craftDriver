@@ -74,7 +74,7 @@ private Q_SLOTS:
     {
         m_tmp = TestUtil::makeDir();
         QVERIFY(m_tmp->isValid());
-        // mnt/ faz o papel da montagem do craftDriver (tabela de montagens falsa); fora/ não
+        // mnt/ faz o papel da montagem do CraftDriver (tabela de montagens falsa); fora/ não
         QVERIFY(QDir(m_tmp->path()).mkpath(QStringLiteral("mnt")) && QDir(m_tmp->path()).mkpath(QStringLiteral("fora")));
         m_dir = QDir(m_tmp->filePath(QStringLiteral("mnt")));
         QFile table(m_tmp->filePath(QStringLiteral("mounts")));
@@ -125,14 +125,14 @@ private Q_SLOTS:
         QVERIFY(m_plugin);
         QCOMPARE(actionsFor({m_outside}).size(), 0);
         QCOMPARE(actionsFor({m_online, m_outside}).size(), 0); // seleção mista: nada
-        QCOMPARE(actionsFor({m_foreign}).size(), 0); // tem o xattr, mas não está numa montagem do craftDriver
+        QCOMPARE(actionsFor({m_foreign}).size(), 0); // tem o xattr, mas não está numa montagem do CraftDriver
         QCOMPARE(actionsFor({m_bare}).size(), 1); // na montagem: menu sem ler xattr
 
         const auto acts = actionsFor({m_online});
         QCOMPARE(acts.size(), 1);
         QCOMPARE(acts.first()->objectName(), QStringLiteral("craftdriver_menu"));
         QVERIFY(acts.first()->menu());
-        QCOMPARE(acts.first()->menu()->title(), QStringLiteral("craftDriver"));
+        QCOMPARE(acts.first()->menu()->title(), QStringLiteral("CraftDriver"));
         // 3 de sincronização + separador + link + versões
         QCOMPARE(acts.first()->menu()->actions().size(), 6);
 
@@ -262,13 +262,13 @@ private Q_SLOTS:
         QSignalSpy spy(m_plugin, &KAbstractFileItemActionPlugin::error);
         find(actionsFor({m_online}), QStringLiteral("craftdriver_status"))->trigger();
         QCOMPARE(spy.size(), 1);
-        QVERIFY(spy.at(0).at(0).toString().contains(QStringLiteral("craftDriver")));
+        QVERIFY(spy.at(0).at(0).toString().contains(QStringLiteral("CraftDriver")));
         qunsetenv("CRAFTDRIVER_BIN");
     }
 
     // Menu montado pelo KFileItemActions (como no Dolphin) com o servicemenu genérico instalado
     // em XDG_DATA_HOME. Com o kservicemenurc do plugin em XDG_CONFIG_DIRS o fallback some e sobra só
-    // o menu do plugin (e só em arquivos do craftDriver); sem ele, o menu aparece duplicado.
+    // o menu do plugin (e só em arquivos do CraftDriver); sem ele, o menu aparece duplicado.
     void contextMenuIntegration_data()
     {
         QTest::addColumn<bool>("hideFallback");

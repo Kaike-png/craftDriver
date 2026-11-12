@@ -99,7 +99,7 @@ public interface IGraphApi
 
     /// <summary>
     /// POST /me/drive/items/{id}/restore: tira da Lixeira um item excluído. Na v1.0 só existe para o OneDrive
-    /// pessoal (contas corporativas/SharePoint: só beta, então o craftDriver abre a Lixeira no navegador).
+    /// pessoal (contas corporativas/SharePoint: só beta, então o CraftDriver abre a Lixeira no navegador).
     /// </summary>
     Task<RemoteItem> RestoreDeletedAsync(string driveId, string itemId, CancellationToken ct) =>
         throw new NotSupportedException("Restaurar da Lixeira não é suportado por esta implementação.");

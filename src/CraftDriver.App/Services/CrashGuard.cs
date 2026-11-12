@@ -179,7 +179,7 @@ public static class CrashGuard
             }
         }
         catch { /* o log é o último recurso; sem ele, resta o stderr */ }
-        try { Console.Error.WriteLine($"craftDriver: {detail ?? summary}"); }
+        try { Console.Error.WriteLine($"CraftDriver: {detail ?? summary}"); }
         catch { }
     }
 

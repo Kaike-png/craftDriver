@@ -106,8 +106,8 @@ public sealed class AppHost
         FuseHost.Log = s => Activity.Debug(s);
         Engine.MassDeleteDetected += d =>
         {
-            Notify("craftDriver — muitos arquivos apagados",
-                $"{d.HeldDeleteCount} itens foram apagados de \"{d.Config.DisplayName}\". Nada foi excluído da nuvem ainda: abra o craftDriver para confirmar ou restaurar.",
+            Notify("CraftDriver — muitos arquivos apagados",
+                $"{d.HeldDeleteCount} itens foram apagados de \"{d.Config.DisplayName}\". Nada foi excluído da nuvem ainda: abra o CraftDriver para confirmar ou restaurar.",
                 MassDeleteActions(d.DriveId));
             ShowRequested?.Invoke();
         };
@@ -122,14 +122,14 @@ public sealed class AppHost
     /// <summary>Versão nova encontrada (uma vez por versão): notificação com "Atualizar agora" e "Ver novidades".</summary>
     internal void OnUpdateDiscovered(ReleaseInfo release)
     {
-        const string hint = "Para atualizar: abra o craftDriver (aba Visão geral) ou rode \"craftdriver update\" no terminal.";
+        const string hint = "Para atualizar: abra o CraftDriver (aba Visão geral) ou rode \"craftdriver update\" no terminal.";
         var notes = new NotificationAction("notes", "Ver novidades", () => OpenUrl(release.HtmlUrl)) { HintWithoutButtons = hint };
         NotificationAction[] actions = UpdateNowRequested == null
             ? [notes]
             : [new(NotificationAction.Default, "Atualizar agora", RequestUpdateNow) { HintWithoutButtons = hint },
                new("update", "Atualizar agora", RequestUpdateNow) { HintWithoutButtons = hint }, notes];
-        NotifyTagged(UpdateTag, "craftDriver — nova versão " + release.Version,
-            $"A versão {release.Version} do craftDriver está disponível (você usa a {Updates.CurrentVersion}).", actions);
+        NotifyTagged(UpdateTag, "CraftDriver — nova versão " + release.Version,
+            $"A versão {release.Version} do CraftDriver está disponível (você usa a {Updates.CurrentVersion}).", actions);
     }
 
     /// <summary>Mesmo fluxo do botão "Atualizar agora" (janela).</summary>
@@ -152,7 +152,7 @@ public sealed class AppHost
         NotificationAction[] actions = ShowRequested == null
             ? []
             : [new(NotificationAction.Default, "Ver conflitos", () => ShowRequested?.Invoke()), new("show", "Ver conflitos", () => ShowRequested?.Invoke())];
-        Notify("craftDriver — conflito", $"{c.Original}: {c.Reason}. As duas versões foram mantidas; a sua está em \"{c.Copy}\".", actions);
+        Notify("CraftDriver — conflito", $"{c.Original}: {c.Reason}. As duas versões foram mantidas; a sua está em \"{c.Copy}\".", actions);
     }
 
     NotificationAction[] MassDeleteActions(string driveId)
@@ -165,8 +165,8 @@ public sealed class AppHost
         if (ShowRequested == null) return [restore]; // --headless: não há janela para abrir
         return
         [
-            new(NotificationAction.Default, "Abrir craftDriver", () => ShowRequested?.Invoke()),
-            new("open", "Abrir craftDriver", () => ShowRequested?.Invoke()),
+            new(NotificationAction.Default, "Abrir CraftDriver", () => ShowRequested?.Invoke()),
+            new("open", "Abrir CraftDriver", () => ShowRequested?.Invoke()),
             restore,
         ];
     }
@@ -195,14 +195,14 @@ public sealed class AppHost
             if (acc == null) continue;
             if (ReauthRequested == null)
             {
-                NotifyTagged(SessionTag(id), "craftDriver — sessão expirada",
+                NotifyTagged(SessionTag(id), "CraftDriver — sessão expirada",
                     $"A sessão de {acc.Username} expirou e a sincronização dessa conta está parada. Entre novamente com \"craftdriver login\".", []);
                 continue;
             }
             void Reauth() => ReauthRequested?.Invoke(acc);
             // servidor sem botões (sem a capacidade "actions") ou notify-send: a dica vai no texto
-            const string hint = "Para entrar: abra o craftDriver, aba Contas, ou rode \"craftdriver login\" no terminal.";
-            NotifyTagged(SessionTag(id), "craftDriver — sessão expirada",
+            const string hint = "Para entrar: abra o CraftDriver, aba Contas, ou rode \"craftdriver login\" no terminal.";
+            NotifyTagged(SessionTag(id), "CraftDriver — sessão expirada",
                 $"A sessão de {acc.Username} expirou e a sincronização dessa conta está parada até você entrar novamente.",
                 [new(NotificationAction.Default, "Entrar novamente", Reauth) { HintWithoutButtons = hint },
                  new("relogin", "Entrar novamente", Reauth) { HintWithoutButtons = hint }]);
@@ -340,7 +340,7 @@ public sealed class AppHost
             if (r.Created > 0) parts.Add($"{r.Created} novo(s)");
             if (r.Moved > 0) parts.Add($"{r.Moved} movido(s)/renomeado(s)");
             if (r.PendingDeletes > 0) parts.Add($"{r.PendingDeletes} apagado(s) (aguardando você confirmar se apaga também no OneDrive)");
-            if (parts.Count > 0) Activity.Add(ActivityKind.Info, "Alterações feitas com o craftDriver fechado: " + string.Join(", ", parts));
+            if (parts.Count > 0) Activity.Add(ActivityKind.Info, "Alterações feitas com o CraftDriver fechado: " + string.Join(", ", parts));
             if (r.Recovered > 0)
                 Activity.Add(ActivityKind.Error, $"{r.Recovered} item(ns) da pasta offline não puderam ser sincronizados e foram movidos para {r.RecoveryDir}");
         }
@@ -584,23 +584,23 @@ public sealed class AppHost
                     return new(false, "Pedido add-account inválido");
                 // o login gravou os tokens no cache compartilhado; confere que esta instância os enxerga
                 if (!await Auth.HasAccountAsync(acc.Id))
-                    return new(false, $"A conta {acc.Username} entrou, mas o craftDriver em execução não encontrou os tokens dela " +
-                                      $"({Auth.CacheStorage}). Reinicie o craftDriver.");
+                    return new(false, $"A conta {acc.Username} entrou, mas o CraftDriver em execução não encontrou os tokens dela " +
+                                      $"({Auth.CacheStorage}). Reinicie o CraftDriver.");
                 var saved = true;
                 await RunOnMain(() => saved = RegisterAccount(acc, add.DriveId, add.DriveWebUrl));
                 var connected = $"Conta conectada: {acc.Username} ({(acc.IsPersonal ? "pessoal" : "corporativa/escolar")})";
                 return saved ? new(true, connected)
-                    : new(false, connected + $", mas NÃO foi salva na configuração (vale só até fechar o craftDriver): {Config.LoadWarning ?? "veja o log"}");
+                    : new(false, connected + $", mas NÃO foi salva na configuração (vale só até fechar o CraftDriver): {Config.LoadWarning ?? "veja o log"}");
             }
             case "show":
                 // instância --headless não tem janela (nenhum assinante no evento)
                 if (ShowRequested == null)
-                    return new(false, "O craftDriver já está rodando sem interface (--headless). Encerre-o com \"craftdriver quit\" e abra de novo.");
+                    return new(false, "O CraftDriver já está rodando sem interface (--headless). Encerre-o com \"craftdriver quit\" e abra de novo.");
                 ShowRequested.Invoke();
                 return new(true, "ok");
             case "open":
                 if (!Mounted)
-                    return new(false, "A pasta do craftDriver não está montada" + (MountError != null ? $" ({MountError})" : "") + ".");
+                    return new(false, "A pasta do CraftDriver não está montada" + (MountError != null ? $" ({MountError})" : "") + ".");
                 OpenFolder(Config.MountPoint);
                 return new(true, "Abrindo " + Config.MountPoint);
             case "quit":
@@ -713,14 +713,14 @@ public sealed class AppHost
     async Task<IpcResponse> UpdateFromCliAsync()
     {
         if (UpdateNowRequested == null) return new(false, UpdateCli.HeadlessReply);
-        if (Updates.IsBusy) return new(false, "Já há uma atualização em andamento na janela do craftDriver.");
+        if (Updates.IsBusy) return new(false, "Já há uma atualização em andamento na janela do CraftDriver.");
         var release = Updates.Available ?? await Updates.CheckAsync(manual: true);
         if (release == null)
             return Updates.LastCheckFailed
                 ? new(false, Updates.LastCheckText ?? "Não foi possível procurar atualizações.")
-                : new(true, $"O craftDriver já está na versão mais recente ({Updates.CurrentVersion}).");
+                : new(true, $"O CraftDriver já está na versão mais recente ({Updates.CurrentVersion}).");
         RequestUpdateNow();
-        return new(true, $"Atualização para a versão {release.Version} iniciada na janela do craftDriver.");
+        return new(true, $"Atualização para a versão {release.Version} iniciada na janela do CraftDriver.");
     }
 
     // ---------- link de compartilhamento, versões e Lixeira ----------
@@ -798,7 +798,7 @@ public sealed class AppHost
         var text = string.Join('\n', lines);
         if (notify)
         {
-            if (links.Count == 0) Notify("craftDriver — link não criado", text, []);
+            if (links.Count == 0) Notify("CraftDriver — link não criado", text, []);
             else
             {
                 var (name, link) = links[0];
@@ -808,7 +808,7 @@ public sealed class AppHost
                     : $"{links.Count} links criados.";
                 if (clipError != null) body += $"\nNão copiado ({clipError}): {string.Join(' ', links.Select(l => l.Link.Url))}";
                 if (errors.Count > 0) body += "\n" + string.Join('\n', errors);
-                Notify(clipError == null ? "Link copiado" : "craftDriver — link criado", body,
+                Notify(clipError == null ? "Link copiado" : "CraftDriver — link criado", body,
                     [new(NotificationAction.Default, "Abrir no navegador", Open), new("open-link", "Abrir no navegador", Open)]);
             }
         }
@@ -879,7 +879,7 @@ public sealed class AppHost
                 return new(true, "Abrindo a Lixeira.");
         }
         var list = Db.Trash();
-        if (list.Count == 0) return new(true, "Nenhum item excluído recentemente (o craftDriver lista o que viu ser excluído desde a instalação).");
+        if (list.Count == 0) return new(true, "Nenhum item excluído recentemente (o CraftDriver lista o que viu ser excluído desde a instalação).");
         var lines = new List<string> { "Excluídos recentemente (mais novos primeiro):" };
         foreach (var t in list)
         {

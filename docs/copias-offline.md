@@ -2,7 +2,7 @@
 
 No Windows, o OneDrive guarda os arquivos no próprio NTFS. Um filtro do kernel (Cloud Files API) continua ativo
 mesmo com o app fechado, então os itens "Sempre manter neste dispositivo" seguem na pasta. No Linux, `~/OneDrive` é
-uma montagem FUSE servida pelo processo do craftDriver. Ao **Encerrar**, a montagem sai e aparece a pasta real que
+uma montagem FUSE servida pelo processo do CraftDriver. Ao **Encerrar**, a montagem sai e aparece a pasta real que
 estava por baixo. Antes ela ficava vazia.
 
 ## Ao encerrar (`AppHost.ShutdownAsync` → `OfflineCopies.Materialize`)

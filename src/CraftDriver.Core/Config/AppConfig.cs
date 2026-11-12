@@ -43,7 +43,7 @@ public static class AppPaths
     public static string LogFile => Path.Combine(StateDir, "craftdriver.log");
     public static string DefaultMountPoint => Path.Combine(Home, "OneDrive");
 
-    /// <summary>Nome usado até a versão 0.1 (antes de virar craftDriver).</summary>
+    /// <summary>Nome usado até a versão 0.1 (antes de virar CraftDriver).</summary>
     public const string LegacyAppName = "onedrive-linux";
 
     /// <summary>
@@ -105,7 +105,7 @@ public static class AppPaths
     {
         var info = new DirectoryInfo(dir);
         if (info.LinkTarget != null)
-            throw new IOException($"{dir} é um link simbólico; o craftDriver precisa de uma pasta própria aqui.");
+            throw new IOException($"{dir} é um link simbólico; o CraftDriver precisa de uma pasta própria aqui.");
         if (!info.Exists)
         {
             Directory.CreateDirectory(dir, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
@@ -116,7 +116,7 @@ public static class AppPaths
         try { File.SetUnixFileMode(dir, privateMode); }
         catch (UnauthorizedAccessException)
         {
-            throw new IOException($"{dir} pertence a outro usuário; o craftDriver não vai usá-la (socket de comandos).");
+            throw new IOException($"{dir} pertence a outro usuário; o CraftDriver não vai usá-la (socket de comandos).");
         }
     }
 }
@@ -149,14 +149,14 @@ public sealed class DriveConfig
 public sealed class AppConfig
 {
     /// <summary>
-    /// Client ID do registro do craftDriver no Microsoft Entra ID (criado quando o projeto se chamava
+    /// Client ID do registro do CraftDriver no Microsoft Entra ID (criado quando o projeto se chamava
     /// "OneDrive Linux" — o nome exibido na tela de consentimento vem do registro, não daqui)
     /// (contas pessoais e organizacionais; redirects http://localhost e nativeclient).
     /// Troque pelo seu próprio registro no Entra ID quando possível.
     /// </summary>
     public const string DefaultClientId = "979715f8-d815-4f25-ac64-05cbccc74cc2";
 
-    /// <summary>Versão do formato do config.json gravada por este craftDriver.</summary>
+    /// <summary>Versão do formato do config.json gravada por este CraftDriver.</summary>
     public const int CurrentSchemaVersion = 1;
 
     /// <summary>Versão do formato (arquivos sem o campo são da versão 1). Primeiro campo do JSON.</summary>
@@ -164,7 +164,7 @@ public sealed class AppConfig
     public int SchemaVersion { get; set; } = CurrentSchemaVersion;
 
     /// <summary>
-    /// O arquivo é de um craftDriver mais novo: gravar por cima apagaria campos que esta versão não conhece,
+    /// O arquivo é de um CraftDriver mais novo: gravar por cima apagaria campos que esta versão não conhece,
     /// então <see cref="Save"/> não faz nada nesta execução.
     /// </summary>
     [JsonIgnore] public bool ReadOnly { get; private set; }
@@ -338,15 +338,15 @@ public sealed class AppConfig
             {
                 LoadWarning = $"A configuração ({path}) é inválida e foi ignorada: {ex.Message} " +
                               $"Contas e pastas não foram carregadas; o arquivo original foi guardado em {backup}. " +
-                              "Corrija-o (ou copie-o de volta) com o craftDriver fechado.",
+                              "Corrija-o (ou copie-o de volta) com o CraftDriver fechado.",
             };
         }
         if (cfg.SchemaVersion > CurrentSchemaVersion)
         {
             cfg.ReadOnly = true;
-            cfg.LoadWarning = $"A configuração ({path}) é de uma versão mais nova do craftDriver (formato {cfg.SchemaVersion}; " +
+            cfg.LoadWarning = $"A configuração ({path}) é de uma versão mais nova do CraftDriver (formato {cfg.SchemaVersion}; " +
                               $"esta entende até {CurrentSchemaVersion}). Ela foi carregada, mas alterações não serão gravadas " +
-                              "nesta execução para não apagar o que esta versão não conhece. Atualize o craftDriver.";
+                              "nesta execução para não apagar o que esta versão não conhece. Atualize o CraftDriver.";
             return cfg;
         }
         var renamed = cfg.NormalizeDriveNames();
@@ -395,7 +395,7 @@ public sealed class AppConfig
     public int? WindowX { get; set; }
     public int? WindowY { get; set; }
     public bool WindowMaximized { get; set; }
-    /// <summary>O aviso "o craftDriver continua na bandeja" já foi mostrado (só aparece uma vez).</summary>
+    /// <summary>O aviso "o CraftDriver continua na bandeja" já foi mostrado (só aparece uma vez).</summary>
     public bool TrayNoticeShown { get; set; }
 
     // ---- atualizações (docs/atualizacoes.md) ----

@@ -25,9 +25,9 @@ i=0; while grep -q craftdriver /proc/mounts && [ $i -lt 30 ]; do i=$((i + 1)); s
 if grep -q craftdriver /proc/mounts; then echo "FALHA: montagem continua após quit"; exit 1; fi; echo "desmontado"
 echo "== interface gráfica (Xvfb)"
 # a janela precisa aparecer: sem xwininfo não há como conferir, então é falha (antes passava calado)
-# casa título ("craftDriver") ou WM_CLASS ("craftdriver" "CraftDriver.App"), sem diferenciar maiúsculas: logo ao
+# casa título ("CraftDriver") ou WM_CLASS ("craftdriver" "CraftDriver.App"), sem diferenciar maiúsculas: logo ao
 # abrir, o título X11 ainda pode ser "Window" (visto no Xvfb) e a classe já casa
-WINDOW_MATCH="${WINDOW_MATCH:-craftDriver}"   # trocável só para provar que a falha funciona
+WINDOW_MATCH="${WINDOW_MATCH:-CraftDriver}"   # trocável só para provar que a falha funciona
 WINDOW_TIMEOUT="${WINDOW_TIMEOUT:-30}"
 command -v xwininfo >/dev/null || { echo "FALHA: xwininfo ausente (x11-utils / xwininfo / xorg-xwininfo)"; exit 1; }
 Xvfb :9 -screen 0 1280x1024x24 >/dev/null 2>&1 &

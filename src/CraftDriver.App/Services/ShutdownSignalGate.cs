@@ -24,7 +24,7 @@ public sealed class ShutdownSignalGate(Func<Action?> current, Action<int> forceE
             quit();
             return;
         }
-        try { Console.Error.WriteLine("craftDriver: novo sinal durante o encerramento — saindo sem esperar."); }
+        try { Console.Error.WriteLine("CraftDriver: novo sinal durante o encerramento — saindo sem esperar."); }
         catch { }
         try { beforeForce?.Invoke(); }
         catch { }

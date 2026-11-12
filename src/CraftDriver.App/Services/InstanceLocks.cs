@@ -20,7 +20,7 @@ public static class InstanceLocks
 
     /// <summary>Texto para quando outra instância já usa a pasta.</summary>
     public static string InUseText(string canonical) =>
-        $"Outra instância do craftDriver (com outra configuração) já usa a pasta {canonical}. Encerre-a antes ou escolha outra pasta.";
+        $"Outra instância do CraftDriver (com outra configuração) já usa a pasta {canonical}. Encerre-a antes ou escolha outra pasta.";
 
     /// <summary>Pega a trava da pasta; devolve o motivo da recusa (outra instância, erro do sistema) ou null.</summary>
     /// <param name="inUse">true quando a recusa é por outra instância (não erro do sistema).</param>

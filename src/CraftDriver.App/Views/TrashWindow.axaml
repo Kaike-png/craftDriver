@@ -3,7 +3,7 @@
         xmlns:vm="using:CraftDriver.App.ViewModels"
         x:Class="CraftDriver.App.Views.TrashWindow"
         x:DataType="vm:TrashViewModel"
-        Title="Lixeira — craftDriver" Width="720" Height="460"
+        Title="Lixeira — CraftDriver" Width="720" Height="460"
         WindowStartupLocation="CenterScreen">
     <DockPanel Margin="24,22,24,20">
         <StackPanel DockPanel.Dock="Top" Spacing="4" Margin="0,0,0,16">

@@ -1,5 +1,5 @@
-// Menu "craftDriver" no Dolphin, mostrado só quando TODOS os itens selecionados estão numa montagem do
-// craftDriver (fsname=craftdriver na tabela de montagens) — funciona com qualquer ponto de montagem.
+// Menu "CraftDriver" no Dolphin, mostrado só quando TODOS os itens selecionados estão numa montagem do
+// CraftDriver (fsname=craftdriver na tabela de montagens) — funciona com qualquer ponto de montagem.
 //
 // actions() roda na thread da interface: não lê xattr (um getxattr num FUSE lento travaria o Dolphin a cada
 // clique com o direito). O status para habilitar "Sempre manter"/"Liberar espaço" vem do cache do plugin de
@@ -46,7 +46,7 @@ public:
         for (const KFileItem &item : items) {
             const QString path = item.localPath();
             if (path.isEmpty() || !CraftDriver::insideMountResolved(QDir::cleanPath(path), mounts, &m_canonical)) {
-                return {}; // algum item fora do craftDriver: sem menu
+                return {}; // algum item fora do CraftDriver: sem menu
             }
             // status já lido pelo plugin de emblemas (vazio = desconhecido)
             QString status;
@@ -63,7 +63,7 @@ public:
 
         QObject *owner = parentWidget ? static_cast<QObject *>(parentWidget) : this;
         auto *menu = new QMenu(parentWidget);
-        menu->setTitle(QStringLiteral("craftDriver"));
+        menu->setTitle(QStringLiteral("CraftDriver"));
         menu->setIcon(QIcon::fromTheme(QStringLiteral("craftdriver"), QIcon::fromTheme(QStringLiteral("folder-cloud"))));
         if (!parentWidget) {
             connect(this, &QObject::destroyed, menu, &QObject::deleteLater);
@@ -88,7 +88,7 @@ public:
         // Mesmos textos/comandos do servicemenu packaging/share/kio/servicemenus/craftdriver.desktop.
         add(QStringLiteral("craftdriver_pin"), QStringLiteral("Sempre manter neste dispositivo"), QStringLiteral("emblem-downloads"), QStringLiteral("pin"), !allPinned);
         add(QStringLiteral("craftdriver_free"), QStringLiteral("Liberar espaço"), QStringLiteral("edit-clear"), QStringLiteral("unpin"), !allOnline);
-        add(QStringLiteral("craftdriver_status"), QStringLiteral("Status no craftDriver"), QStringLiteral("help-about"), QStringLiteral("status"), true);
+        add(QStringLiteral("craftdriver_status"), QStringLiteral("Status no CraftDriver"), QStringLiteral("help-about"), QStringLiteral("status"), true);
         menu->addSeparator();
         add(QStringLiteral("craftdriver_share"), QStringLiteral("Copiar link de compartilhamento"), QStringLiteral("insert-link"), QStringLiteral("share"), true);
         // Versões: um arquivo só (pastas não têm versões); abre a janela do app, sem notificação de sucesso
@@ -131,7 +131,7 @@ private:
     {
         const QString bin = craftdriverBinary();
         if (bin.isEmpty()) {
-            Q_EMIT error(QStringLiteral("craftDriver: comando \"craftdriver\" não encontrado no PATH."));
+            Q_EMIT error(QStringLiteral("CraftDriver: comando \"craftdriver\" não encontrado no PATH."));
             return;
         }
         QStringList args{command};
@@ -140,7 +140,7 @@ private:
         }
         args << paths;
         if (!QProcess::startDetached(bin, args)) {
-            Q_EMIT error(QStringLiteral("craftDriver: não foi possível executar %1.").arg(bin));
+            Q_EMIT error(QStringLiteral("CraftDriver: não foi possível executar %1.").arg(bin));
             return;
         }
         // Pede ao plugin de emblemas (se carregado neste processo) que releia esses itens logo.

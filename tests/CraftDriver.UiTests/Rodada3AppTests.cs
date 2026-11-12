@@ -73,7 +73,7 @@ public partial class Rodada3AppTests
     // ---------- §25.1 ----------
 
     /// <summary>
-    /// "Reiniciar agora" com transferência ativa: o diálogo "Sair do craftDriver?" aparece; Cancelar não pode deixar
+    /// "Reiniciar agora" com transferência ativa: o diálogo "Sair do CraftDriver?" aparece; Cancelar não pode deixar
     /// o sh do relaunch esperando este PID (horas depois, ao sair normalmente, o app reabriria sozinho).
     /// </summary>
     [AvaloniaFact]

@@ -116,7 +116,7 @@ public sealed class TrashRowVm(TrashRecord rec, string driveName, bool canRestor
     public string How => CanRestore ? "" : "restaurar pelo navegador";
 }
 
-/// <summary>Janela "Lixeira": excluídos que o craftDriver viu; restaura pela API no OneDrive pessoal, senão abre o navegador.</summary>
+/// <summary>Janela "Lixeira": excluídos que o CraftDriver viu; restaura pela API no OneDrive pessoal, senão abre o navegador.</summary>
 public sealed partial class TrashViewModel(AppHost host) : ViewModelBase
 {
     public ObservableCollection<TrashRowVm> Items { get; } = [];
@@ -141,7 +141,7 @@ public sealed partial class TrashViewModel(AppHost host) : ViewModelBase
             Items.Add(new TrashRowVm(t, d.DisplayName, ItemActions.CanRestoreFromTrash(d), ItemActions.RecycleBinUrl(d)));
         }
         Status = Items.Count == 0
-            ? "Nenhum item excluído recentemente. A lista mostra o que o craftDriver viu ser excluído (aqui ou em outro dispositivo)."
+            ? "Nenhum item excluído recentemente. A lista mostra o que o CraftDriver viu ser excluído (aqui ou em outro dispositivo)."
             : Items.Any(i => !i.CanRestore)
                 ? "Contas corporativas e do SharePoint só restauram pela Lixeira no navegador (a API ainda é beta)."
                 : "";

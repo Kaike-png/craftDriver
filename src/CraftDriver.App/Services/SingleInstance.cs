@@ -11,7 +11,7 @@ namespace CraftDriver.App.Services;
 /// arquivo velho para limpar) e não é herdada por processos filhos (O_CLOEXEC).
 /// <para>
 /// Só "trava presa por outro processo" (EWOULDBLOCK) quer dizer outra instância. Disco cheio, sistema só-leitura,
-/// E/S ou permissão negada ao criar o arquivo viravam "O craftDriver já está em execução" com saída 0 e nenhuma
+/// E/S ou permissão negada ao criar o arquivo viravam "O CraftDriver já está em execução" com saída 0 e nenhuma
 /// instância (ou, no EACCES, exceção não tratada no Main): agora sobem como <see cref="SingleInstanceException"/>.
 /// </para>
 /// <para>

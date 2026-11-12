@@ -15,8 +15,8 @@ public enum NoTrayChoice { Cancel, Minimize, Quit }
 /// </summary>
 public sealed class CloseToTrayBehavior
 {
-    public const string NoticeTitle = "O craftDriver continua em execução";
-    public const string NoticeBody = "A janela foi fechada, mas a sincronização continua. Para abrir de novo ou encerrar, use o ícone do craftDriver na bandeja.";
+    public const string NoticeTitle = "O CraftDriver continua em execução";
+    public const string NoticeBody = "A janela foi fechada, mas a sincronização continua. Para abrir de novo ou encerrar, use o ícone do CraftDriver na bandeja.";
 
     readonly AppConfig _cfg;
     readonly Func<Task<bool>> _hasTrayHost;

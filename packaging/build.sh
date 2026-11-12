@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Gera os artefatos de distribuição do craftDriver em dist/ (por arquitetura em ARCHES):
+# Gera os artefatos de distribuição do CraftDriver em dist/ (por arquitetura em ARCHES):
 #   craftdriver-<ver>-linux-<x64|arm64>.tar.gz (+ .sha256)   app + arquivos de desktop
 #   craftdriver_<ver>-1_<amd64|arm64>.deb                     Debian/Ubuntu
 #   craftdriver-<ver>-1.<x86_64|aarch64>.rpm                  Fedora/openSUSE
@@ -28,7 +28,7 @@ ARCHES="${ARCHES:-x64}"
 DIST="$ROOT/dist"
 DOTNET="$(command -v dotnet || echo "$HOME/.dotnet/dotnet")"
 
-echo "→ craftDriver $VERSION ($ARCHES)"
+echo "→ CraftDriver $VERSION ($ARCHES)"
 python3 "$ROOT/packaging/metainfo.py" --check --tag "v$VERSION"
 rm -rf "$DIST"
 mkdir -p "$DIST/aur"

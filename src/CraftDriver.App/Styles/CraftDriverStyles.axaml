@@ -3,7 +3,7 @@
         xmlns:svc="using:CraftDriver.App.Services"
         xmlns:views="using:CraftDriver.App.Views">
     <!--
-        Identidade visual do craftDriver.
+        Identidade visual do CraftDriver.
         Cores: o petróleo do ícone (#0E8F7E) é a base. A barra lateral é "pinho" (#0F302C) nos dois temas; ações,
         seleção e foco usam petróleo; o fundo é névoa (#F2F5F4) e os painéis, papel branco.
         Tipo: IBM Plex Sans (OFL, Assets/Fonts) em 400/500/600. Escala: 12 legenda, 14 texto, 16 seção, 21 título.

@@ -131,7 +131,7 @@ public class ScreenTests
         });
         while (!req.IsCompleted && DateTime.UtcNow < deadline.AddSeconds(20)) Pump(100);
         var (resp, body) = req.GetAwaiter().GetResult();
-        Assert.Contains("craftDriver", body);
+        Assert.Contains("CraftDriver", body);
 
         // a troca do código falso é recusada pela Microsoft (falsa, em memória: FakeMicrosoftLogin) e o
         // diálogo mostra o erro

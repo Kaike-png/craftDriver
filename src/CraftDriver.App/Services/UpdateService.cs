@@ -201,7 +201,7 @@ public sealed class UpdateService : IDisposable
             if (UpdateAssets.Choose(release, install.Kind, Arch) is not { } asset)
             {
                 var why = install.Kind == InstallKind.Unknown
-                    ? $"Esta cópia do craftDriver não pode se atualizar automaticamente (instalação {install.Label})."
+                    ? $"Esta cópia do CraftDriver não pode se atualizar automaticamente (instalação {install.Label})."
                     : $"A release {release.Version} não tem pacote para esta instalação ({install.Label}, {Arch.ToString().ToLowerInvariant()}).";
                 return Finish(UpdateOutcomeKind.Manual, UpdatePhase.Idle, why + "\n" + UpdateAssets.ManualHint(install.Kind, release));
             }
@@ -252,13 +252,13 @@ public sealed class UpdateService : IDisposable
         }
         if (rc.ExitCode == 0)
         {
-            _activity.Add(ActivityKind.Info, $"craftDriver {release.Version} instalado; reinicie para usar a nova versão.");
+            _activity.Add(ActivityKind.Info, $"CraftDriver {release.Version} instalado; reinicie para usar a nova versão.");
             return Finish(UpdateOutcomeKind.Installed, UpdatePhase.Installed,
-                $"A versão {release.Version} foi instalada. Reinicie o craftDriver para usar a nova versão.");
+                $"A versão {release.Version} foi instalada. Reinicie o CraftDriver para usar a nova versão.");
         }
         if (UpdateInstaller.IsAuthCancelled(rc.ExitCode))
             return Finish(UpdateOutcomeKind.Cancelled, UpdatePhase.Idle,
-                "Atualização cancelada: a senha de administrador não foi informada. O craftDriver continua na versão atual.");
+                "Atualização cancelada: a senha de administrador não foi informada. O CraftDriver continua na versão atual.");
         var detail = string.Join('\n', (rc.StdErr + "\n" + rc.StdOut).Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).TakeLast(4));
         _activity.Add(ActivityKind.Error, $"Atualização falhou ({cmd.File} saiu com {rc.ExitCode}): {detail}");
         return Finish(UpdateOutcomeKind.Failed, UpdatePhase.Failed,
@@ -294,9 +294,9 @@ public sealed class UpdateService : IDisposable
                 }
             };
         }
-        _activity.Add(ActivityKind.Info, $"Instalando a versão {release.Version}: o craftDriver vai fechar e abrir de novo.");
+        _activity.Add(ActivityKind.Info, $"Instalando a versão {release.Version}: o CraftDriver vai fechar e abrir de novo.");
         return Finish(UpdateOutcomeKind.Restarting, UpdatePhase.Restarting,
-            $"Instalando a versão {release.Version}: o craftDriver vai fechar e abrir de novo em instantes.");
+            $"Instalando a versão {release.Version}: o CraftDriver vai fechar e abrir de novo em instantes.");
     }
 
     UpdateOutcome Finish(UpdateOutcomeKind kind, UpdatePhase phase, string text)

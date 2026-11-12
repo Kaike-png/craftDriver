@@ -40,8 +40,8 @@ Maintainer: Kaike de Paula <kaikedepaula8@gmail.com>
 Section: kde
 Priority: optional
 Depends: craftdriver (>= $VERSION), $DEPS
-Description: Plugins KF6 do Dolphin para o craftDriver
- Emblemas de status e menu de contexto apenas nas montagens do craftDriver.
+Description: Plugins KF6 do Dolphin para o CraftDriver
+ Emblemas de status e menu de contexto apenas nas montagens do CraftDriver.
 EOF
   dpkg-deb --root-owner-group --build "$STAGE" "$OUT/craftdriver-dolphin_${VERSION}-1_${DISTRO}_$(dpkg --print-architecture).deb"
 else
@@ -53,11 +53,11 @@ else
 Name: craftdriver-dolphin
 Version: $VERSION
 Release: 1%{?dist}
-Summary: Plugins KF6 do Dolphin para o craftDriver
+Summary: Plugins KF6 do Dolphin para o CraftDriver
 License: MIT
 Requires: craftdriver >= $VERSION
 %description
-Emblemas de status e menu de contexto apenas nas montagens do craftDriver.
+Emblemas de status e menu de contexto apenas nas montagens do CraftDriver.
 %install
 cp -a $STAGE/. %{buildroot}/
 %files

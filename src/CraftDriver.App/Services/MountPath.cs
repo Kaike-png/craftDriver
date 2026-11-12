@@ -83,7 +83,7 @@ public static class MountPath
         var lex = Trim(Path.GetFullPath(mountPoint));
         var can = Trim(Canonical(mountPoint));
         return lex == can ? null
-            : $"{lex} passa por um link simbólico e a montagem fica em {can} (o caminho real). O craftDriver aceita os dois, " +
+            : $"{lex} passa por um link simbólico e a montagem fica em {can} (o caminho real). O CraftDriver aceita os dois, " +
               $"mas atalhos e extensões de gerenciadores de arquivos que comparam caminhos funcionam melhor com {can}.";
     }
 }

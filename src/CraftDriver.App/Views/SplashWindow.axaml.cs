@@ -38,7 +38,7 @@ public partial class SplashWindow : Window
     /// <summary>Falha na inicialização: mostra o erro e deixa só "Fechar".</summary>
     public void ShowError(string message)
     {
-        StatusText.Text = "Não foi possível iniciar o craftDriver.";
+        StatusText.Text = "Não foi possível iniciar o CraftDriver.";
         Busy.IsVisible = false;
         KeyringHint.IsVisible = false;
         SkipButton.IsVisible = false;

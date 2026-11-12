@@ -300,7 +300,7 @@ jobs:
           else
             # antes caía calado em --generate-notes quando o arquivo faltava; o job checks já barra a tag sem notas
             ../../packaging/release-notes.sh "$GITHUB_REF_NAME" > "$RUNNER_TEMP/notes.md"
-            gh release create "$GITHUB_REF_NAME" "${files[@]}" --title "craftDriver $GITHUB_REF_NAME" --notes-file "$RUNNER_TEMP/notes.md"
+            gh release create "$GITHUB_REF_NAME" "${files[@]}" --title "CraftDriver $GITHUB_REF_NAME" --notes-file "$RUNNER_TEMP/notes.md"
           fi
 
   aur:

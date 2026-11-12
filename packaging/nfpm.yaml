@@ -8,7 +8,7 @@ release: "1"
 section: net
 priority: optional
 maintainer: Kaike de Paula <kaikedepaula8@gmail.com>
-vendor: craftDriver
+vendor: CraftDriver
 homepage: https://github.com/Kaike-png/craftDriver
 license: MIT
 description: |

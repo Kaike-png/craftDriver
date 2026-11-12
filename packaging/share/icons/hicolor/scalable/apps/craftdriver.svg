@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
-  <!-- Ícone do craftDriver: pasta verde-azulada com nuvem (mesmo desenho de Assets/app-256.png) -->
+  <!-- Ícone do CraftDriver: pasta verde-azulada com nuvem (mesmo desenho de Assets/app-256.png) -->
   <path d="M6 16a5 5 0 0 1 5-5h13l5 5h24a5 5 0 0 1 5 5v28a5 5 0 0 1-5 5H11a5 5 0 0 1-5-5z" fill="#0E8F7E"/>
   <path d="M42 44H23a6.5 6.5 0 0 1-.9-12.9 9.5 9.5 0 0 1 17.8-2.3A7.6 7.6 0 0 1 42 44z" fill="none" stroke="#fff" stroke-width="3.2" stroke-linejoin="round"/>
 </svg>

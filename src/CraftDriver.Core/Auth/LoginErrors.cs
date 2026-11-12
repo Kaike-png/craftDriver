@@ -51,7 +51,7 @@ public static class LoginErrors
             return AdminConsent(detail);
         if (Aad("AADSTS65004"))
             return new(LoginErrorKind.Declined,
-                "O pedido de acesso do craftDriver foi recusado na página da Microsoft. Para conectar a conta, tente de novo e clique em \"Aceitar\".",
+                "O pedido de acesso do CraftDriver foi recusado na página da Microsoft. Para conectar a conta, tente de novo e clique em \"Aceitar\".",
                 detail);
         if (Aad("AADSTS65001"))
             return AdminConsent(detail);
@@ -70,7 +70,7 @@ public static class LoginErrors
                 detail);
         if (code == MsalError.HttpListenerError || IsAddressInUse(ex))
             return new(LoginErrorKind.LocalPortBusy,
-                "O craftDriver não conseguiu receber a resposta do navegador numa porta local (http://localhost). " +
+                "O CraftDriver não conseguiu receber a resposta do navegador numa porta local (http://localhost). " +
                 "Outro programa pode estar usando a porta ou um firewall bloqueia. Tente de novo; se continuar, use o método manual (colar o endereço).",
                 detail);
         if (code == MsalError.LinuxXdgOpen)
@@ -91,7 +91,7 @@ public static class LoginErrors
     }
 
     static LoginError AdminConsent(string detail) => new(LoginErrorKind.AdminConsentRequired,
-        "A sua organização exige que um administrador aprove o craftDriver antes do primeiro uso. " +
+        "A sua organização exige que um administrador aprove o CraftDriver antes do primeiro uso. " +
         "Peça ao administrador do Microsoft 365 para conceder o consentimento ao aplicativo e tente de novo depois.",
         detail);
 

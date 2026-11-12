@@ -5,7 +5,7 @@
         xmlns:views="using:CraftDriver.App.Views"
         x:Class="CraftDriver.App.Views.MainWindow"
         x:DataType="vm:MainViewModel"
-        Title="craftDriver" Width="980" Height="660" MinWidth="760" MinHeight="500"
+        Title="CraftDriver" Width="980" Height="660" MinWidth="760" MinHeight="500"
         WindowStartupLocation="CenterScreen">
 
     <Window.KeyBindings>
@@ -25,7 +25,7 @@
             <StackPanel Margin="20,20,20,0">
                 <StackPanel Orientation="Horizontal" Spacing="10">
                     <views:BrandMark Width="28" Height="28" />
-                    <TextBlock Classes="wordmark" Text="craftDriver" VerticalAlignment="Center" />
+                    <TextBlock Classes="wordmark" Text="CraftDriver" VerticalAlignment="Center" />
                 </StackPanel>
 
                 <!-- a cor do quadro é a do estado, a mesma do ícone na bandeja -->
@@ -359,7 +359,7 @@
             <DockPanel Classes="page">
                 <StackPanel DockPanel.Dock="Top" Classes="page-head">
                     <TextBlock Classes="h1" Text="Arquivos sob demanda" />
-                    <TextBlock Classes="lead" Text="Por padrão os arquivos ficam somente online e são baixados ao abrir. Pastas marcadas abaixo ficam sempre disponíveis neste dispositivo, mesmo sem internet. Você também pode usar o menu de contexto do gerenciador de arquivos (craftDriver ▸ Sempre manter neste dispositivo)." />
+                    <TextBlock Classes="lead" Text="Por padrão os arquivos ficam somente online e são baixados ao abrir. Pastas marcadas abaixo ficam sempre disponíveis neste dispositivo, mesmo sem internet. Você também pode usar o menu de contexto do gerenciador de arquivos (CraftDriver ▸ Sempre manter neste dispositivo)." />
                     <TextBlock Classes="caption" Text="{Binding CacheText}" TextWrapping="Wrap" />
                     <StackPanel Classes="toolbar">
                         <Button Classes="accent" Content="Sempre manter uma pasta neste dispositivo…" Command="{Binding PinFolderCommand}" />
@@ -430,7 +430,7 @@
             <DockPanel Classes="page">
                 <StackPanel DockPanel.Dock="Top" Classes="page-head">
                     <TextBlock Classes="h1" Text="Conflitos" />
-                    <TextBlock Classes="lead" Text="Quando o mesmo arquivo muda aqui e na nuvem, o craftDriver mantém as duas versões: a sua fica numa cópia com &quot;conflito&quot; no nome. Confira e apague a que não quiser; dispensar o aviso não apaga nada." />
+                    <TextBlock Classes="lead" Text="Quando o mesmo arquivo muda aqui e na nuvem, o CraftDriver mantém as duas versões: a sua fica numa cópia com &quot;conflito&quot; no nome. Confira e apague a que não quiser; dispensar o aviso não apaga nada." />
                     <StackPanel Classes="toolbar" IsVisible="{Binding HasConflicts}">
                         <Button Content="Dispensar todos" Command="{Binding DismissAllConflictsCommand}" />
                     </StackPanel>
@@ -470,20 +470,20 @@
                         <Button Grid.Column="1" Content="Abrir log" Command="{Binding OpenLogCommand}" Margin="8,0,0,0" />
                         <TextBlock Grid.Column="2" Classes="caption" Text="{Binding LogFile, StringFormat='Log: {0}'}" VerticalAlignment="Center"
                                    Margin="14,0" TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding LogFile}" />
-                        <Button Grid.Column="3" Content="Sair do craftDriver" Command="{Binding QuitCommand}" />
+                        <Button Grid.Column="3" Content="Sair do CraftDriver" Command="{Binding QuitCommand}" />
                     </Grid>
                 </Border>
                 <ScrollViewer>
                     <StackPanel Spacing="16" Margin="32,26,32,28" MaxWidth="780" HorizontalAlignment="Left">
                         <StackPanel Classes="page-head" Margin="0,0,0,4">
                             <TextBlock Classes="h1" Text="Configurações" />
-                            <TextBlock Classes="lead" Text="As alterações valem ao salvar (Ctrl+S). As que dependem de reiniciar o craftDriver estão indicadas." />
+                            <TextBlock Classes="lead" Text="As alterações valem ao salvar (Ctrl+S). As que dependem de reiniciar o CraftDriver estão indicadas." />
                         </StackPanel>
 
                         <Border Classes="panel" Padding="22,18">
                             <StackPanel Spacing="12">
                                 <TextBlock Classes="panel-title" Text="Geral" />
-                                <CheckBox Content="Iniciar o craftDriver ao entrar na sessão" IsChecked="{Binding StartWithSystem}" />
+                                <CheckBox Content="Iniciar o CraftDriver ao entrar na sessão" IsChecked="{Binding StartWithSystem}" />
                                 <StackPanel Margin="28,0,0,0" Spacing="4" IsVisible="{Binding CanUseSystemdAutostart}">
                                     <CheckBox Content="Usar serviço do systemd (sem janela nem bandeja)" IsChecked="{Binding UseSystemdAutostart}" IsEnabled="{Binding StartWithSystem}" />
                                     <TextBlock Classes="caption" TextWrapping="Wrap"
@@ -583,7 +583,7 @@
                                     <TextBox AutomationProperties.LabeledBy="{Binding #LocalOnlyLabel}" Text="{Binding LocalOnlyPatterns}" TextWrapping="Wrap" />
                                 </StackPanel>
                                 <StackPanel Spacing="6">
-                                    <TextBlock x:Name="ClientIdLabel" TextWrapping="Wrap" Text="Client ID do aplicativo no Microsoft Entra ID (padrão: o app craftDriver registrado por este projeto; vale ao reiniciar):" />
+                                    <TextBlock x:Name="ClientIdLabel" TextWrapping="Wrap" Text="Client ID do aplicativo no Microsoft Entra ID (padrão: o app CraftDriver registrado por este projeto; vale ao reiniciar):" />
                                     <TextBox AutomationProperties.LabeledBy="{Binding #ClientIdLabel}" Text="{Binding ClientId}" />
                                 </StackPanel>
                             </StackPanel>

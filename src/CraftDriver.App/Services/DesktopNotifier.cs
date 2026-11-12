@@ -53,7 +53,7 @@ public sealed class DesktopNotifier : IDisposable
 
     /// <param name="busAddress">Endereço do barramento de sessão; null/vazio = sem D-Bus (só notify-send).</param>
     /// <param name="notifySend">Executável do fallback (nome no PATH ou caminho).</param>
-    public DesktopNotifier(string? busAddress, string notifySend = "notify-send", string appName = "craftDriver", string desktopEntry = "craftdriver")
+    public DesktopNotifier(string? busAddress, string notifySend = "notify-send", string appName = "CraftDriver", string desktopEntry = "craftdriver")
     {
         _address = string.IsNullOrWhiteSpace(busAddress) ? null : busAddress;
         _notifySend = notifySend;

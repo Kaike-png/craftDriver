@@ -1,7 +1,7 @@
-// Emblemas do craftDriver no Dolphin.
+// Emblemas do CraftDriver no Dolphin.
 //
 // O Dolphin chama getOverlays() na thread principal e pede que ela não bloqueie: o getxattr num
-// FUSE passa pelo processo do craftDriver, então a leitura roda numa thread própria. getOverlays()
+// FUSE passa pelo processo do CraftDriver, então a leitura roda numa thread própria. getOverlays()
 // devolve o que está em cache (ou nada) e, quando o valor chega/muda, emitimos overlaysChanged().
 //
 // Não há notificação de mudança de status vinda do FUSE, então itens já vistos são relidos
@@ -11,9 +11,9 @@
 // getOverlays() de novo a cada overlaysChanged e ao mostrar a pasta, o que renova a entrada. O plugin de ações chama refreshPaths() depois
 // de rodar o CLI para o emblema mudar logo (via propriedade do qApp, sem dependência de link).
 //
-// Só itens dentro de uma montagem do craftDriver (tabela de montagens relida a cada 2 s, como no plugin de ações)
+// Só itens dentro de uma montagem do CraftDriver (tabela de montagens relida a cada 2 s, como no plugin de ações)
 // vão para a fila: antes todo arquivo de todo disco gerava um getxattr. Entrada com resposta vazia (ex.: vista
-// enquanto o craftDriver ainda montava) é relida no intervalo longo e quando o Dolphin pede de novo.
+// enquanto o CraftDriver ainda montava) é relida no intervalo longo e quando o Dolphin pede de novo.
 #include "craftdriverstatus.h"
 
 #include <KOverlayIconPlugin>
@@ -132,7 +132,7 @@ public:
             return {};
         }
         it->lastUsed = now;
-        // resposta vazia (sem xattr ainda, ex.: o craftDriver montava): o Dolphin pediu de novo, relê (com limite)
+        // resposta vazia (sem xattr ainda, ex.: o CraftDriver montava): o Dolphin pediu de novo, relê (com limite)
         if (it->status.isEmpty() && !it->pending && now - it->lastChecked >= m_syncingMs) {
             it->pending = true;
             request({path});
@@ -140,7 +140,7 @@ public:
         return overlaysFor(it->status);
     }
 
-    // Último status lido (vazio = desconhecido ou fora do craftDriver), sem ler nada. Usado pelo plugin de ações
+    // Último status lido (vazio = desconhecido ou fora do CraftDriver), sem ler nada. Usado pelo plugin de ações
     // (QMetaObject::invokeMethod, mesma thread) para habilitar as ações sem getxattr na thread da interface.
     Q_INVOKABLE QString cachedStatus(const QString &path) const
     {

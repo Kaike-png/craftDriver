@@ -154,7 +154,7 @@ public class ShareVersionsHostTests
         Assert.Contains("política da sua organização", resp.Text);
         Assert.Equal([(n.Id, "view", "anonymous")], env.Remote.LinkRequests); // não troca de escopo em silêncio
         Assert.Empty(env.Clipboard);
-        Assert.Equal("craftDriver — link não criado", Assert.Single(env.Sent).Title);
+        Assert.Equal("CraftDriver — link não criado", Assert.Single(env.Sent).Title);
     }
 
     [Fact]
@@ -171,7 +171,7 @@ public class ShareVersionsHostTests
         Assert.Contains("ainda não foi enviado", resp.Text);
         Assert.Empty(env.Clipboard);
         var sent = Assert.Single(env.Sent);
-        Assert.Equal("craftDriver — link não criado", sent.Title);
+        Assert.Equal("CraftDriver — link não criado", sent.Title);
         Assert.Empty(sent.Actions);
 
         var outside = await env.Ipc("share", "/etc/passwd");
@@ -190,7 +190,7 @@ public class ShareVersionsHostTests
         Assert.True(resp.Ok);
         Assert.Contains("Não foi possível copiar", resp.Text);
         var sent = Assert.Single(env.Sent);
-        Assert.Equal("craftDriver — link criado", sent.Title);
+        Assert.Equal("CraftDriver — link criado", sent.Title);
         Assert.Contains($"https://1drv.ms/fake/{n.Id}", sent.Body);
         Assert.Contains("wl-clipboard", sent.Body);
     }

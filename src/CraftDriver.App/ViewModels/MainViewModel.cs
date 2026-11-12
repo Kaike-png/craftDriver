@@ -759,9 +759,9 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
     public async Task<bool> ConfirmQuitAsync()
     {
         var transfers = Host.Activity.Transfers.Count;
-        return transfers == 0 || await ConfirmAsync(new ConfirmRequest("Sair do craftDriver?",
+        return transfers == 0 || await ConfirmAsync(new ConfirmRequest("Sair do CraftDriver?",
             $"{(transfers == 1 ? "Há 1 transferência" : $"Há {transfers} transferências")} em andamento. Elas são interrompidas e " +
-            "continuam na próxima vez que o craftDriver abrir; até lá, a pasta sincronizada fica indisponível.", "Sair"));
+            "continuam na próxima vez que o CraftDriver abrir; até lá, a pasta sincronizada fica indisponível.", "Sair"));
     }
     [RelayCommand] void OpenLog() => DesktopIntegration.OpenPath(AppPaths.LogFile);
 
@@ -850,13 +850,13 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
         {
             case UpdateOutcomeKind.Installed:
                 if (await ConfirmAsync(new ConfirmRequest("Atualização instalada",
-                        $"A versão {release.Version} do craftDriver foi instalada. Reiniciar agora para usar a nova versão?", "Reiniciar agora")))
+                        $"A versão {release.Version} do CraftDriver foi instalada. Reiniciar agora para usar a nova versão?", "Reiniciar agora")))
                     await Restart();
                 if (!_disposed && Host.Updates.Phase == UpdatePhase.Installed)
                 {
                     // não reiniciou agora: o "Reiniciar agora" da barra fica disponível
                     RestartNeeded = true;
-                    Message = $"A versão {release.Version} foi instalada. Reinicie o craftDriver para usar a nova versão.";
+                    Message = $"A versão {release.Version} foi instalada. Reinicie o CraftDriver para usar a nova versão.";
                 }
                 break;
             // cancelado, erro, "rode no terminal", reabrindo: o próprio painel mostra (sem repetir na barra)
@@ -1116,7 +1116,7 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
         var notes = new List<string>();
         if (clientChanged) notes.Add("o novo Client ID vale ao reiniciar (depois, entre novamente nas contas)");
         if (cacheChanged) notes.Add($"o cache passa para {c.CacheDir} ao reiniciar; os arquivos baixados são baixados de novo quando forem abertos, e a pasta antiga pode ser apagada");
-        var text = !saved ? "As configurações valem só até fechar o craftDriver: não foram gravadas no disco. " +
+        var text = !saved ? "As configurações valem só até fechar o CraftDriver: não foram gravadas no disco. " +
                             (c.ReadOnly ? c.LoadWarning : "Veja o log (aba Visão geral).")
             : notes.Count == 0 ? "Configurações salvas."
             : "Configurações salvas — " + string.Join("; ", notes) + ". Use \"Reiniciar agora\".";
