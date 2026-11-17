@@ -13,6 +13,7 @@ public sealed partial class StateDb
         CREATE TABLE IF NOT EXISTS offline_copies(
           rel TEXT PRIMARY KEY, root TEXT NOT NULL, lid INTEGER NOT NULL, is_dir INTEGER NOT NULL,
           size INTEGER NOT NULL, mtime_ticks INTEGER NOT NULL);
+        CREATE TABLE IF NOT EXISTS offline_copies_state(id INTEGER PRIMARY KEY CHECK(id = 1), complete INTEGER NOT NULL);
         CREATE TABLE IF NOT EXISTS offline_deletions(
           lid INTEGER PRIMARY KEY, drive_id TEXT NOT NULL, path TEXT NOT NULL, detected_at INTEGER NOT NULL);
         """);
@@ -30,16 +31,40 @@ public sealed partial class StateDb
         }
     }
 
-    /// <summary>Troca o manifesto inteiro (uma transação).</summary>
-    public void SaveOfflineCopies(IReadOnlyCollection<OfflineCopy> copies) => InTransaction(() =>
+    /// <summary>
+    /// Começa um manifesto novo, marcado como incompleto: as entradas entram uma a uma, ANTES de cada item aparecer na
+    /// pasta real, e só <see cref="FinishOfflineCopies"/> o marca completo. Se o processo morrer no meio (desligamento),
+    /// a abertura seguinte reconhece o que foi gravado e sabe que o que falta nunca chegou a ser copiado.
+    /// </summary>
+    public void BeginOfflineCopies() => InTransaction(() =>
     {
         Exec("DELETE FROM offline_copies");
-        foreach (var c in copies)
-            Exec("INSERT OR REPLACE INTO offline_copies(rel,root,lid,is_dir,size,mtime_ticks) VALUES($r,$o,$l,$d,$s,$m)",
-                ("$r", c.Rel), ("$o", c.Root), ("$l", c.Lid), ("$d", c.IsDir ? 1 : 0), ("$s", c.Size), ("$m", c.MTimeTicks));
+        Exec("INSERT OR REPLACE INTO offline_copies_state(id,complete) VALUES(1,0)");
     });
 
-    public void ClearOfflineCopies() => Exec("DELETE FROM offline_copies");
+    public void AddOfflineCopy(OfflineCopy c) =>
+        Exec("INSERT OR REPLACE INTO offline_copies(rel,root,lid,is_dir,size,mtime_ticks) VALUES($r,$o,$l,$d,$s,$m)",
+            ("$r", c.Rel), ("$o", c.Root), ("$l", c.Lid), ("$d", c.IsDir ? 1 : 0), ("$s", c.Size), ("$m", c.MTimeTicks));
+
+    public void RemoveOfflineCopy(string rel) => Exec("DELETE FROM offline_copies WHERE rel=$r", ("$r", rel));
+
+    public void FinishOfflineCopies() => Exec("INSERT OR REPLACE INTO offline_copies_state(id,complete) VALUES(1,1)");
+
+    /// <summary>O manifesto atual terminou de ser gravado? Sem marca (manifesto da 0.4.1, gravado de uma vez) = sim.</summary>
+    public bool OfflineCopiesComplete()
+    {
+        lock (Lock)
+        {
+            using var cmd = Cmd("SELECT complete FROM offline_copies_state WHERE id=1", []);
+            return cmd.ExecuteScalar() is not long v || v != 0;
+        }
+    }
+
+    public void ClearOfflineCopies() => InTransaction(() =>
+    {
+        Exec("DELETE FROM offline_copies");
+        Exec("DELETE FROM offline_copies_state");
+    });
 
     // ---------- exclusões feitas com o app fechado, aguardando a confirmação do usuário (docs/copias-offline.md) ----------
 

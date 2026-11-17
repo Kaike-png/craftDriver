@@ -28,6 +28,14 @@ public static class OfflineCopies
 {
     // ---------- encerrar: gravar as cópias ----------
 
+    static readonly AsyncLocal<Action<string, string>?> _stageHook = new();
+
+    /// <summary>Teste: chamado em cada etapa de <see cref="Materialize"/> (etapa, caminho); lançar simula a queda ali.</summary>
+    public static Action<string, string>? StageHookForTests { get => _stageHook.Value; set => _stageHook.Value = value; }
+
+    /// <summary>Prefixo do nome temporário de uma cópia em andamento (vira o nome final só depois de registrada).</summary>
+    public const string PartialPrefix = ".craftdriver-parcial-";
+
     public static OfflineMaterializeResult Materialize(SyncEngine e, VirtualFs fs, string root)
     {
         var db = e.Db;
@@ -35,6 +43,9 @@ public static class OfflineCopies
         // apagados com o app fechado aguardando confirmação: não voltam nas cópias (nem o que estiver dentro deles)
         var pendingDeletes = db.OfflineDeletions().Select(d => d.Lid).ToHashSet();
         Directory.CreateDirectory(root);
+        // manifesto gravado aos poucos, cada entrada ANTES de o item aparecer na pasta real: se o processo morrer no meio
+        // (desligamento que não espera), a abertura seguinte reconhece o que ficou (docs/copias-offline.md)
+        db.BeginOfflineCopies();
         var entries = new Dictionary<string, OfflineCopy>(StringComparer.Ordinal);
         int files = 0, dirs = 0, skipped = 0;
 
@@ -42,8 +53,11 @@ public static class OfflineCopies
         {
             if (entries.ContainsKey(rel)) return;
             var full = Full(root, rel);
+            var copy = new OfflineCopy(root, rel, lid, true, 0, 0);
+            db.AddOfflineCopy(copy);
+            StageHookForTests?.Invoke("pasta", rel);
             Directory.CreateDirectory(full);
-            entries[rel] = new OfflineCopy(root, rel, lid, true, 0, 0);
+            entries[rel] = copy;
             dirs++;
         }
 
@@ -83,14 +97,30 @@ public static class OfflineCopies
                     if (!SyncEngine.IsContentCurrent(x, e.Cache) || !File.Exists(cache)) { skipped++; continue; }
                     var full = Full(root, rel);
                     if (Path.Exists(full)) { skipped++; continue; } // nunca sobrescrever algo que já está na pasta real
-                    CloneOrCopy(cache, full);
+                    // copia com nome temporário, registra e só então renomeia: arquivo pela metade nunca fica com o
+                    // nome final, e nada aparece com o nome final sem estar no manifesto
+                    var tmp = Path.Join(Path.GetDirectoryName(full), PartialPrefix + x.Lid);
+                    File.Delete(tmp);
+                    CloneOrCopy(cache, tmp);
                     var readOnly = e.IsReadOnly(x.DriveId);
-                    File.SetUnixFileMode(full, (UnixFileMode)(readOnly ? 0x124 : x.Mode != 0 ? x.Mode & 0x1FF : 0x1A4));
+                    File.SetUnixFileMode(tmp, (UnixFileMode)(readOnly ? 0x124 : x.Mode != 0 ? x.Mode & 0x1FF : 0x1A4));
                     var mtime = DateTimeOffset.FromUnixTimeMilliseconds(x.MTime).UtcDateTime
                         .AddTicks(db.FracaoMtime(x.Lid, x.MTime) / 100);
-                    File.SetLastWriteTimeUtc(full, mtime);
-                    var fi = new FileInfo(full);
-                    entries[rel] = new OfflineCopy(root, rel, x.Lid, false, fi.Length, fi.LastWriteTimeUtc.Ticks);
+                    File.SetLastWriteTimeUtc(tmp, mtime);
+                    StageHookForTests?.Invoke("copiado", rel);
+                    var fi = new FileInfo(tmp);
+                    var copy = new OfflineCopy(root, rel, x.Lid, false, fi.Length, fi.LastWriteTimeUtc.Ticks);
+                    db.AddOfflineCopy(copy);
+                    StageHookForTests?.Invoke("registrado", rel);
+                    try { File.Move(tmp, full); } // sem sobrescrever: algo apareceu com esse nome nesse meio tempo
+                    catch (IOException)
+                    {
+                        db.RemoveOfflineCopy(rel);
+                        File.Delete(tmp);
+                        throw;
+                    }
+                    StageHookForTests?.Invoke("visivel", rel);
+                    entries[rel] = copy;
                     files++;
                 }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
@@ -100,12 +130,13 @@ public static class OfflineCopies
                 }
             }
         }
-        if (files > 0) db.SaveOfflineCopies(entries.Values.ToList());
+        if (files > 0) db.FinishOfflineCopies();
         else
         {
             // nada a deixar: não sobra árvore de pastas vazias no lugar da montagem
             foreach (var d in entries.Values.Where(c => c.IsDir).OrderByDescending(c => c.Rel.Length))
                 try { Directory.Delete(Full(root, d.Rel)); } catch (IOException) { }
+            db.ClearOfflineCopies();
             dirs = 0;
         }
         return new(files, dirs, skipped);
@@ -120,7 +151,10 @@ public static class OfflineCopies
         if (e.Drives.Count > 0) throw new InvalidOperationException("importar as cópias offline antes de SyncEngine.Start");
         var db = e.Db;
         var manifest = db.OfflineCopies();
-        if (manifest.Count == 0) return null;
+        if (manifest.Count == 0) { db.ClearOfflineCopies(); return null; } // (marca de um encerramento que não copiou nada)
+        // encerramento interrompido (processo morto no meio das cópias): o que falta na pasta nunca chegou a ser
+        // copiado — não é exclusão nem origem de um "mover"
+        var complete = db.OfflineCopiesComplete();
         var root = manifest[0].Root;
         if (!Directory.Exists(root)) { db.ClearOfflineCopies(); return new(0, 0, 0, 0, 0, null); }
         if ((isMountPoint ?? IsMountPoint)(root)) return null; // outra montagem por cima: tenta na próxima abertura
@@ -129,8 +163,14 @@ public static class OfflineCopies
         var dirLids = manifest.Where(m => m.IsDir).ToDictionary(m => m.Rel, m => m.Lid, StringComparer.Ordinal);
         var onDisk = new List<(string rel, FileSystemInfo info)>();
         Walk(new DirectoryInfo(root), "", onDisk);
+        // cópia em andamento quando o processo morreu: pela metade ou não renomeada; o original está no cache
+        foreach (var (rel, info) in onDisk.Where(o => o.info is FileInfo && o.info.Name.StartsWith(PartialPrefix, StringComparison.Ordinal)).ToList())
+        {
+            try { info.Delete(); } catch (IOException) { }
+            onDisk.Remove((rel, info));
+        }
         var present = onDisk.Select(d => d.rel).ToHashSet(StringComparer.Ordinal);
-        var missingFiles = manifest.Where(m => !m.IsDir && !present.Contains(m.Rel)).ToList();
+        var missingFiles = complete ? manifest.Where(m => !m.IsDir && !present.Contains(m.Rel)).ToList() : [];
 
         int edited = 0, created = 0, moved = 0, pendingDeletes = 0;
         var done = new List<string>();      // importados ou iguais: saem da pasta real
@@ -227,7 +267,7 @@ public static class OfflineCopies
         // usuário viu o que apagou); senão, cada arquivo ausente vira a sua. Debaixo de uma pasta pendente, nada mais.
         var copied = manifest.Select(m => m.Lid).ToHashSet();
         var covered = new List<string>();
-        foreach (var m in manifest.Where(m => !present.Contains(m.Rel) && (m.IsDir || missingFiles.Contains(m))))
+        foreach (var m in manifest.Where(m => complete && !present.Contains(m.Rel) && (m.IsDir || missingFiles.Contains(m))))
         {
             if (covered.Any(c => m.Rel.StartsWith(c + "/", StringComparison.Ordinal))) continue;
             lock (db.Lock)
@@ -248,8 +288,7 @@ public static class OfflineCopies
             var full = Full(root, rel);
             var info = new FileInfo(full);
             if (!info.Exists && info.LinkTarget == null && !Directory.Exists(full)) continue;
-            recoveryDir ??= Path.Combine(Path.GetDirectoryName(root.TrimEnd('/'))!,
-                Path.GetFileName(root.TrimEnd('/')) + " (recuperados)", DateTime.Now.ToString("yyyy-MM-dd HHmmss"));
+            recoveryDir ??= RecoveryDirFor(root);
             var target = Full(recoveryDir, rel);
             Directory.CreateDirectory(Path.GetDirectoryName(target)!);
             if (Directory.Exists(full) && info.LinkTarget == null) Directory.Move(full, target);
@@ -264,7 +303,32 @@ public static class OfflineCopies
         return new(edited, created, moved, pendingDeletes, recover.Count, recoveryDir);
     }
 
+    /// <summary>
+    /// Antes de montar: o que ainda estiver na pasta real do ponto de montagem (cópias de um encerramento antigo sem
+    /// manifesto, algo do usuário) vai para "&lt;montagem&gt; (recuperados)/&lt;data&gt;" — com a pasta não vazia a montagem
+    /// seria recusada e o app ficaria sem a pasta. Montada (por nós ou outro processo): nunca mexe. Devolve a pasta de
+    /// destino, ou null se não havia nada.
+    /// </summary>
+    public static string? MoveAsideLeftovers(string root, Func<string, bool>? isMountPoint = null)
+    {
+        if (!Directory.Exists(root) || (isMountPoint ?? IsMountPoint)(root)) return null;
+        var entries = new DirectoryInfo(root).EnumerateFileSystemInfos().ToList();
+        if (entries.Count == 0) return null;
+        var dir = RecoveryDirFor(root);
+        Directory.CreateDirectory(dir);
+        foreach (var x in entries)
+        {
+            var target = Path.Join(dir, x.Name);
+            if (x is DirectoryInfo d && d.LinkTarget == null) d.MoveTo(target);
+            else File.Move(x.FullName, target);
+        }
+        return dir;
+    }
+
     // ---------- auxiliares ----------
+
+    static string RecoveryDirFor(string root) => Path.Combine(Path.GetDirectoryName(root.TrimEnd('/'))!,
+        Path.GetFileName(root.TrimEnd('/')) + " (recuperados)", DateTime.Now.ToString("yyyy-MM-dd HHmmss"));
 
     static string Full(string root, string rel) => Path.Join(root, rel.TrimStart('/'));
 

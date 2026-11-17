@@ -246,6 +246,83 @@ public class OfflineCopiesTests
         Assert.Throws<InvalidOperationException>(() => OfflineCopies.Import(c.H.Engine, _ => false));
     }
 
+    sealed class QuedaSimulada : Exception;
+
+    /// <summary>
+    /// Desligamento no meio das cópias (o systemd mata o processo): o que já estava gravado tem de ser reconhecido na
+    /// abertura — senão a pasta fica cheia, sem manifesto, e a montagem recusa ("não está vazio"). Cada etapa em que a
+    /// queda pode acontecer: pasta registrada e ainda não criada, arquivo copiado com nome temporário, arquivo registrado
+    /// e ainda não renomeado, arquivo já com o nome final.
+    /// </summary>
+    [Theory]
+    [InlineData("pasta", "/Fixada/Sub")]
+    [InlineData("copiado", "/Fixada/b.txt")]
+    [InlineData("registrado", "/Fixada/b.txt")]
+    [InlineData("visivel", "/Fixada/b.txt")]
+    public void Encerramento_interrompido_no_meio_das_copias_e_reconhecido_na_abertura(string etapa, string onde)
+    {
+        using var c = new Cenario();
+        OfflineCopies.StageHookForTests = (st, rel) =>
+        {
+            if (st == etapa && rel.EndsWith(onde, StringComparison.Ordinal)) throw new QuedaSimulada();
+        };
+        try { Assert.Throws<QuedaSimulada>(() => OfflineCopies.Materialize(c.H.Engine, c.H.Fs, c.Mount)); }
+        finally { OfflineCopies.StageHookForTests = null; }
+        c.H.Close();
+        Assert.NotEmpty(Directory.EnumerateFileSystemEntries(c.Mount)); // a queda deixou coisa na pasta real
+
+        // com o app fechado (depois de religar o PC) o usuário edita um arquivo que chegou a ser copiado inteiro
+        var editado = File.Exists(c.Real("/Fixada/a.txt"));
+        if (editado) File.WriteAllText(c.Real("/Fixada/a.txt"), "editado depois da queda");
+        var uploads = c.H.Remote.Uploads;
+        c.Abrir();
+
+        Assert.NotNull(c.Importado);
+        Assert.Equal(0, c.Importado!.PendingDeletes);     // o que não chegou a ser copiado não foi "apagado" pelo usuário
+        Assert.Empty(OfflineDeletions.Pending(c.H.Engine));
+        Assert.Equal(0, c.Importado.Recovered);
+        Assert.Equal(0, c.Importado.Created);             // nada de cópia parcial/temporária virando arquivo novo
+        Assert.Empty(Directory.EnumerateFileSystemEntries(c.Mount)); // a montagem pode subir
+        Assert.Empty(c.H.Db.OfflineCopies());
+        Assert.DoesNotContain(c.H.Remote.ListPaths(), p => p.Contains("conflito", StringComparison.Ordinal) || p.Contains("parcial", StringComparison.Ordinal));
+        Assert.Equal("versão B", c.H.Remote.ReadText("/Fixada/b.txt"));
+        Assert.Equal("versão C", c.H.Remote.ReadText("/Fixada/Sub/c.txt"));
+        if (editado)
+        {
+            Assert.Equal("editado depois da queda", c.H.Remote.ReadText("/Fixada/a.txt"));
+            Assert.Equal(uploads + 1, c.H.Remote.Uploads);
+        }
+        else Assert.Equal(uploads, c.H.Remote.Uploads);
+        Assert.Equal(etapa != "pasta", editado); // a queda em arquivo vem depois de a.txt (ordem dos caminhos)
+    }
+
+    [Fact]
+    public void Sobras_sem_manifesto_saem_da_pasta_de_montagem_para_recuperados()
+    {
+        var mount = Path.Combine(Path.GetTempPath(), "craftdriver-sobras-" + Guid.NewGuid().ToString("N")[..8], "OneDrive");
+        try
+        {
+            Assert.Null(OfflineCopies.MoveAsideLeftovers(mount, _ => false)); // não existe: nada a fazer
+            Directory.CreateDirectory(mount);
+            Assert.Null(OfflineCopies.MoveAsideLeftovers(mount, _ => false)); // vazia: nada a fazer
+            Directory.CreateDirectory(Path.Combine(mount, "Drive", "Pasta"));
+            File.WriteAllText(Path.Combine(mount, "Drive", "Pasta", "x.txt"), "sobra");
+            File.WriteAllText(Path.Combine(mount, ".oculto"), "o");
+
+            Assert.Null(OfflineCopies.MoveAsideLeftovers(mount, _ => true)); // montada: nunca mexe
+            Assert.True(File.Exists(Path.Combine(mount, "Drive", "Pasta", "x.txt")));
+
+            var dir = OfflineCopies.MoveAsideLeftovers(mount, _ => false);
+            Assert.NotNull(dir);
+            Assert.StartsWith(mount + " (recuperados)/", dir);
+            Assert.Equal("sobra", File.ReadAllText(Path.Combine(dir!, "Drive", "Pasta", "x.txt")));
+            Assert.Equal("o", File.ReadAllText(Path.Combine(dir!, ".oculto")));
+            Assert.True(Directory.Exists(mount));
+            Assert.Empty(Directory.EnumerateFileSystemEntries(mount));
+        }
+        finally { try { Directory.Delete(Path.GetDirectoryName(mount)!, true); } catch { } }
+    }
+
     [Fact]
     public void Copia_usa_reflink_quando_o_sistema_de_arquivos_permite()
     {
