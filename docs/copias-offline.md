@@ -19,13 +19,30 @@ por outro processo, nada é gravado.
   - itens só locais (temporários);
   - qualquer caminho que já exista na pasta real (nunca sobrescreve);
   - itens com exclusão aguardando confirmação (e o que estiver dentro deles): o usuário os apagou com o app fechado.
-- O manifesto vai para a tabela `offline_copies` (caminho, lid, tamanho, mtime em ticks).
+- O manifesto vai para a tabela `offline_copies` (caminho, lid, tamanho, mtime em ticks), **aos poucos**: cada
+  entrada é gravada ANTES de o item aparecer na pasta real. Pastas: registra e cria. Arquivos: copia com nome
+  temporário (`.craftdriver-parcial-<lid>`), registra e só então renomeia para o nome final (sem sobrescrever).
+  `offline_copies_state.complete` só vira 1 no fim. Assim, se o processo morrer no meio (desligamento que não
+  esperou), nada fica na pasta com o nome final sem estar no manifesto, e nenhum arquivo pela metade tem nome final.
+
+## Desligar o PC com o app aberto (`ShutdownInhibitor`)
+
+Ao iniciar, o app pega uma trava **delay** de desligamento no logind (`Inhibit("shutdown", …, "delay")`, visível em
+`systemd-inhibit --list`). No sinal `PrepareForShutdown(true)` ele faz o mesmo encerramento do SIGTERM/"Sair"
+(desmontar, gravar as cópias, parar o motor); o processo saindo fecha o descritor e o desligamento segue. O logind
+espera no máximo `InhibitDelayMaxSec` (5 s por padrão): é o bastante com reflink (btrfs/XFS); em outros sistemas de
+arquivos e muitos fixados grandes a cópia pode não terminar, e aí vale o caso "interrompido" abaixo. Sem logind
+(contêiner, outro init) só fica uma linha no log. `CRAFTDRIVER_NO_LOGIND=1` desliga (os UiTests usam).
 
 ## Ao abrir (`AppHost.Start` → `OfflineCopies.Import`, ANTES de `SyncEngine.Start`)
 
 A ordem é obrigatória, e o `Import` recusa se o motor já tiver drives. Com o delta rodando antes, um arquivo editado
 nos dois lados adotaria a versão da nuvem, e o envio seguinte a sobrescreveria. Como a importação vem antes, o item
 fica `Dirty` com o eTag antigo, e o envio recebe 412, o que gera a **cópia de conflito** de sempre.
+
+**Encerramento interrompido** (`complete` = 0): o que está no manifesto e falta na pasta nunca chegou a ser copiado,
+então não vira pendência de exclusão nem origem de "mover"; arquivos `.craftdriver-parcial-*` são apagados (o
+original está no cache). O resto (edições, novos) segue a tabela abaixo.
 
 Cada mudança feita na pasta real com o app fechado é tratada assim:
 
@@ -39,6 +56,13 @@ Cada mudança feita na pasta real com o app fechado é tratada assim:
 
 Depois disso, as cópias saem da pasta real e o manifesto é apagado, então a montagem volta a ficar sobre uma pasta
 vazia. Se a pasta estiver montada por outro processo, nada é importado: tenta de novo na próxima abertura.
+
+## Sobras sem manifesto (`OfflineCopies.MoveAsideLeftovers`, antes de montar)
+
+Se depois da importação a pasta real ainda não estiver vazia (cópias de um encerramento da 0.4.1 interrompido, que
+gravava o manifesto só no fim, ou algo posto lá com o app fechado), o conteúdo vai para
+`<montagem> (recuperados)/<data>` com um erro em Atividade, e a montagem sobe. Antes o FUSE recusava a pasta ("não
+está vazio") e o app ficava sem montagem. Só na montagem real (`AppHost.MountWithFuse`); pasta montada nunca é mexida.
 
 ## Apagados com o app fechado: o app pergunta
 
@@ -63,11 +87,13 @@ API (`Core/Sync/OfflineDeletions.cs`), usada pelo app na abertura depois de o mo
 
 ## Limites
 
-- Só vale para encerramento normal. Se o app travar ou for morto (`kill -9`, queda de energia, sessão encerrada à
-  força), as cópias não são gravadas e a pasta fica vazia, como antes. Não há gravação contínua das cópias com o app
+- Só vale para encerramento normal (inclusive desligar o PC, pela trava do logind). Se o app travar ou for morto antes
+  (`kill -9`, queda de energia), as cópias não são gravadas, ou ficam pela metade e são limpas na abertura seguinte. Não há gravação contínua das cópias com o app
   aberto (fica para depois, se valer o custo).
 - Arquivos somente online não aparecem com o app fechado. Não existe marcador de "arquivo na nuvem".
 - Apagar com o app fechado só vale depois de o usuário confirmar na abertura. Até lá o item continua na montagem.
 
-Testes: `tests/CraftDriver.Tests/OfflineCopiesTests.cs` e `AnaliseR4OfflineTests` (sem FUSE: a "montagem" é uma pasta comum, e o "reabrir" usa
+Testes: `tests/CraftDriver.Tests/OfflineCopiesTests.cs` (inclusive queda em cada etapa da cópia e sobras sem
+manifesto), `tests/CraftDriver.UiTests/ShutdownInhibitorTests.cs` (logind falso num dbus-daemon privado, com o
+descritor da trava passando de verdade) e `AnaliseR4OfflineTests` (sem FUSE: a "montagem" é uma pasta comum, e o "reabrir" usa
 o mesmo banco/cache com `Harness(configure, dir, remote, beforeStart)`).

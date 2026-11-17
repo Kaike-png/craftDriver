@@ -6,6 +6,15 @@ acrescentada automaticamente.
 
 ## [Não lançado]
 
+### Correções
+- **Desligar o PC com o CraftDriver aberto podia impedir a montagem na abertura seguinte** ("O ponto de montagem não
+  está vazio"). O sistema desmontava `~/OneDrive` e encerrava o app no meio da gravação das cópias offline dos
+  fixados, deixando arquivos pela metade numa pasta que o app não reconhecia. Agora:
+  - o CraftDriver pede ao sistema (logind) para esperar o encerramento antes de desligar ou reiniciar;
+  - as cópias são registradas uma a uma, e uma gravação interrompida é reconhecida e limpa na abertura seguinte;
+  - se ainda houver algo na pasta de montagem que não seja do app, vai para `~/OneDrive (recuperados)` e a montagem
+    sobe normalmente, em vez de falhar.
+
 ## [0.4.1] - 2026-11-12
 
 ### Correções

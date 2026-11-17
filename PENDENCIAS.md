@@ -1162,6 +1162,16 @@ coverlet (134) e classes de UI que trocam `CRAFTDRIVER_HOME` fora da coleção s
   Keep, item que sumiu), `Rodada4PUiTests` (9); mutações pegas. Suíte inteira verde no ubuntu:24.04 (libfuse 3.14).
   **Continua:** app morto/travado não grava as cópias (limite; `docs/copias-offline.md`). CI ainda não rodou.
 
+- [x] **Desligar o PC no meio das cópias offline travava a montagem seguinte** (visto em 16/11: power key → o systemd
+  desmontou `~/OneDrive` e matou o app depois de 159 de 516 cópias; sem manifesto, a abertura recusou a pasta "não
+  vazia"). **Feito:** manifesto incremental (entrada antes do item aparecer; arquivo via `.craftdriver-parcial-<lid>`
+  + rename) com marca `complete`; `Import` interrompido não gera exclusões/moves e apaga parciais;
+  `MoveAsideLeftovers` antes da montagem real; trava delay do logind (`ShutdownInhibitor`, PrepareForShutdown → mesmo
+  encerramento do SIGTERM). Provas: `OfflineCopiesTests` (queda em 4 etapas + sobras), `ShutdownInhibitorTests`
+  (dbus-daemon privado, fd real); mutações M1–M4 e I1–I4 pegas (criar a pasta antes de registrá-la é equivalente: o
+  importador reconhece pasta existente). **Não verificado:** desligamento real do PC com a versão nova; 5 s do logind
+  sem reflink com muitos fixados grandes.
+
 ## Ordem sugerida (rodada 3 — concluída; §24.9 e §24.10(b) feitos na rodada 4, §24.10(a) aberto)
 
 1. §24.1 (SlowOps — syscall pendurada), §25.1–25.3 (relaunch órfão, `.lock` em disco cheio, `install-user.sh` com app aberto)
