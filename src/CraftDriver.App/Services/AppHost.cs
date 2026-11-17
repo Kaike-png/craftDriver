@@ -48,7 +48,7 @@ public sealed class AppHost
     public bool Mounted => IsMountedProbe();
 
     // costuras da montagem (testes: montagem ocupada / que falha depois de começar, sem FUSE de verdade)
-    internal Func<VirtualFs, string, Task> MountFunc { get; set; } = (fs, mp) => FuseHost.MountAsync(fs, mp);
+    internal Func<VirtualFs, string, Task> MountFunc { get; set; }
     internal Func<bool> IsMountedProbe { get; set; } = () => FuseHost.IsMounted;
     internal Action UnmountFunc { get; set; } = FuseHost.Unmount;
     /// <summary>Quanto esperar o FUSE desmontar (com EBUSY o fusermount falha e a montagem continua).</summary>
@@ -104,6 +104,7 @@ public sealed class AppHost
         Fs = new VirtualFs(Engine);
         Actions = new ItemActions(Engine, Fs);
         FuseHost.Log = s => Activity.Debug(s);
+        MountFunc = MountWithFuse;
         Engine.MassDeleteDetected += d =>
         {
             Notify("CraftDriver — muitos arquivos apagados",
@@ -298,6 +299,18 @@ public sealed class AppHost
             MountError = ex.Message;
             Activity.Add(ActivityKind.Error, "Falha ao montar: " + ex.Message);
         }
+    }
+
+    /// <summary>
+    /// Montagem real. Pasta com sobras (cópias offline de um encerramento antigo que caiu antes de existir o manifesto
+    /// incremental, ou algo posto lá com o app fechado): o FUSE recusaria a pasta não vazia e o app ficaria sem a
+    /// montagem — vão para "(recuperados)" e a montagem sobe. Só aqui: os testes trocam o MountFunc e nunca mexem na pasta.
+    /// </summary>
+    Task MountWithFuse(VirtualFs fs, string mountPoint)
+    {
+        if (OfflineCopies.MoveAsideLeftovers(mountPoint) is { } dir)
+            Activity.Add(ActivityKind.Error, $"A pasta {mountPoint} não estava vazia; o que havia nela foi movido para {dir}");
+        return FuseHost.MountAsync(fs, mountPoint);
     }
 
     /// <summary>Desmonta; devolve false se a montagem continua (pasta em uso).</summary>

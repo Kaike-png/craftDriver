@@ -13,7 +13,12 @@ static class NoRealNotifications
 {
     /// <summary>Nenhum teste deste projeto pode mandar notificação para a área de trabalho de verdade.</summary>
     [ModuleInitializer]
-    internal static void Init() => Environment.SetEnvironmentVariable("CRAFTDRIVER_NO_NOTIFY", "1");
+    internal static void Init()
+    {
+        Environment.SetEnvironmentVariable("CRAFTDRIVER_NO_NOTIFY", "1");
+        // app real lançado pelos testes: não pega a trava de desligamento do logind do sistema
+        Environment.SetEnvironmentVariable("CRAFTDRIVER_NO_LOGIND", "1");
+    }
 }
 
 /// <summary>

@@ -29,6 +29,19 @@ sealed class Program
             Signals.Add(System.Runtime.InteropServices.PosixSignalRegistration.Create(sig, SignalGate.Handle));
     }
 
+    static LogindDBus? _logind;
+    static ShutdownInhibitor? _shutdownInhibitor;
+
+    /// <summary>Trava "delay" de desligamento do logind (ver <see cref="ShutdownInhibitor"/>); em segundo plano, nunca atrasa o início.</summary>
+    static void StartShutdownInhibitor()
+    {
+        if (Environment.GetEnvironmentVariable("CRAFTDRIVER_NO_LOGIND") == "1") return; // testes com o app real
+        _logind = new LogindDBus();
+        _shutdownInhibitor = new ShutdownInhibitor(_logind, () => OnShutdownSignal?.Invoke(),
+            msg => { if (App.Host?.Activity is { } a) a.Debug(msg); else Console.Error.WriteLine("CraftDriver: " + msg); });
+        _ = _shutdownInhibitor.StartAsync();
+    }
+
     static void DeleteSocket()
     {
         try { File.Delete(AppPaths.SocketPath); } catch { }
@@ -98,6 +111,8 @@ sealed class Program
             // antes o término padrão pulava o finally e o socket ficava (§22.9)
             OnShutdownSignal = ExitWhileStarting;
             RegisterShutdownSignals();
+            // desligar/reiniciar o PC: o logind espera o mesmo encerramento do SIGTERM (cópias offline completas)
+            StartShutdownInhibitor();
             DesktopIntegration.RemoveLegacyLeftovers();
 
             if (headless)
@@ -120,6 +135,8 @@ sealed class Program
         finally
         {
             OnShutdownSignal = null;
+            _shutdownInhibitor?.Dispose(); // depois do encerramento: solta a trava (o desligamento segue)
+            _logind?.Dispose();
             early?.Dispose(); // normalmente já fechado pelo AppHost; saiu antes dele (espera abandonada): apaga o socket
             InstanceLocks.Release();
             _instance.Dispose();
