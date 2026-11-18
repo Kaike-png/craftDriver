@@ -931,7 +931,7 @@ public static unsafe class FuseHost
 
         if (_ops == IntPtr.Zero) _ops = BuildOps();
 
-        var argv = new[] { "craftdriver", "-o", "fsname=craftdriver,subtype=onedrive,default_permissions,auto_unmount" };
+        var argv = new[] { "craftdriver", "-o", "fsname=/dev/craftdriver,subtype=onedrive,default_permissions,auto_unmount" };
         var ptrs = argv.Select(a => Marshal.StringToCoTaskMemUTF8(a)).ToArray();
         var argvPtr = (IntPtr*)NativeMemory.Alloc((nuint)((ptrs.Length + 1) * sizeof(IntPtr)));
         for (var i = 0; i < ptrs.Length; i++) argvPtr[i] = ptrs[i];

@@ -98,7 +98,7 @@ def _unescape_mount(field):
 
 
 def craftdriver_mounts(mounts_file=None):
-    """Pontos de montagem do CraftDriver (fsname=craftdriver) na tabela de montagens deste processo."""
+    """Pontos de montagem do CraftDriver (fsname=craftdriver|/dev/craftdriver|/dev/fuse) na tabela de montagens deste processo."""
     try:
         with open(mounts_file or MOUNTS_FILE, encoding="utf-8", errors="surrogateescape") as f:
             lines = f.read().splitlines()
@@ -107,8 +107,15 @@ def craftdriver_mounts(mounts_file=None):
     mounts = []
     for line in lines:
         parts = line.split()
-        if len(parts) >= 3 and parts[0] == FSNAME and parts[2].startswith("fuse"):
-            mounts.append(_unescape_mount(parts[1]))
+        if len(parts) >= 3 and parts[2].startswith("fuse"):
+            dev = parts[0]
+            fstype = parts[2]
+            if (
+                dev in (FSNAME, "/dev/" + FSNAME)
+                or fstype in ("fuse.onedrive", "fuse.craftdriver")
+                or fstype.startswith(("fuse.onedrive.", "fuse.craftdriver."))
+            ):
+                mounts.append(_unescape_mount(parts[1]))
     return mounts
 
 

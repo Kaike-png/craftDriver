@@ -46,7 +46,21 @@ QStringList craftdriverMounts()
     const QList<QByteArray> lines = f.readAll().split('\n');
     for (const QByteArray &line : lines) {
         const QList<QByteArray> parts = line.split(' ');
-        if (parts.size() < 3 || parts.at(0) != "craftdriver" || !parts.at(2).startsWith("fuse")) {
+        if (parts.size() < 3) {
+            continue;
+        }
+        const QByteArray &dev = parts.at(0);
+        const QByteArray &fstype = parts.at(2);
+        if (!fstype.startsWith("fuse")) {
+            continue;
+        }
+        const bool isCraftDriver = (dev == "craftdriver" ||
+                                    dev == "/dev/craftdriver" ||
+                                    fstype == "fuse.onedrive" ||
+                                    fstype.startsWith("fuse.onedrive.") ||
+                                    fstype == "fuse.craftdriver" ||
+                                    fstype.startsWith("fuse.craftdriver."));
+        if (!isCraftDriver) {
             continue;
         }
         QString mp = QFile::decodeName(parts.at(1));

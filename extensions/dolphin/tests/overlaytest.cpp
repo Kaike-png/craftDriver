@@ -128,7 +128,7 @@ private Q_SLOTS:
         QCOMPARE(err, ENOENT);
     }
 
-    // Tabela de montagens: só fsname=craftdriver em fuse.*, com os escapes octais do /proc/mounts.
+    // Tabela de montagens: craftdriver, /dev/craftdriver e /dev/fuse em fuse.onedrive/fuse.*, com os escapes octais do /proc/mounts.
     void mountTable()
     {
         const QString table = m_tmp->filePath(QStringLiteral("mounts"));
@@ -137,17 +137,21 @@ private Q_SLOTS:
         f.write("/dev/sda1 / ext4 rw 0 0\n"
                 "craftdriver /home/u/One\\040Drive fuse.onedrive rw,nosuid 0 0\n"
                 "outrofs /home/u/remoto fuse.sshfs rw 0 0\n"
-                "craftdriver /mnt/cd/ fuse.onedrive rw 0 0\n");
+                "/dev/craftdriver /mnt/cd/ fuse.onedrive rw 0 0\n"
+                "/dev/fuse /mnt/fuse_od fuse.onedrive rw 0 0\n"
+                "/dev/fuse /mnt/fuse_ssh fuse.sshfs rw 0 0\n");
         f.close();
         qputenv("CRAFTDRIVER_MOUNTS_FILE", QFile::encodeName(table));
         const QStringList mounts = CraftDriver::craftdriverMounts();
         qputenv("CRAFTDRIVER_MOUNTS_FILE", m_mountsFile);
-        QCOMPARE(mounts, (QStringList{QStringLiteral("/home/u/One Drive"), QStringLiteral("/mnt/cd/")}));
+        QCOMPARE(mounts, (QStringList{QStringLiteral("/home/u/One Drive"), QStringLiteral("/mnt/cd/"), QStringLiteral("/mnt/fuse_od")}));
         QVERIFY(CraftDriver::insideMount(QStringLiteral("/home/u/One Drive"), mounts));
         QVERIFY(CraftDriver::insideMount(QStringLiteral("/home/u/One Drive/a/b.txt"), mounts));
         QVERIFY(CraftDriver::insideMount(QStringLiteral("/mnt/cd/x"), mounts));
+        QVERIFY(CraftDriver::insideMount(QStringLiteral("/mnt/fuse_od/x"), mounts));
         QVERIFY(!CraftDriver::insideMount(QStringLiteral("/home/u/One Drive2/x"), mounts));
         QVERIFY(!CraftDriver::insideMount(QStringLiteral("/home/u/remoto/x"), mounts));
+        QVERIFY(!CraftDriver::insideMount(QStringLiteral("/mnt/fuse_ssh/x"), mounts));
     }
 
     // Mesmo caminho do KFileItemModelRolesUpdater do Dolphin 26.08.
