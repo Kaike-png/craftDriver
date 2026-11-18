@@ -1223,11 +1223,36 @@ public sealed class VirtualFs
 
     public ItemStatus StatusOf(Item it)
     {
-        if (it.IsDir) return it.LocalOnly ? ItemStatus.LocalOnly : (Db.IsEffectivelyPinnedVfs(it.Lid) ? ItemStatus.AlwaysAvailable : ItemStatus.Folder);
         if (it.LocalOnly) return ItemStatus.LocalOnly;
         if (it.Dirty || it.ItemId == null) return ItemStatus.Syncing;
+        if (it.IsDir) return StatusOfDirectory(it);
         if (Db.IsEffectivelyPinnedVfs(it.Lid)) return ItemStatus.AlwaysAvailable;
         return SyncEngine.IsContentCurrent(it, _e.Cache) ? ItemStatus.Available : ItemStatus.OnlineOnly;
+    }
+
+    ItemStatus StatusOfDirectory(Item it)
+    {
+        var subtree = Db.GetSubtree(it.Lid);
+        if (subtree.Any(x => x.Dirty || x.ItemId == null)) return ItemStatus.Syncing;
+        if (Db.IsEffectivelyPinnedVfs(it.Lid)) return ItemStatus.AlwaysAvailable;
+        var files = subtree.Where(x => !x.IsDir).ToList();
+        if (files.Count == 0) return ItemStatus.Available;
+        var hasAvailable = files.Any(x => SyncEngine.IsContentCurrent(x, _e.Cache));
+        var hasOnline = files.Any(x => !SyncEngine.IsContentCurrent(x, _e.Cache));
+        if (hasAvailable) return ItemStatus.Available;
+        if (hasOnline) return ItemStatus.OnlineOnly;
+        return ItemStatus.Available;
+    }
+
+    public ItemStatus StatusOfVirtualRoot()
+    {
+        if (_e.Status == EngineStatus.Syncing || Db.PendingOps() > 0) return ItemStatus.Syncing;
+        foreach (var d in MountedDrives)
+        {
+            var subtree = Db.GetSubtree(d.RootLid);
+            if (subtree.Any(x => x.Dirty || x.ItemId == null)) return ItemStatus.Syncing;
+        }
+        return ItemStatus.Available;
     }
 
     public static string Describe(ItemStatus s) => s switch
@@ -1244,7 +1269,19 @@ public sealed class VirtualFs
     {
         if (!XattrNames.Contains(name, StringComparer.Ordinal)) return null; // KIO pede user.xdg.*, ACL e SELinux
         var n = Resolve(path);
-        if (n?.Item == null) return null;
+        if (n?.Item == null)
+        {
+            if (n?.IsVirtualRoot == true)
+            {
+                return name switch
+                {
+                    "user.onedrive.status" => StatusOfVirtualRoot().ToString(),
+                    PinnedXattr => "0",
+                    _ => null,
+                };
+            }
+            return null;
+        }
         return name switch
         {
             "user.onedrive.status" => StatusOf(n.Value.Item).ToString(),

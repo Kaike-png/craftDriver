@@ -1,5 +1,6 @@
 #include "craftdriverstatus.h"
 
+#include <QDir>
 #include <QFile>
 #include <QRegularExpression>
 
@@ -60,12 +61,16 @@ QStringList craftdriverMounts()
 
 bool insideMount(const QString &localPath, const QStringList &mounts)
 {
+    QString path = localPath;
+    while (path.size() > 1 && path.endsWith(QLatin1Char('/'))) {
+        path.chop(1);
+    }
     for (const QString &mount : mounts) {
         QString root = mount;
         while (root.size() > 1 && root.endsWith(QLatin1Char('/'))) {
             root.chop(1);
         }
-        if (localPath == root || localPath.startsWith(root == QLatin1String("/") ? root : root + QLatin1Char('/'))) {
+        if (path == root || path.startsWith(root == QLatin1String("/") ? root : root + QLatin1Char('/'))) {
             return true;
         }
     }
@@ -77,15 +82,23 @@ bool insideMountResolved(const QString &localPath, const QStringList &mounts, QH
     if (mounts.isEmpty()) {
         return false;
     }
-    if (insideMount(localPath, mounts)) {
+    const QString clean = QDir::cleanPath(localPath);
+    if (insideMount(clean, mounts)) {
         return true;
     }
-    const int slash = localPath.lastIndexOf(QLatin1Char('/'));
+    // Caso a própria pasta (ou raiz da montagem) seja um symlink
+    char selfBuf[PATH_MAX];
+    if (::realpath(QFile::encodeName(clean).constData(), selfBuf)) {
+        if (insideMount(QFile::decodeName(selfBuf), mounts)) {
+            return true;
+        }
+    }
+    const int slash = clean.lastIndexOf(QLatin1Char('/'));
     if (slash < 0) {
         return false;
     }
-    const QString parent = slash == 0 ? QStringLiteral("/") : localPath.left(slash);
-    const QString name = localPath.mid(slash + 1);
+    const QString parent = slash == 0 ? QStringLiteral("/") : clean.left(slash);
+    const QString name = clean.mid(slash + 1);
     QString real;
     if (dirCache && dirCache->contains(parent)) {
         real = dirCache->value(parent);
@@ -116,20 +129,29 @@ QString emblemFor(const QString &status)
     //   vcs-normal              círculo verde com "✓"   → sempre disponível (fixado)
     //   vcs-update-required     seta circular laranja   → sincronizando
     //   emblem-unavailable      "X" cinza               → somente local (não sincroniza)
-    if (status == QLatin1String("OnlineOnly")) {
+    //   emblem-important        "!" vermelho            → erro
+    if (status.compare(QLatin1String("OnlineOnly"), Qt::CaseInsensitive) == 0 ||
+        status.compare(QLatin1String("cloud-only"), Qt::CaseInsensitive) == 0) {
         return QStringLiteral("folder-cloud");
     }
-    if (status == QLatin1String("Available")) {
+    if (status.compare(QLatin1String("Available"), Qt::CaseInsensitive) == 0 ||
+        status.compare(QLatin1String("synced"), Qt::CaseInsensitive) == 0) {
         return QStringLiteral("emblem-default-symbolic");
     }
-    if (status == QLatin1String("AlwaysAvailable")) {
+    if (status.compare(QLatin1String("AlwaysAvailable"), Qt::CaseInsensitive) == 0 ||
+        status.compare(QLatin1String("pinned"), Qt::CaseInsensitive) == 0) {
         return QStringLiteral("vcs-normal");
     }
-    if (status == QLatin1String("Syncing")) {
+    if (status.compare(QLatin1String("Syncing"), Qt::CaseInsensitive) == 0 ||
+        status.compare(QLatin1String("syncing"), Qt::CaseInsensitive) == 0) {
         return QStringLiteral("vcs-update-required");
     }
-    if (status == QLatin1String("LocalOnly")) {
+    if (status.compare(QLatin1String("LocalOnly"), Qt::CaseInsensitive) == 0) {
         return QStringLiteral("emblem-unavailable");
+    }
+    if (status.compare(QLatin1String("Error"), Qt::CaseInsensitive) == 0 ||
+        status.compare(QLatin1String("error"), Qt::CaseInsensitive) == 0) {
+        return QStringLiteral("emblem-important");
     }
     return {}; // "Folder" e valores desconhecidos: sem emblema
 }

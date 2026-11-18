@@ -204,6 +204,28 @@ public sealed partial class StateDb : IDisposable
         lock (Lock) _c.Dispose();
     }
 
+    /// <summary>Flush rápido do WAL do SQLite com prazo curto (desligamento do sistema).</summary>
+    public void QuickFlush(TimeSpan? timeout = null)
+    {
+        var to = timeout ?? TimeSpan.FromSeconds(2);
+        try
+        {
+            var lockTaken = false;
+            Monitor.TryEnter(Lock, to, ref lockTaken);
+            if (lockTaken)
+            {
+                try
+                {
+                    using var cmd = Cmd(_c, "PRAGMA wal_checkpoint(PASSIVE);", []);
+                    cmd.CommandTimeout = (int)Math.Max(1, to.TotalSeconds);
+                    cmd.ExecuteNonQuery();
+                }
+                finally { Monitor.Exit(Lock); }
+            }
+        }
+        catch { }
+    }
+
     // ---------- helpers ----------
 
     void AddColumnIfMissing(string table, string columnDef)

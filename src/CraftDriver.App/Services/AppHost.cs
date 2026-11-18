@@ -319,10 +319,17 @@ public sealed class AppHost
         if (!Mounted) return true;
         var mountPoint = Config.MountPoint;
         UnmountFunc();
-        var deadline = Environment.TickCount64 + (long)UnmountTimeout.TotalMilliseconds;
-        if (_mountTask != null) await Task.WhenAny(_mountTask, Task.Delay(UnmountTimeout));
+        var deadline = Environment.TickCount64 + (long)Math.Min(UnmountTimeout.TotalMilliseconds, 2000);
+        if (_mountTask != null) await Task.WhenAny(_mountTask, Task.Delay(2000));
         // sem a task (ou ela terminou mas o kernel ainda não soltou): confere o estado real até o prazo
         while (Mounted && Environment.TickCount64 < deadline) await Task.Delay(50);
+        if (Mounted)
+        {
+            // Fallback imediato de lazy unmount se ainda estiver montado (pasta ocupada)
+            CraftDriver.Fuse.FuseHost.RunFusermount("-uz", mountPoint);
+            var lazyDeadline = Environment.TickCount64 + 1000;
+            while (Mounted && Environment.TickCount64 < lazyDeadline) await Task.Delay(50);
+        }
         Fs.CommitOpenWrites(); // fuse_session_exit não garante release dos fds abertos; antes de Engine.Stop no shutdown
         if (Fs.OpenHandles > 0) Activity.Add(ActivityKind.Info, "Havia arquivos abertos durante a desmontagem");
         if (!Mounted) return true;
@@ -398,10 +405,11 @@ public sealed class AppHost
         }
         await Step("timer", async () => { if (_sessionTimer != null) await _sessionTimer.DisposeAsync(); });
         await Step("atualizações", () => { Updates.Dispose(); return Task.CompletedTask; });
+        CraftDriver.Fuse.SlowOps.CancelPending();
+        await Step("motor", () => { Engine.Stop(); return Task.CompletedTask; });
         var wasMounted = Mounted; // só quem montou de verdade deixa cópias (testes/instância sem FUSE não mexem na pasta)
         await Step("desmontar", UnmountAsync);
         if (wasMounted) await Step("cópias offline", () => { MaterializeOfflineCopies(); return Task.CompletedTask; });
-        await Step("motor", () => { Engine.Stop(); return Task.CompletedTask; });
         await Step("IPC", () => { _ipc?.Dispose(); return Task.CompletedTask; });
         if (!Config.ReadOnly) TrySaveConfig("Configuração ao encerrar"); // somente leitura: já avisado ao iniciar
         Activity.Log("INFO", "Encerrado.");
@@ -684,7 +692,17 @@ public sealed class AppHost
                 foreach (var p in req.Args)
                 {
                     var item = ItemFromLocalPath(p);
-                    if (item == null) { ok = false; lines.Add($"{p}: fora da pasta sincronizada ou não encontrado"); continue; }
+                    if (item == null)
+                    {
+                        if (req.Cmd == "status" && MountPath.RelativeToMount(p, Config.MountPoint) is "/" or "")
+                        {
+                            lines.Add($"{p}: {VirtualFs.Describe(Fs.StatusOfVirtualRoot())}");
+                            continue;
+                        }
+                        ok = false;
+                        lines.Add($"{p}: fora da pasta sincronizada ou não encontrado");
+                        continue;
+                    }
                     switch (req.Cmd)
                     {
                         case "pin":

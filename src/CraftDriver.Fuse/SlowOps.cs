@@ -21,11 +21,23 @@ public static class SlowOps
 
     public static void Run(Action work, bool network = false) => (network ? Rede : Local).Run(work);
 
+    /// <summary>Descarta trabalhos pendentes nas filas ao encerrar.</summary>
+    public static void CancelPending()
+    {
+        Rede.Clear();
+        Local.Clear();
+    }
+
     sealed class Fila(int limite, string nome)
     {
         readonly ConcurrentQueue<Action> _queue = new();
         readonly SemaphoreSlim _signal = new(0);
         int _threads, _idle;
+
+        public void Clear()
+        {
+            while (_queue.TryDequeue(out _)) { }
+        }
 
         public int Threads => Volatile.Read(ref _threads);
         public string Estado => $"{Threads} threads/{Volatile.Read(ref _idle)} ociosas/{_queue.Count} na fila";

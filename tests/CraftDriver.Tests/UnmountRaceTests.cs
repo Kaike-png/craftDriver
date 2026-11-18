@@ -41,6 +41,42 @@ public class UnmountRaceTests
         File.Delete(summary);
         Assert.StartsWith($"rodadas={rounds} ", text);
     }
+
+    [Fact]
+    public void Fallback_para_lazy_unmount_quando_mountpoint_ocupado_no_encerramento()
+    {
+        RealFuse.Require();
+        using var h = new Harness();
+        var mnt = Path.Combine(h.Dir, "mnt");
+        var loop = FuseHost.MountAsync(h.Fs, mnt);
+        var root = Path.Combine(mnt, Harness.Name);
+        Harness.WaitUntil(() => Directory.Exists(root), "montagem visível");
+
+        var holder = Proc.Start(Proc.Python, ["-c", "import os, time, sys; os.chdir(sys.argv[1]); print('preso', flush=True); time.sleep(15)", root], h.Dir);
+        try
+        {
+            Assert.Equal("preso", holder.StandardOutput.ReadLine());
+            var oldPrazo = FuseHost.PrazoDesmontarOcupada;
+            try
+            {
+                FuseHost.PrazoDesmontarOcupada = TimeSpan.FromMilliseconds(500);
+                FuseHost.Unmount();
+                Assert.True(loop.Wait(TimeSpan.FromSeconds(10)), "loop do FUSE não terminou após fallback de lazy unmount");
+                Assert.False(FuseHost.IsMounted, "FuseHost continua marcado como montado");
+            }
+            finally
+            {
+                FuseHost.PrazoDesmontarOcupada = oldPrazo;
+            }
+        }
+        finally
+        {
+            Proc.Kill(holder);
+            FuseHost.Unmount();
+            loop.Wait(TimeSpan.FromSeconds(5));
+            h.Engine.Stop();
+        }
+    }
 }
 
 /// <summary>

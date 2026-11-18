@@ -94,6 +94,11 @@ private Q_SLOTS:
         QCOMPARE(CraftDriver::emblemFor(QStringLiteral("Syncing")), QStringLiteral("vcs-update-required"));
         QCOMPARE(CraftDriver::emblemFor(QStringLiteral("LocalOnly")), QStringLiteral("emblem-unavailable"));
         QCOMPARE(CraftDriver::emblemFor(QStringLiteral("Folder")), QString());
+        QCOMPARE(CraftDriver::emblemFor(QStringLiteral("synced")), QStringLiteral("emblem-default-symbolic"));
+        QCOMPARE(CraftDriver::emblemFor(QStringLiteral("syncing")), QStringLiteral("vcs-update-required"));
+        QCOMPARE(CraftDriver::emblemFor(QStringLiteral("pinned")), QStringLiteral("vcs-normal"));
+        QCOMPARE(CraftDriver::emblemFor(QStringLiteral("cloud-only")), QStringLiteral("folder-cloud"));
+        QCOMPARE(CraftDriver::emblemFor(QStringLiteral("Error")), QStringLiteral("emblem-important"));
         QCOMPARE(CraftDriver::emblemFor(QStringLiteral("Inexistente")), QString());
         QCOMPARE(CraftDriver::emblemFor(QString()), QString());
     }
@@ -310,6 +315,62 @@ private Q_SLOTS:
         const QUrl u = QUrl::fromLocalFile(link + QStringLiteral("/via-link.txt"));
         QCOMPARE(m_plugin->getOverlays(u), QStringList());
         QCOMPARE(waitFor(spy, u, 3000), QStringList{QStringLiteral("folder-cloud")});
+    }
+
+    // Pastas (subpastas sincronizadas, em sincronização, fixadas e raiz do mountpoint) recebem emblemas.
+    void folderOverlays()
+    {
+        QVERIFY(m_plugin);
+        QSignalSpy spy(m_plugin, &KOverlayIconPlugin::overlaysChanged);
+
+        const QString dirSynced = m_dir.filePath(QStringLiteral("subpasta_synced"));
+        const QString dirSyncing = m_dir.filePath(QStringLiteral("subpasta_syncing"));
+        const QString dirPinned = m_dir.filePath(QStringLiteral("subpasta_pinned"));
+        const QString dirCloud = m_dir.filePath(QStringLiteral("subpasta_cloud"));
+        const QString mountRoot = m_dir.path();
+
+        QVERIFY(m_dir.mkdir(QStringLiteral("subpasta_synced")));
+        QVERIFY(TestUtil::setStatus(dirSynced, QStringLiteral("Available")));
+
+        QVERIFY(m_dir.mkdir(QStringLiteral("subpasta_syncing")));
+        QVERIFY(TestUtil::setStatus(dirSyncing, QStringLiteral("Syncing")));
+
+        QVERIFY(m_dir.mkdir(QStringLiteral("subpasta_pinned")));
+        QVERIFY(TestUtil::setStatus(dirPinned, QStringLiteral("AlwaysAvailable")));
+
+        QVERIFY(m_dir.mkdir(QStringLiteral("subpasta_cloud")));
+        QVERIFY(TestUtil::setStatus(dirCloud, QStringLiteral("OnlineOnly")));
+
+        QVERIFY(TestUtil::setStatus(mountRoot, QStringLiteral("Available")));
+
+        const QUrl uSynced = QUrl::fromLocalFile(dirSynced);
+        const QUrl uSyncing = QUrl::fromLocalFile(dirSyncing);
+        const QUrl uPinned = QUrl::fromLocalFile(dirPinned);
+        const QUrl uCloud = QUrl::fromLocalFile(dirCloud);
+        const QUrl uRoot = QUrl::fromLocalFile(mountRoot);
+        // Também testar URL de pasta com barra final
+        const QUrl uSyncedSlash = QUrl::fromLocalFile(dirSynced + QLatin1Char('/'));
+
+        // 1ª chamada assíncrona
+        QCOMPARE(m_plugin->getOverlays(uSynced), QStringList());
+        QCOMPARE(m_plugin->getOverlays(uSyncing), QStringList());
+        QCOMPARE(m_plugin->getOverlays(uPinned), QStringList());
+        QCOMPARE(m_plugin->getOverlays(uCloud), QStringList());
+        QCOMPARE(m_plugin->getOverlays(uRoot), QStringList());
+
+        QCOMPARE(waitFor(spy, uSynced, 3000), QStringList{QStringLiteral("emblem-default-symbolic")});
+        QCOMPARE(waitFor(spy, uSyncing, 3000), QStringList{QStringLiteral("vcs-update-required")});
+        QCOMPARE(waitFor(spy, uPinned, 3000), QStringList{QStringLiteral("vcs-normal")});
+        QCOMPARE(waitFor(spy, uCloud, 3000), QStringList{QStringLiteral("folder-cloud")});
+        QCOMPARE(waitFor(spy, uRoot, 3000), QStringList{QStringLiteral("emblem-default-symbolic")});
+
+        // Chamadas subsequentes devolvem o cache
+        QCOMPARE(m_plugin->getOverlays(uSynced), QStringList{QStringLiteral("emblem-default-symbolic")});
+        QCOMPARE(m_plugin->getOverlays(uSyncedSlash), QStringList{QStringLiteral("emblem-default-symbolic")});
+        QCOMPARE(m_plugin->getOverlays(uSyncing), QStringList{QStringLiteral("vcs-update-required")});
+        QCOMPARE(m_plugin->getOverlays(uPinned), QStringList{QStringLiteral("vcs-normal")});
+        QCOMPARE(m_plugin->getOverlays(uCloud), QStringList{QStringLiteral("folder-cloud")});
+        QCOMPARE(m_plugin->getOverlays(uRoot), QStringList{QStringLiteral("emblem-default-symbolic")});
     }
 };
 

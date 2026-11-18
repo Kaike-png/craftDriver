@@ -20,16 +20,37 @@ public interface ILogindShutdown
 /// gravar as cópias dos fixados, parar o motor. O processo saindo fecha o descritor e solta a trava.
 /// Sem logind (contêiner, outro init) só registra no log: o resto do app não depende disso.
 /// </summary>
-public sealed class ShutdownInhibitor(ILogindShutdown logind, Action quit, Action<string>? log = null) : IDisposable
+public sealed class ShutdownInhibitor : IDisposable
 {
     public const string Why = "Gravar as cópias offline dos arquivos fixados e desmontar a pasta do OneDrive";
 
+    readonly ILogindShutdown _logind;
+    readonly Action _quit;
+    readonly Action<string>? _log;
+    readonly Func<CancellationToken, Task>? _fastFlush;
     IDisposable? _lock, _watch;
     int _requested;
     volatile bool _disposed;
+    readonly CancellationTokenSource _cts = new();
+
+    public CancellationToken CancellationToken => _cts.Token;
+
+    public ShutdownInhibitor(ILogindShutdown logind, Action quit, Action<string>? log = null, Func<CancellationToken, Task>? fastFlush = null)
+    {
+        _logind = logind;
+        _quit = quit;
+        _log = log;
+        _fastFlush = fastFlush;
+    }
 
     /// <summary>Segurando a trava de desligamento?</summary>
-    public bool Holding => _lock != null && !_disposed;
+    public bool Holding
+    {
+        get
+        {
+            lock (this) return _lock != null && !_disposed;
+        }
+    }
 
     /// <summary>Quantas vezes o desligamento pediu o encerramento (no máximo 1 por desligamento).</summary>
     public int QuitRequests { get; private set; }
@@ -39,8 +60,8 @@ public sealed class ShutdownInhibitor(ILogindShutdown logind, Action quit, Actio
         try
         {
             // o sinal antes da trava: um desligamento que comece entre os dois ainda é visto
-            var watch = await logind.WatchPrepareForShutdownAsync(OnPrepareForShutdown).ConfigureAwait(false);
-            var held = await logind.InhibitShutdownDelayAsync("CraftDriver", Why).ConfigureAwait(false);
+            var watch = await _logind.WatchPrepareForShutdownAsync(OnPrepareForShutdown).ConfigureAwait(false);
+            var held = await _logind.InhibitShutdownDelayAsync("CraftDriver", Why).ConfigureAwait(false);
             lock (this)
             {
                 if (_disposed) { held.Dispose(); watch.Dispose(); return; }
@@ -50,12 +71,22 @@ public sealed class ShutdownInhibitor(ILogindShutdown logind, Action quit, Actio
         }
         catch (Exception ex)
         {
-            log?.Invoke($"Sem trava de desligamento do logind ({ex.GetType().Name}: {ex.Message}); " +
+            _log?.Invoke($"Sem trava de desligamento do logind ({ex.GetType().Name}: {ex.Message}); " +
                         "desligar o PC com o app aberto pode não deixar as cópias offline completas");
         }
     }
 
-    void OnPrepareForShutdown(bool starting)
+    /// <summary>Fecha/descarta imediatamente o File Descriptor da trava do inibidor.</summary>
+    public void ReleaseLock()
+    {
+        lock (this)
+        {
+            _lock?.Dispose();
+            _lock = null;
+        }
+    }
+
+    async void OnPrepareForShutdown(bool starting)
     {
         if (!starting)
         {
@@ -64,8 +95,25 @@ public sealed class ShutdownInhibitor(ILogindShutdown logind, Action quit, Actio
         }
         if (Interlocked.Exchange(ref _requested, 1) == 1 || _disposed) return;
         QuitRequests++;
-        log?.Invoke("Desligamento do sistema: encerrando o CraftDriver antes de o systemd desmontar a pasta");
-        quit();
+        _log?.Invoke("Desligamento do sistema: encerrando o CraftDriver antes de o systemd desmontar a pasta");
+        ShutdownSignalGate.SetShuttingDown();
+        _cts.Cancel();
+        _quit();
+
+        if (_fastFlush != null)
+        {
+            try
+            {
+                using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+                using var linked = CancellationTokenSource.CreateLinkedTokenSource(timeoutCts.Token, _cts.Token);
+                await _fastFlush(linked.Token).ConfigureAwait(false);
+            }
+            catch { }
+            finally
+            {
+                ReleaseLock();
+            }
+        }
     }
 
     public void Dispose()
@@ -73,8 +121,11 @@ public sealed class ShutdownInhibitor(ILogindShutdown logind, Action quit, Actio
         lock (this)
         {
             _disposed = true;
+            _cts.Cancel();
             _watch?.Dispose();
             _lock?.Dispose();
+            _lock = null;
+            ShutdownSignalGate.ResetShuttingDown();
         }
     }
 }

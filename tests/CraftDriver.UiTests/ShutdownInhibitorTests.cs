@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.IO.Pipes;
 using System.Runtime.InteropServices;
+using Avalonia.Headless.XUnit;
 using CraftDriver.App.Services;
 using Microsoft.Win32.SafeHandles;
 using Tmds.DBus.Protocol;
@@ -134,5 +135,119 @@ public class ShutdownInhibitorTests
         await inh.StartAsync().WaitAsync(TimeSpan.FromSeconds(15), TestContext.Current.CancellationToken);
         Assert.False(inh.Holding);
         Assert.Contains(log, l => l.Contains("logind", StringComparison.Ordinal));
+    }
+
+    sealed class TestWindow : Avalonia.Controls.Window
+    {
+        public bool TriggerClosing(Avalonia.Controls.WindowClosingEventArgs e)
+        {
+            OnClosing(e);
+            return e.Cancel;
+        }
+    }
+
+    static Avalonia.Controls.WindowClosingEventArgs CreateClosingArgs(Avalonia.Controls.WindowCloseReason reason)
+    {
+        var ctor = typeof(Avalonia.Controls.WindowClosingEventArgs).GetConstructor(
+            System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance,
+            null, [typeof(Avalonia.Controls.WindowCloseReason)], null);
+        if (ctor != null)
+        {
+            return (Avalonia.Controls.WindowClosingEventArgs)ctor.Invoke([reason]);
+        }
+        var emptyCtor = typeof(Avalonia.Controls.WindowClosingEventArgs).GetConstructor(
+            System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance,
+            null, Type.EmptyTypes, null);
+        var instance = (Avalonia.Controls.WindowClosingEventArgs)(emptyCtor?.Invoke([])
+            ?? System.Runtime.CompilerServices.RuntimeHelpers.GetUninitializedObject(typeof(Avalonia.Controls.WindowClosingEventArgs)));
+        var prop = typeof(Avalonia.Controls.WindowClosingEventArgs).GetProperty("CloseReason");
+        if (prop?.CanWrite == true) prop.SetValue(instance, reason);
+        else
+        {
+            var field = typeof(Avalonia.Controls.WindowClosingEventArgs).GetField("<CloseReason>k__BackingField",
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+            field?.SetValue(instance, reason);
+        }
+        return instance;
+    }
+
+    [AvaloniaFact]
+    public void Fechamento_da_janela_com_OSShutdown_nao_bloqueia_no_CloseToTrayBehavior()
+    {
+        ShutdownSignalGate.ResetShuttingDown();
+        var cfg = new CraftDriver.Core.Config.AppConfig();
+        var quitCount = 0;
+        var behavior = new CloseToTrayBehavior(
+            cfg,
+            () => Task.FromResult(true),
+            (_, _) => { },
+            _ => Task.FromResult(NoTrayChoice.Cancel),
+            () => quitCount++);
+
+        var win = new TestWindow();
+        behavior.Attach(win, () => false);
+
+        // 1. Fechamento normal tenta cancelar para ir para a bandeja
+        var normalArgs = CreateClosingArgs(Avalonia.Controls.WindowCloseReason.WindowClosing);
+        var normalCanceled = win.TriggerClosing(normalArgs);
+        Assert.True(normalCanceled, "fechamento normal da janela devia cancelar para bandeja");
+        Assert.NotNull(behavior.Pending);
+
+        // 2. Fechamento por OSShutdown NÃO pode ser cancelado
+        var osShutdownArgs = CreateClosingArgs(Avalonia.Controls.WindowCloseReason.OSShutdown);
+        var osCanceled = win.TriggerClosing(osShutdownArgs);
+        Assert.False(osCanceled, "OSShutdown não pode ser cancelado pelo CloseToTrayBehavior");
+
+        // 3. Fechamento por ApplicationShutdown NÃO pode ser cancelado
+        var appShutdownArgs = CreateClosingArgs(Avalonia.Controls.WindowCloseReason.ApplicationShutdown);
+        var appCanceled = win.TriggerClosing(appShutdownArgs);
+        Assert.False(appCanceled, "ApplicationShutdown não pode ser cancelado pelo CloseToTrayBehavior");
+
+        // 4. Se ShutdownSignalGate indicar desligamento ativo, mesmo WindowClosing não é cancelado
+        try
+        {
+            ShutdownSignalGate.SetShuttingDown();
+            var duringShutdownArgs = CreateClosingArgs(Avalonia.Controls.WindowCloseReason.WindowClosing);
+            var duringShutdownCanceled = win.TriggerClosing(duringShutdownArgs);
+            Assert.False(duringShutdownCanceled, "fechamento com shutdown ativo não pode ser cancelado");
+        }
+        finally
+        {
+            ShutdownSignalGate.ResetShuttingDown();
+        }
+    }
+
+    [Fact]
+    public async Task Liberacao_garantida_do_recurso_em_ShutdownInhibitor_sob_desligamento_com_tarefas_lentas()
+    {
+        using var bus = new PrivateBus();
+        using var logind = await FakeLogind.StartAsync(bus.Address);
+        using var dbus = new LogindDBus(bus.Address);
+        var quits = 0;
+        var slowTaskTcs = new TaskCompletionSource();
+
+        // Tarefa lenta de flush simulada que demora mais do que o prazo curto de 2 segundos
+        using var inh = new ShutdownInhibitor(dbus, () => Interlocked.Increment(ref quits), null,
+            fastFlush: async ct =>
+            {
+                await slowTaskTcs.Task.WaitAsync(ct);
+            });
+
+        await inh.StartAsync();
+        Assert.True(inh.Holding);
+        var released = logind.ReleasedAsync(0);
+
+        // Dispara o sinal de desligamento
+        logind.EmitPrepareForShutdown(true);
+
+        await Until(() => Volatile.Read(ref quits) == 1, "quit disparado pelo sinal de desligamento");
+
+        // O flush rápido tem timeout curto (máx 2s). Mesmo com a slowTaskTcs não completada,
+        // o inibidor deve liberar o descritor (FD) garantidamente após o timeout!
+        var releaseResult = await released.WaitAsync(TimeSpan.FromSeconds(4), TestContext.Current.CancellationToken);
+        Assert.Equal(0, releaseResult);
+        Assert.False(inh.Holding, "a trava do inibidor devia ser liberada após o timeout do flush rápido");
+
+        slowTaskTcs.TrySetResult();
     }
 }

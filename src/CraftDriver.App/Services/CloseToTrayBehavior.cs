@@ -54,7 +54,11 @@ public sealed class CloseToTrayBehavior
     {
         w.Closing += (_, e) =>
         {
-            if (quitting()) return;
+            if (quitting() || ShutdownSignalGate.IsShuttingDown ||
+                e.CloseReason is WindowCloseReason.OSShutdown or WindowCloseReason.ApplicationShutdown)
+            {
+                return;
+            }
             e.Cancel = true;
             if (_busy) return; // já há uma decisão em andamento (ex.: diálogo aberto)
             Pending = DecideAsync(w);
