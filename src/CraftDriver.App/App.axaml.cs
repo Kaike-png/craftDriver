@@ -52,8 +52,7 @@ public partial class App : Application
     IClassicDesktopStyleApplicationLifetime? _desktop;
     bool _quitting;
 
-    public static WindowIcon LoadIcon(string name) =>
-        new(AssetLoader.Open(new Uri($"avares://CraftDriver.App/Assets/{name}.png")));
+    public static WindowIcon LoadIcon(string name) => ThemeService.LoadTintedIcon(name);
 
     public override void Initialize() => AvaloniaXamlLoader.Load(this);
 
@@ -170,6 +169,7 @@ public partial class App : Application
             _lastStatus = null;
             _vm.Refreshed += UpdateTray;
             _vm.PropertyChanged += OnVmPropertyChanged;
+            ThemeService.PaletteChanged += OnPaletteChanged;
             UpdateTray();
             desktop.Exit += OnExit;
             if (ScalingNote != null) Host.Activity.Add(ActivityKind.Info, ScalingNote);
@@ -362,6 +362,17 @@ public partial class App : Application
         if (e.PropertyName == nameof(MainViewModel.UpdateTrayText)) UpdateTray();
     }
 
+    /// <summary>Paleta de cores alterada: atualiza o ícone da bandeja e das janelas abertas na hora.</summary>
+    void OnPaletteChanged(AppColorPalette _)
+    {
+        _lastStatus = null;
+        UpdateTray();
+        var winIcon = LoadIcon("cloud");
+        if (_window != null) _window.Icon = winIcon;
+        foreach (var w in _versionWindows.Values) w.Icon = winIcon;
+        if (_trashWindow != null) _trashWindow.Icon = winIcon;
+    }
+
     /// <summary>
     /// "Atualizar agora" da notificação, da bandeja ou do CLI (IPC "update"): a janela aparece (é dona das
     /// confirmações) na Visão geral, com o painel da atualização, e o fluxo do botão começa.
@@ -385,6 +396,7 @@ public partial class App : Application
         Host.UpdateNowRequested -= OnUpdateNowRequested;
         _vm.Refreshed -= UpdateTray;
         _vm.PropertyChanged -= OnVmPropertyChanged;
+        ThemeService.PaletteChanged -= OnPaletteChanged;
         _vm.QuitRequested -= Quit;
         _vm.Dispose();
         if (_desktop != null) _desktop.Exit -= OnExit;

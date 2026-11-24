@@ -6,21 +6,29 @@ namespace CraftDriver.App.Services;
 
 /// <summary>
 /// Cor do indicador de estado da barra lateral, pela mesma chave de <see cref="Icons"/> que o ViewModel expõe
-/// (<c>StatusIcon</c>). A barra lateral é escura nos dois temas, então as cores são fixas.
+/// (<c>StatusIcon</c>). O estado "ok" (Atualizado) acompanha a paleta de cores escolhida; os demais mantêm
+/// cores semânticas fixas sobre a barra lateral escura.
 /// </summary>
 public static class StatusPalette
 {
-    static readonly IBrush Neutral = new ImmutableSolidColorBrush(Color.Parse("#3E5E59"));
+    static readonly SolidColorBrush Neutral = new(Color.Parse("#3A625B"));
+    static readonly SolidColorBrush Ok = new(Color.Parse("#0E8F7E"));
 
     static readonly Dictionary<string, IBrush> Brushes = new()
     {
-        ["ok"] = new ImmutableSolidColorBrush(Color.Parse("#12917F")),
+        ["ok"] = Ok,
         ["sync"] = new ImmutableSolidColorBrush(Color.Parse("#2F6FC4")),
         ["pause"] = new ImmutableSolidColorBrush(Color.Parse("#B7791F")),
         ["offline"] = new ImmutableSolidColorBrush(Color.Parse("#5E716D")),
         ["warning"] = new ImmutableSolidColorBrush(Color.Parse("#C8382B")),
         ["error"] = new ImmutableSolidColorBrush(Color.Parse("#C8382B")),
     };
+
+    public static void ApplyPalette(AppColorPalette palette)
+    {
+        Ok.Color = Color.Parse(palette.BrandMarkHex);
+        Neutral.Color = Color.Parse(palette.NavButtonLine);
+    }
 
     public static IBrush Get(string? key) => key != null && Brushes.TryGetValue(key, out var b) ? b : Neutral;
 
