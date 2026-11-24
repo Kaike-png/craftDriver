@@ -498,6 +498,29 @@
                                         <ComboBoxItem Content="Escuro" />
                                     </ComboBox>
                                 </Grid>
+                                <StackPanel Spacing="8">
+                                    <TextBlock x:Name="AccentColorLabel" Text="Cor do aplicativo" />
+                                    <ItemsControl ItemsSource="{Binding ColorOptions}" AutomationProperties.LabeledBy="{Binding #AccentColorLabel}">
+                                        <ItemsControl.ItemsPanel>
+                                            <ItemsPanelTemplate>
+                                                <WrapPanel Orientation="Horizontal" ItemSpacing="8" LineSpacing="8" />
+                                            </ItemsPanelTemplate>
+                                        </ItemsControl.ItemsPanel>
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate x:DataType="vm:ColorOptionVm">
+                                                <Button Classes="color-swatch" Classes.selected="{Binding IsSelected}"
+                                                        Command="{Binding SelectCommand}"
+                                                        AutomationProperties.Name="{Binding DisplayName}"
+                                                        ToolTip.Tip="{Binding DisplayName}">
+                                                    <StackPanel Orientation="Horizontal" Spacing="7" VerticalAlignment="Center">
+                                                        <Border Width="14" Height="14" CornerRadius="7" Background="{Binding PreviewBrush}" />
+                                                        <TextBlock Text="{Binding DisplayName}" FontSize="13" VerticalAlignment="Center" />
+                                                    </StackPanel>
+                                                </Button>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </StackPanel>
                                 <Button Command="{Binding InstallIntegrationCommand}" HorizontalAlignment="Left"
                                         AutomationProperties.Name="Instalar atalho no menu e itens no menu de contexto (Dolphin / Nautilus / Nemo)">
                                     <TextBlock TextWrapping="Wrap" Text="Instalar atalho no menu e itens no menu de contexto (Dolphin / Nautilus / Nemo)" />
