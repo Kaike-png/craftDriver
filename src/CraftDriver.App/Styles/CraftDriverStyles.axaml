@@ -18,7 +18,8 @@
             <Thickness x:Key="ButtonPadding">14,6,14,7</Thickness>
             <Thickness x:Key="ButtonBorderThemeThickness">1</Thickness>
 
-            <!-- barra lateral: escura nos dois temas -->
+            <!-- barra lateral: escura nos dois temas (sobrescrita em tempo real pela paleta ativa em ThemeService) -->
+            <SolidColorBrush x:Key="CdBrandMarkBrush" Color="#0E8F7E" />
             <SolidColorBrush x:Key="CdNavBg" Color="#0F302C" />
             <SolidColorBrush x:Key="CdNavText" Color="#FFFFFF" />
             <SolidColorBrush x:Key="CdNavLabel" Color="#C6D8D4" />
@@ -28,6 +29,7 @@
             <SolidColorBrush x:Key="CdNavIndicator" Color="#5FD6C0" />
             <SolidColorBrush x:Key="CdNavLine" Color="#24493F" />
             <SolidColorBrush x:Key="CdNavButtonLine" Color="#3A625B" />
+            <SolidColorBrush x:Key="CdNavAlertBrush" Color="#FF8F84" />
 
             <ResourceDictionary.ThemeDictionaries>
                 <ResourceDictionary x:Key="Light">
@@ -124,7 +126,7 @@
                 <Setter Property="DockPanel.Dock" Value="Top" />
                 <Setter Property="FontSize" Value="14" />
                 <Setter Property="FontWeight" Value="Medium" />
-                <Setter Property="Foreground" Value="{StaticResource CdNavLabel}" />
+                <Setter Property="Foreground" Value="{DynamicResource CdNavLabel}" />
                 <Setter Property="Background" Value="Transparent" />
                 <Setter Property="Padding" Value="12,0" />
                 <Setter Property="Margin" Value="10,1" />
@@ -133,7 +135,7 @@
                 <Setter Property="Cursor" Value="Hand" />
                 <Setter Property="FocusAdorner">
                     <FocusAdornerTemplate>
-                        <Border BorderBrush="{StaticResource CdNavIndicator}" BorderThickness="2" CornerRadius="5" Margin="-2" />
+                        <Border BorderBrush="{DynamicResource CdNavIndicator}" BorderThickness="2" CornerRadius="5" Margin="-2" />
                     </FocusAdornerTemplate>
                 </Setter>
                 <Setter Property="Template">
@@ -143,7 +145,7 @@
                             <Panel>
                                 <Border Name="PART_Indicator" Width="3" Height="18" CornerRadius="2" Margin="-12,0,0,0"
                                         HorizontalAlignment="Left" VerticalAlignment="Center"
-                                        Background="{StaticResource CdNavIndicator}" IsVisible="False" />
+                                        Background="{DynamicResource CdNavIndicator}" IsVisible="False" />
                                 <DockPanel>
                                     <PathIcon Name="PART_Icon" DockPanel.Dock="Left" Width="16" Height="16" Margin="0,0,12,0"
                                               Data="{TemplateBinding Tag, Converter={x:Static svc:Icons.ToGeometry}}"
@@ -157,12 +159,12 @@
                     </ControlTemplate>
                 </Setter>
                 <Style Selector="^:pointerover">
-                    <Setter Property="Background" Value="{StaticResource CdNavHover}" />
-                    <Setter Property="Foreground" Value="{StaticResource CdNavText}" />
+                    <Setter Property="Background" Value="{DynamicResource CdNavHover}" />
+                    <Setter Property="Foreground" Value="{DynamicResource CdNavText}" />
                 </Style>
                 <Style Selector="^:selected">
-                    <Setter Property="Background" Value="{StaticResource CdNavSelected}" />
-                    <Setter Property="Foreground" Value="{StaticResource CdNavText}" />
+                    <Setter Property="Background" Value="{DynamicResource CdNavSelected}" />
+                    <Setter Property="Foreground" Value="{DynamicResource CdNavText}" />
                 </Style>
                 <Style Selector="^:selected /template/ Border#PART_Indicator">
                     <Setter Property="IsVisible" Value="True" />
@@ -170,9 +172,9 @@
                 <Style Selector="^:disabled">
                     <Setter Property="Opacity" Value="0.5" />
                 </Style>
-                <!-- aba com algo pedindo atenção (Problemas/Conflitos com itens): ícone em coral -->
+                <!-- aba com algo pedindo atenção (Problemas/Conflitos com itens) -->
                 <Style Selector="^.alert /template/ PathIcon#PART_Icon">
-                    <Setter Property="Foreground" Value="#FF8F84" />
+                    <Setter Property="Foreground" Value="{DynamicResource CdNavAlertBrush}" />
                 </Style>
             </ControlTheme>
 
@@ -188,10 +190,10 @@
                 <Setter Property="Template">
                     <ControlTemplate>
                         <DockPanel>
-                            <Border DockPanel.Dock="Left" Width="244" Background="{StaticResource CdNavBg}">
+                            <Border DockPanel.Dock="Left" Width="244" Background="{DynamicResource CdNavBg}">
                                 <DockPanel>
                                     <ContentPresenter DockPanel.Dock="Top" Content="{TemplateBinding views:NavShell.SidebarHeader}" />
-                                    <Border DockPanel.Dock="Top" Height="1" Margin="20,18,20,10" Background="{StaticResource CdNavLine}" />
+                                    <Border DockPanel.Dock="Top" Height="1" Margin="20,18,20,10" Background="{DynamicResource CdNavLine}" />
                                     <ItemsPresenter Name="PART_ItemsPresenter" ItemsPanel="{TemplateBinding ItemsPanel}" Margin="0,0,0,12" />
                                 </DockPanel>
                             </Border>
@@ -329,14 +331,14 @@
 
     <!-- faixa da marca no topo das janelas de login e de abertura -->
     <Style Selector="Border.brand-band">
-        <Setter Property="Background" Value="{StaticResource CdNavBg}" />
+        <Setter Property="Background" Value="{DynamicResource CdNavBg}" />
         <Setter Property="Padding" Value="24,18" />
     </Style>
     <Style Selector="Border.brand-band TextBlock.h1">
-        <Setter Property="Foreground" Value="{StaticResource CdNavText}" />
+        <Setter Property="Foreground" Value="{DynamicResource CdNavText}" />
     </Style>
     <Style Selector="TextBlock.band-detail">
-        <Setter Property="Foreground" Value="{StaticResource CdNavMuted}" />
+        <Setter Property="Foreground" Value="{DynamicResource CdNavMuted}" />
         <Setter Property="Margin" Value="0,2,0,0" />
     </Style>
     <!-- código de dispositivo do login: destaque sobre fundo suave -->
@@ -437,31 +439,56 @@
     <!-- ações rápidas da barra lateral (fundo escuro) -->
     <Style Selector="Button.nav-action">
         <Setter Property="Background" Value="Transparent" />
-        <Setter Property="BorderBrush" Value="{StaticResource CdNavButtonLine}" />
-        <Setter Property="Foreground" Value="{StaticResource CdNavText}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource CdNavButtonLine}" />
+        <Setter Property="Foreground" Value="{DynamicResource CdNavText}" />
         <Setter Property="Padding" Value="10,0" />
         <Setter Property="Height" Value="34" />
         <Setter Property="VerticalContentAlignment" Value="Center" />
     </Style>
     <Style Selector="Button.nav-action:pointerover /template/ ContentPresenter#PART_ContentPresenter">
-        <Setter Property="Background" Value="{StaticResource CdNavHover}" />
-        <Setter Property="BorderBrush" Value="{StaticResource CdNavIndicator}" />
-        <Setter Property="Foreground" Value="{StaticResource CdNavText}" />
+        <Setter Property="Background" Value="{DynamicResource CdNavHover}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource CdNavIndicator}" />
+        <Setter Property="Foreground" Value="{DynamicResource CdNavText}" />
     </Style>
     <Style Selector="Button.nav-action:pressed /template/ ContentPresenter#PART_ContentPresenter">
-        <Setter Property="Background" Value="{StaticResource CdNavSelected}" />
-        <Setter Property="Foreground" Value="{StaticResource CdNavText}" />
+        <Setter Property="Background" Value="{DynamicResource CdNavSelected}" />
+        <Setter Property="Foreground" Value="{DynamicResource CdNavText}" />
     </Style>
     <Style Selector="Button.nav-action:disabled /template/ ContentPresenter#PART_ContentPresenter">
         <Setter Property="Background" Value="Transparent" />
-        <Setter Property="Foreground" Value="{StaticResource CdNavMuted}" />
+        <Setter Property="Foreground" Value="{DynamicResource CdNavMuted}" />
+    </Style>
+
+    <!-- seletor de paleta de cores em Configurações -->
+    <Style Selector="Button.color-swatch">
+        <Setter Property="Background" Value="{DynamicResource CdSurface}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource CdLine}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="CornerRadius" Value="16" />
+        <Setter Property="Padding" Value="8,5,12,5" />
+        <Setter Property="Cursor" Value="Hand" />
+        <Setter Property="FontWeight" Value="Normal" />
+    </Style>
+    <Style Selector="Button.color-swatch:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+        <Setter Property="Background" Value="{DynamicResource CdAccentSoft}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource CdAccentLine}" />
+    </Style>
+    <Style Selector="Button.color-swatch.selected">
+        <Setter Property="Background" Value="{DynamicResource CdAccentSoft}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource CdAccentText}" />
+        <Setter Property="BorderThickness" Value="1.5" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+    </Style>
+    <Style Selector="Button.color-swatch.selected /template/ ContentPresenter#PART_ContentPresenter">
+        <Setter Property="Background" Value="{DynamicResource CdAccentSoft}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource CdAccentText}" />
     </Style>
 
     <!-- ===================== barra lateral ===================== -->
     <Style Selector="TextBlock.wordmark">
         <Setter Property="FontSize" Value="17" />
         <Setter Property="FontWeight" Value="SemiBold" />
-        <Setter Property="Foreground" Value="{StaticResource CdNavText}" />
+        <Setter Property="Foreground" Value="{DynamicResource CdNavText}" />
         <Setter Property="LetterSpacing" Value="-0.2" />
     </Style>
     <!-- indicador de estado: a cor é a do estado (StatusPalette), igual ao ícone da bandeja -->
@@ -479,12 +506,12 @@
     <Style Selector="TextBlock.nav-status">
         <Setter Property="FontSize" Value="16" />
         <Setter Property="FontWeight" Value="SemiBold" />
-        <Setter Property="Foreground" Value="{StaticResource CdNavText}" />
+        <Setter Property="Foreground" Value="{DynamicResource CdNavText}" />
         <Setter Property="TextWrapping" Value="Wrap" />
     </Style>
     <Style Selector="TextBlock.nav-detail">
         <Setter Property="FontSize" Value="12" />
-        <Setter Property="Foreground" Value="{StaticResource CdNavMuted}" />
+        <Setter Property="Foreground" Value="{DynamicResource CdNavMuted}" />
         <Setter Property="TextWrapping" Value="Wrap" />
         <Setter Property="MaxLines" Value="3" />
         <Setter Property="TextTrimming" Value="CharacterEllipsis" />

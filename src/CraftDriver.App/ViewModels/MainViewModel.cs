@@ -38,6 +38,18 @@ public static class Fmt
     }
 }
 
+public sealed partial class ColorOptionVm(MainViewModel main, AppColorPalette palette) : ViewModelBase
+{
+    public string Key { get; } = palette.Key;
+    public string DisplayName { get; } = palette.DisplayName;
+    public Avalonia.Media.IBrush PreviewBrush { get; } =
+        new Avalonia.Media.Immutable.ImmutableSolidColorBrush(Avalonia.Media.Color.Parse(palette.PreviewHex));
+    [ObservableProperty] public partial bool IsSelected { get; set; }
+
+    [RelayCommand]
+    void Select() => main.SelectAccentColor(Key);
+}
+
 public sealed partial class TransferVm : ViewModelBase
 {
     public long Id { get; init; }
@@ -212,6 +224,9 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
     public const int SettingsTab = 6;
     /// <summary>0 = seguir o sistema, 1 = claro, 2 = escuro (<see cref="ThemeService.Values"/>).</summary>
     [ObservableProperty] public partial int ThemeIndex { get; set; }
+    /// <summary>Paleta de cores selecionada (<see cref="ColorPalettes.All"/>).</summary>
+    [ObservableProperty] public partial string AccentColor { get; set; } = ColorPalettes.DefaultKey;
+    public IReadOnlyList<ColorOptionVm> ColorOptions { get; } = [];
     /// <summary>Há configuração salva que só vale depois de reiniciar (Client ID, pasta do cache).</summary>
     [ObservableProperty] public partial bool RestartNeeded { get; set; }
 
@@ -255,6 +270,20 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
         ThemeService.Apply(Host.Config);
         Host.TrySaveConfig("Aparência");
     }
+
+    /// <summary>Paleta de cores muda na hora (antes só ao Salvar) e fica gravada.</summary>
+    partial void OnAccentColorChanged(string value)
+    {
+        var key = ColorPalettes.Get(value).Key;
+        foreach (var opt in ColorOptions) opt.IsSelected = opt.Key == key;
+        if (!_themeLoaded) return;
+        if (Host.Config.AccentColor == key) return;
+        Host.Config.AccentColor = key;
+        ThemeService.Apply(Host.Config);
+        Host.TrySaveConfig("Cor do aplicativo");
+    }
+
+    public void SelectAccentColor(string key) => AccentColor = ColorPalettes.Get(key).Key;
 
     public void ShowError(string text)
     {
@@ -342,6 +371,10 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
         ClientId = c.ClientId;
         MassDeleteThreshold = c.MassDeleteThreshold;
         ThemeIndex = ThemeService.IndexOf(c.Theme);
+        ColorOptions = ColorPalettes.All.Select(p => new ColorOptionVm(this, p)).ToList();
+        var initialColor = ColorPalettes.Get(c.AccentColor).Key;
+        AccentColor = initialColor;
+        foreach (var opt in ColorOptions) opt.IsSelected = opt.Key == initialColor;
         _themeLoaded = true;
         CheckForUpdates = c.CheckForUpdates;
         _updatesLoaded = true;
@@ -1089,6 +1122,7 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
         c.ClientId = clientId;
         if (cacheChanged) c.CacheDir = Path.GetFullPath(cacheDir); // só vale ao reiniciar: o motor segura o cache atual
         c.Theme = ThemeService.Values[Math.Clamp(ThemeIndex, 0, ThemeService.Values.Length - 1)];
+        c.AccentColor = ColorPalettes.Get(AccentColor).Key;
         ThemeService.Apply(c);
         // systemctl --user (até 3 × 15 s) fora da thread de UI
         bool startWithSystem = StartWithSystem, systemd = UseSystemdAutostart;
