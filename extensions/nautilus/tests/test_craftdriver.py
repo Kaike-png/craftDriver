@@ -202,12 +202,20 @@ class StatusTable(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             table = Path(d) / "mounts"
             _write_mounts(table, "/home/u/One Drive", "/mnt/cd", other=("/home/u/remoto",))
+            # Adiciona também montagens com /dev/craftdriver e /dev/fuse
+            with open(table, "a") as f:
+                f.write("/dev/craftdriver /mnt/dev_cd fuse.onedrive rw,nosuid 0 0\n")
+                f.write("/dev/fuse /mnt/dev_fuse fuse.onedrive rw,nosuid 0 0\n")
+                f.write("/dev/fuse /mnt/dev_fuse_ssh fuse.sshfs rw,nosuid 0 0\n")
             mounts = CD.craftdriver_mounts(str(table))
-            self.assertEqual(mounts, ["/home/u/One Drive", "/mnt/cd"])
+            self.assertEqual(mounts, ["/home/u/One Drive", "/mnt/cd", "/mnt/dev_cd", "/mnt/dev_fuse"])
             self.assertTrue(CD.inside_mount("/home/u/One Drive", mounts))
             self.assertTrue(CD.inside_mount("/home/u/One Drive/a/b.txt", mounts))
+            self.assertTrue(CD.inside_mount("/mnt/dev_cd/x", mounts))
+            self.assertTrue(CD.inside_mount("/mnt/dev_fuse/x", mounts))
             self.assertFalse(CD.inside_mount("/home/u/One Drive2/x", mounts))
             self.assertFalse(CD.inside_mount("/home/u/remoto/x", mounts))
+            self.assertFalse(CD.inside_mount("/mnt/dev_fuse_ssh/x", mounts))
             self.assertEqual(CD.craftdriver_mounts(str(Path(d) / "nao-existe")), [])
 
     def test_first_candidate_without_theme(self):

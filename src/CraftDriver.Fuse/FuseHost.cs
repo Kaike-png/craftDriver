@@ -876,7 +876,7 @@ public static unsafe class FuseHost
     /// Executa fusermount3 (ou fusermount) e devolve o código de saída e o stderr. rc -1 = não terminou em 10 s;
     /// 127 = nenhum dos dois instalado.
     /// </summary>
-    internal static (int rc, string stderr) RunFusermount(string flag, string path)
+    public static (int rc, string stderr) RunFusermount(string flag, string path)
     {
         foreach (var bin in new[] { "fusermount3", "fusermount" })
         {
@@ -931,7 +931,7 @@ public static unsafe class FuseHost
 
         if (_ops == IntPtr.Zero) _ops = BuildOps();
 
-        var argv = new[] { "craftdriver", "-o", "fsname=craftdriver,subtype=onedrive,default_permissions,auto_unmount" };
+        var argv = new[] { "craftdriver", "-o", "fsname=/dev/craftdriver,subtype=onedrive,default_permissions,auto_unmount" };
         var ptrs = argv.Select(a => Marshal.StringToCoTaskMemUTF8(a)).ToArray();
         var argvPtr = (IntPtr*)NativeMemory.Alloc((nuint)((ptrs.Length + 1) * sizeof(IntPtr)));
         for (var i = 0; i < ptrs.Length; i++) argvPtr[i] = ptrs[i];
@@ -1028,7 +1028,7 @@ public static unsafe class FuseHost
     }
 
     /// <summary>Prazo das novas tentativas de <c>fusermount -u</c> com a montagem ocupada antes do <c>-uz</c>.</summary>
-    public static TimeSpan PrazoDesmontarOcupada { get; set; } = TimeSpan.FromSeconds(3);
+    public static TimeSpan PrazoDesmontarOcupada { get; set; } = TimeSpan.FromMilliseconds(1500);
 
     /// <summary>
     /// Desmonta e faz o loop terminar. Montagem ocupada (processo com cwd/arquivo aberto lá dentro: EBUSY): registra
@@ -1054,11 +1054,24 @@ public static unsafe class FuseHost
         var prazo = Environment.TickCount64 + (long)PrazoDesmontarOcupada.TotalMilliseconds;
         while (EmProcMounts(mp) && Environment.TickCount64 < prazo)
         {
-            Thread.Sleep(250);
+            Thread.Sleep(100);
             if ((rc = RunFusermount("-u", mp).rc) == 0) return;
         }
         if (!EmProcMounts(mp)) return; // o loop desmontou ao sair (fuse_session_unmount/auto_unmount)
         (rc, err) = RunFusermount("-uz", mp);
+        if (rc != 0)
+        {
+            try
+            {
+                var psi = new System.Diagnostics.ProcessStartInfo("umount", ["-l", mp])
+                {
+                    RedirectStandardError = true, RedirectStandardOutput = true
+                };
+                using var p = System.Diagnostics.Process.Start(psi)!;
+                if (p.WaitForExit(2000) && p.ExitCode == 0) { rc = 0; err = ""; }
+            }
+            catch { }
+        }
         Log?.Invoke(rc == 0
             ? $"FUSE: montagem ocupada em {mp}; desmontada com fusermount -uz (some quando o último processo sair)"
             : $"FUSE: fusermount -uz {mp} falhou (rc={rc}): {err}");

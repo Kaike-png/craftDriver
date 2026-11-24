@@ -204,7 +204,7 @@ private Q_SLOTS:
             if (e.pending) {
                 continue;
             }
-            const bool syncing = e.status == QLatin1String("Syncing");
+            const bool syncing = e.status.compare(QLatin1String("Syncing"), Qt::CaseInsensitive) == 0;
             if (now - e.lastUsed > m_activeMs) {
                 continue; // fora de vista há muito tempo: relê quando o Dolphin pedir de novo
             }

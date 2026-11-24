@@ -15,7 +15,7 @@ inline constexpr char StatusXattr[] = "user.onedrive.status";
 // Não segue links simbólicos. Em erro, *err recebe o errno (ENODATA/ENOTSUP = fora do CraftDriver).
 QString readStatus(const QString &localPath, int *err = nullptr);
 
-// Pontos de montagem do CraftDriver (fsname=craftdriver, tipo fuse.*) na tabela de montagens: /proc/self/mounts,
+// Pontos de montagem do CraftDriver (fsname=craftdriver|/dev/craftdriver|/dev/fuse, tipo fuse.*) na tabela de montagens: /proc/self/mounts,
 // ou $CRAFTDRIVER_MOUNTS_FILE (testes). Lê o procfs, nunca o FUSE — pode rodar na thread da interface.
 QStringList craftdriverMounts();
 

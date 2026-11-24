@@ -25,8 +25,7 @@ sealed class Program
 
     static void RegisterShutdownSignals()
     {
-        foreach (var sig in new[] { System.Runtime.InteropServices.PosixSignal.SIGTERM, System.Runtime.InteropServices.PosixSignal.SIGINT, System.Runtime.InteropServices.PosixSignal.SIGHUP })
-            Signals.Add(System.Runtime.InteropServices.PosixSignalRegistration.Create(sig, SignalGate.Handle));
+        Signals.AddRange(ShutdownSignalGate.Register(SignalGate));
     }
 
     static LogindDBus? _logind;
@@ -38,7 +37,14 @@ sealed class Program
         if (Environment.GetEnvironmentVariable("CRAFTDRIVER_NO_LOGIND") == "1") return; // testes com o app real
         _logind = new LogindDBus();
         _shutdownInhibitor = new ShutdownInhibitor(_logind, () => OnShutdownSignal?.Invoke(),
-            msg => { if (App.Host?.Activity is { } a) a.Debug(msg); else Console.Error.WriteLine("CraftDriver: " + msg); });
+            msg => { if (App.Host?.Activity is { } a) a.Debug(msg); else Console.Error.WriteLine("CraftDriver: " + msg); },
+            fastFlush: async ct =>
+            {
+                if (App.Host is { } host)
+                {
+                    await Task.Run(() => host.Db.QuickFlush(TimeSpan.FromSeconds(1.5)), ct).ConfigureAwait(false);
+                }
+            });
         _ = _shutdownInhibitor.StartAsync();
     }
 

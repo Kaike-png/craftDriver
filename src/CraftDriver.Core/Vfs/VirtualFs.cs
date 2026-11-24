@@ -43,11 +43,13 @@ public sealed class VirtualFs
     {
         public long Lid;
         public string DriveId = "";
-        public SafeFileHandle File = null!;
+        public SafeFileHandle? File;
         public bool Writable;
         public bool Wrote;
         /// <summary>Leitura por faixas (arquivo ainda incompleto no cache quando foi aberto).</summary>
         public StreamSession? Stream;
+        /// <summary>Conteúdo virtual em memória (ex: .directory).</summary>
+        public byte[]? MemoryContent;
         /// <summary>Detecção de leitura sequencial (dispara o download do resto em segundo plano).</summary>
         public long NextRead, SequentialBytes;
         public bool ReportedError;
@@ -114,9 +116,19 @@ public sealed class VirtualFs
 
     // ---------- resolução de caminhos ----------
 
-    public readonly record struct Node(bool IsVirtualRoot, DriveSync? Drive, Item? Item)
+    public const string DesktopEntryFileName = ".directory";
+    public static readonly byte[] DesktopEntryBytes = System.Text.Encoding.UTF8.GetBytes("[Desktop Entry]\nType=Directory\nIcon=folder-cloud\n");
+    FileAttr DesktopEntryAttr => new(false, DesktopEntryBytes.Length, _rootMtime, (DesktopEntryBytes.Length + 511) / 512, ExplicitMode | 0x124u /*0444*/);
+
+    public static bool IsDesktopEntryPath(string path)
     {
-        public bool IsDir => IsVirtualRoot || Item is { IsDir: true };
+        var trimmed = path.TrimEnd('/');
+        return trimmed is "/" + DesktopEntryFileName or DesktopEntryFileName;
+    }
+
+    public readonly record struct Node(bool IsVirtualRoot, DriveSync? Drive, Item? Item, bool IsVirtualFile = false)
+    {
+        public bool IsDir => IsVirtualRoot || (Item is { IsDir: true } && !IsVirtualFile);
         public bool IsDriveRoot => Drive != null && Item != null && Item.Lid == Drive.RootLid;
     }
 
@@ -133,6 +145,7 @@ public sealed class VirtualFs
     public Node? Resolve(string path, bool includeExcluded)
     {
         if (path == "/" || path == "") return new Node(true, null, null);
+        if (IsDesktopEntryPath(path)) return new Node(false, null, null, IsVirtualFile: true);
         var parts = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
         var drive = MountedDrives.FirstOrDefault(d => Sanitize(d.Config.DisplayName) == parts[0]);
         var startLid = drive?.RootLid ?? 0;
@@ -142,6 +155,14 @@ public sealed class VirtualFs
             foreach (var c in _e.SharedContainers)
                 if (Sanitize(c.Name) == parts[0]) { drive = c.Host; startLid = c.Lid; break; }
             if (drive == null) return null;
+        }
+        if (parts.Length == 2 && parts[1] == DesktopEntryFileName)
+        {
+            var cur = Db.Get(startLid);
+            if (cur != null && Db.GetChild(cur.Lid, DesktopEntryFileName) == null)
+            {
+                return new Node(false, drive, null, IsVirtualFile: true);
+            }
         }
         lock (Db.Lock)
         {
@@ -261,6 +282,11 @@ public sealed class VirtualFs
             attr = new FileAttr(true, 4096, _rootMtime, 0, ExplicitMode | 0x16D);
             return 0;
         }
+        if (n.Value.IsVirtualFile)
+        {
+            attr = DesktopEntryAttr;
+            return 0;
+        }
         attr = AttrOf(n.Value.Item!);
         return 0;
     }
@@ -271,6 +297,7 @@ public sealed class VirtualFs
         if (n == null) return -Errno.ENOENT;
         if (n.Value.IsVirtualRoot)
         {
+            entries.Add((DesktopEntryFileName, DesktopEntryAttr));
             foreach (var d in MountedDrives)
                 if (Db.Get(d.RootLid) is { } raiz) entries.Add((Sanitize(d.Config.DisplayName), AttrOf(raiz)));
             foreach (var c in _e.SharedContainers)
@@ -278,6 +305,8 @@ public sealed class VirtualFs
             return 0;
         }
         if (!n.Value.Item!.IsDir) return -Errno.ENOTDIR;
+        if (n.Value.IsDriveRoot && Db.GetChild(n.Value.Item.Lid, DesktopEntryFileName) == null)
+            entries.Add((DesktopEntryFileName, DesktopEntryAttr));
         foreach (var c in Db.GetChildren(n.Value.Item.Lid))
             if (!Db.IsExcluded(c.Lid)) entries.Add((c.Name, AttrOf(c)));
         return 0;
@@ -378,6 +407,15 @@ public sealed class VirtualFs
         var n = Resolve(path);
         if (n == null) return -Errno.ENOENT;
         if (n.Value.IsDir) return -Errno.EISDIR;
+        if (n.Value.IsVirtualFile)
+        {
+            var isWrite = (flags & OpenFlags.AccMode) != 0 || (flags & OpenFlags.Trunc) != 0;
+            if (isWrite) return -Errno.EACCES;
+            var id = (ulong)Interlocked.Increment(ref _nextFh);
+            _handles[id] = new Handle { MemoryContent = DesktopEntryBytes };
+            fh = id;
+            return 0;
+        }
         var item = n.Value.Item!;
         var write = (flags & OpenFlags.AccMode) != 0;
         var trunc = (flags & OpenFlags.Trunc) != 0;
@@ -585,8 +623,15 @@ public sealed class VirtualFs
     {
         Interlocked.Increment(ref _reads);
         if (!_handles.TryGetValue(fh, out var h)) return -Errno.EBADF;
+        if (h.MemoryContent is { } mem)
+        {
+            if (offset >= mem.Length) return 0;
+            var count = Math.Min(buffer.Length, (int)(mem.Length - offset));
+            mem.AsSpan((int)offset, count).CopyTo(buffer);
+            return count;
+        }
         if (h.Stream is { } stream) return ReadStreaming(h, stream, buffer, offset);
-        try { return RandomAccess.Read(h.File, buffer, offset); }
+        try { return RandomAccess.Read(h.File!, buffer, offset); }
         catch (IOException) { return -Errno.EIO; }
     }
 
@@ -630,7 +675,7 @@ public sealed class VirtualFs
     public int Write(ulong fh, ReadOnlySpan<byte> data, long offset)
     {
         if (!_handles.TryGetValue(fh, out var h)) return -Errno.EBADF;
-        if (!h.Writable) return -Errno.EBADF;
+        if (h.MemoryContent != null || !h.Writable || h.File == null) return -Errno.EBADF;
         try
         {
             RandomAccess.Write(h.File, data, offset);
@@ -652,6 +697,7 @@ public sealed class VirtualFs
     {
         Handle? h = null;
         if (fh is { } f && f != 0) _handles.TryGetValue(f, out h);
+        if (h?.MemoryContent != null) return -Errno.EACCES;
         long lid;
         if (h != null) lid = h.Lid;
         else
@@ -660,6 +706,7 @@ public sealed class VirtualFs
             var n = Resolve(path);
             if (n == null) return -Errno.ENOENT;
             if (n.Value.IsDir) return -Errno.EISDIR;
+            if (n.Value.IsVirtualFile) return -Errno.EACCES;
             lid = n.Value.Item!.Lid;
         }
         // sem handle (truncate por caminho) nada impede o LRU de despejar o arquivo entre o download e o SetLength:
@@ -675,7 +722,7 @@ public sealed class VirtualFs
         if (item != null && IsReadOnly(item)) return -Errno.EACCES;
         if (item == null)
         {
-            if (h == null) return -Errno.ENOENT;
+            if (h == null || h.File == null) return -Errno.ENOENT;
             // apagado com o fd aberto (unlink + ftruncate): só o conteúdo do handle existe
             try { RandomAccess.SetLength(h.File, size); }
             catch (IOException) { return -Errno.EIO; }
@@ -689,7 +736,7 @@ public sealed class VirtualFs
                 DownloadInterruptibly(lid);
             OpenStepForTests?.Invoke("truncate-conferido", lid);
 
-            if (h != null) RandomAccess.SetLength(h.File, size);
+            if (h != null && h.File != null) RandomAccess.SetLength(h.File, size);
             else
             {
                 using var fs = new FileStream(cachePath, FileMode.Open, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete);
@@ -751,7 +798,7 @@ public sealed class VirtualFs
     public int Fsync(ulong fh)
     {
         if (!_handles.TryGetValue(fh, out var h)) return -Errno.EBADF;
-        if (h.Wrote)
+        if (h.Wrote && h.File != null)
         {
             RandomAccess.FlushToDisk(h.File);
             var p = _e.Cache.PathFor(h.DriveId, h.Lid);
@@ -780,10 +827,10 @@ public sealed class VirtualFs
     public int Release(ulong fh)
     {
         if (!_handles.TryRemove(fh, out var h)) return 0;
-        try { h.File.Dispose(); } catch { }
+        try { h.File?.Dispose(); } catch { }
         if (h.Stream != null) _e.ReleaseStream(h.Stream);
         if (h.Wrote) CommitWrite(h);
-        Unreserve(h.Lid);
+        if (h.Lid != 0) Unreserve(h.Lid);
         return 0;
     }
 
@@ -795,11 +842,16 @@ public sealed class VirtualFs
         attr = default;
         if (fh != 0 && _handles.TryGetValue(fh, out var h))
         {
+            if (h.MemoryContent is { } mem)
+            {
+                attr = DesktopEntryAttr;
+                return 0;
+            }
             long len;
-            try { len = RandomAccess.GetLength(h.File); }
+            try { len = RandomAccess.GetLength(h.File!); }
             catch (IOException) { return -Errno.EIO; }
             var it = Db.Get(h.Lid);
-            var mtime = it?.MTime ?? new DateTimeOffset(File.GetLastWriteTimeUtc(h.File)).ToUnixTimeMilliseconds();
+            var mtime = it?.MTime ?? new DateTimeOffset(File.GetLastWriteTimeUtc(h.File!)).ToUnixTimeMilliseconds();
             attr = new FileAttr(false, len, mtime, (len + 511) / 512, it != null ? ModeOf(it) : 0, h.Lid, Db.FracaoMtime(h.Lid, mtime));
             return 0;
         }
@@ -907,7 +959,7 @@ public sealed class VirtualFs
     {
         var n = Resolve(path);
         if (n == null) return -Errno.ENOENT;
-        if (n.Value.IsVirtualRoot || n.Value.IsDriveRoot || _e.IsSharedTop(n.Value.Item!)) return -Errno.EPERM;
+        if (n.Value.IsVirtualRoot || n.Value.IsDriveRoot || n.Value.IsVirtualFile || _e.IsSharedTop(n.Value.Item!)) return -Errno.EPERM;
         if (n.Value.Item!.IsDir) return -Errno.EISDIR;
         if (IsReadOnly(n.Value.Item)) return -Errno.EACCES;
         RemoveItem(n.Value.Item);
@@ -918,7 +970,7 @@ public sealed class VirtualFs
     {
         var n = Resolve(path);
         if (n == null) return -Errno.ENOENT;
-        if (n.Value.IsVirtualRoot || n.Value.IsDriveRoot || _e.IsSharedTop(n.Value.Item!)) return -Errno.EPERM;
+        if (n.Value.IsVirtualRoot || n.Value.IsDriveRoot || n.Value.IsVirtualFile || _e.IsSharedTop(n.Value.Item!)) return -Errno.EPERM;
         var item = n.Value.Item!;
         if (!item.IsDir) return -Errno.ENOTDIR;
         if (IsReadOnly(item)) return -Errno.EACCES;
@@ -950,7 +1002,8 @@ public sealed class VirtualFs
         if ((flags & RenameExchange) != 0) return -Errno.EINVAL;
         var s = Resolve(from);
         if (s == null) return -Errno.ENOENT;
-        if (s.Value.IsVirtualRoot || s.Value.IsDriveRoot || _e.IsSharedTop(s.Value.Item!)) return -Errno.EPERM;
+        if (s.Value.IsVirtualRoot || s.Value.IsDriveRoot || s.Value.IsVirtualFile || _e.IsSharedTop(s.Value.Item!)) return -Errno.EPERM;
+        if (IsDesktopEntryPath(to)) return -Errno.EACCES;
         var src = s.Value.Item!;
         var (dstParentPath, newName) = Split(to);
         if (TooLong(newName)) return -Errno.ENAMETOOLONG;
@@ -1139,7 +1192,11 @@ public sealed class VirtualFs
     {
         long lid;
         string driveId;
-        if (fh != 0 && _handles.TryGetValue(fh, out var h)) (lid, driveId) = (h.Lid, h.DriveId);
+        if (fh != 0 && _handles.TryGetValue(fh, out var h))
+        {
+            if (h.MemoryContent != null) return 0;
+            (lid, driveId) = (h.Lid, h.DriveId);
+        }
         else if (fh != 0 && _dirHandles.TryGetValue(fh, out var dirLid))
         {
             if (dirLid == 0) return 0;
@@ -1151,7 +1208,7 @@ public sealed class VirtualFs
             if (path == null) return -Errno.EBADF;
             var n = Resolve(path);
             if (n == null) return -Errno.ENOENT;
-            if (n.Value.IsVirtualRoot || n.Value.IsDriveRoot) return 0;
+            if (n.Value.IsVirtualRoot || n.Value.IsDriveRoot || n.Value.IsVirtualFile) return 0;
             (lid, driveId) = (n.Value.Item!.Lid, n.Value.Item.DriveId);
         }
         if (SyncEngine.IsSharedKey(driveId) && _e.IsReadOnly(driveId)) return -Errno.EACCES;
@@ -1188,14 +1245,18 @@ public sealed class VirtualFs
     public int Chmod(string? path, uint mode, ulong fh = 0)
     {
         long lid;
-        if (fh != 0 && _handles.TryGetValue(fh, out var h)) lid = h.Lid;
+        if (fh != 0 && _handles.TryGetValue(fh, out var h))
+        {
+            if (h.MemoryContent != null) return -Errno.EPERM;
+            lid = h.Lid;
+        }
         else if (fh != 0 && _dirHandles.TryGetValue(fh, out var dl)) lid = dl;
         else
         {
             if (path == null) return -Errno.EBADF;
             var n = Resolve(path);
             if (n == null) return -Errno.ENOENT;
-            if (n.Value.IsVirtualRoot) return -Errno.EPERM;
+            if (n.Value.IsVirtualRoot || n.Value.IsVirtualFile) return -Errno.EPERM;
             lid = n.Value.Item!.Lid;
         }
         if (lid == 0) return -Errno.EPERM;
@@ -1223,11 +1284,36 @@ public sealed class VirtualFs
 
     public ItemStatus StatusOf(Item it)
     {
-        if (it.IsDir) return it.LocalOnly ? ItemStatus.LocalOnly : (Db.IsEffectivelyPinnedVfs(it.Lid) ? ItemStatus.AlwaysAvailable : ItemStatus.Folder);
         if (it.LocalOnly) return ItemStatus.LocalOnly;
         if (it.Dirty || it.ItemId == null) return ItemStatus.Syncing;
+        if (it.IsDir) return StatusOfDirectory(it);
         if (Db.IsEffectivelyPinnedVfs(it.Lid)) return ItemStatus.AlwaysAvailable;
         return SyncEngine.IsContentCurrent(it, _e.Cache) ? ItemStatus.Available : ItemStatus.OnlineOnly;
+    }
+
+    ItemStatus StatusOfDirectory(Item it)
+    {
+        var subtree = Db.GetSubtree(it.Lid);
+        if (subtree.Any(x => x.Dirty || x.ItemId == null)) return ItemStatus.Syncing;
+        if (Db.IsEffectivelyPinnedVfs(it.Lid)) return ItemStatus.AlwaysAvailable;
+        var files = subtree.Where(x => !x.IsDir).ToList();
+        if (files.Count == 0) return ItemStatus.Available;
+        var hasAvailable = files.Any(x => SyncEngine.IsContentCurrent(x, _e.Cache));
+        var hasOnline = files.Any(x => !SyncEngine.IsContentCurrent(x, _e.Cache));
+        if (hasAvailable) return ItemStatus.Available;
+        if (hasOnline) return ItemStatus.OnlineOnly;
+        return ItemStatus.Available;
+    }
+
+    public ItemStatus StatusOfVirtualRoot()
+    {
+        if (_e.Status == EngineStatus.Syncing || Db.PendingOps() > 0) return ItemStatus.Syncing;
+        foreach (var d in MountedDrives)
+        {
+            var subtree = Db.GetSubtree(d.RootLid);
+            if (subtree.Any(x => x.Dirty || x.ItemId == null)) return ItemStatus.Syncing;
+        }
+        return ItemStatus.Available;
     }
 
     public static string Describe(ItemStatus s) => s switch
@@ -1244,7 +1330,19 @@ public sealed class VirtualFs
     {
         if (!XattrNames.Contains(name, StringComparer.Ordinal)) return null; // KIO pede user.xdg.*, ACL e SELinux
         var n = Resolve(path);
-        if (n?.Item == null) return null;
+        if (n?.Item == null)
+        {
+            if (n?.IsVirtualRoot == true)
+            {
+                return name switch
+                {
+                    "user.onedrive.status" => StatusOfVirtualRoot().ToString(),
+                    PinnedXattr => "0",
+                    _ => null,
+                };
+            }
+            return null;
+        }
         return name switch
         {
             "user.onedrive.status" => StatusOf(n.Value.Item).ToString(),
