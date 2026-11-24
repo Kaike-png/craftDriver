@@ -177,6 +177,8 @@ public sealed class AppConfig
     public string CacheDir { get; set; } = AppPaths.DefaultCacheDir;
     /// <summary>"system" (segue o portal/desktop), "light" ou "dark".</summary>
     public string Theme { get; set; } = "system";
+    /// <summary>Paleta de cores do aplicativo ("teal", "blue", "indigo", "purple", "pink", "red", "orange", "green", "slate").</summary>
+    public string AccentColor { get; set; } = "teal";
     public int PollIntervalSeconds { get; set; } = 30;
     /// <summary>Downloads simultâneos por drive (sob demanda + fixados). 1–32; mudanças valem na hora (SyncEngine.ApplyTransferLimits).</summary>
     public int DownloadConcurrency { get; set; } = 4;
